@@ -57,3 +57,4 @@
 | 包 | manifest id | 版本 | 说明 |
 |---|---|---|---|
 | finch-ego-lite | ego-browser | 0.1.0 | Ego Lite 网页浏览小工具，仅支持 macOS |
+| finch-anydoc | anydoc | 0.1.0 | 办公文档转 Markdown 阅读工具，原生引擎首次使用时按需下载并缓存 |
