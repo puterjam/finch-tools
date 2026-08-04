@@ -1,0 +1,58 @@
+# AGENTS.md · finch-tools 工作区规则
+
+本目录是 Finch 小工具（mini tools / extensions）的多包源码仓库，仓库地址 `github.com/puterjam/finch-tools`。本文件是本空间所有会话自动加载的项目规则。
+
+## 空间定位
+
+- 本空间**只处理 finch-tools 仓库内的事务**：小工具源码、构建、测试、发布。
+- 仓库之外的工作（其他项目、运维、日常事务）不在本空间处理，去对应 Space。
+- 每个子目录是一个独立 npm 包，一个子目录 = 一个小工具。新小工具在根目录新建子目录。
+
+## 仓库结构约定
+
+```
+<pkg>/
+  src/          TypeScript 源码（入口 index.ts）
+  dist/         构建产物（不入 git，发布前构建）
+  i18n/         界面文案多语言，ctx.i18n.t() 读取 i18n/<locale>.json
+  skills/       随包分发的内置 skill（如有）
+  icon.png      工具图标
+  package.json  含 finch manifest（id / name / description / systemPrompt / permissions / activationEvents）
+```
+
+- 根 `README.md` 用中英双语列出所有包。
+- 包内 `README.md` 随 npm 包发布（在 package.json `files` 里）。
+
+## 开发约定
+
+- TypeScript，开启严格模式；源码与注释用英文，用户可见文案走 i18n。
+- **权限最小化**：`permissions.filesystem` / `permissions.network` 默认关闭，shell 按需开启。
+- **运行时零依赖**：minitools 不安装 `dependencies`，所有依赖必须在构建期打进产物。
+- 包名用 `finch-<name>` 风格（如 `finch-ego-lite`），manifest `id` 用 kebab-case。
+
+## 构建与发布
+
+1. 修改源码后**必须重新构建**再发布；`dist/` 不入 git。
+2. **官方扩展发布必须 esbuild bundle**：tsc 裸产物会报 `Cannot find package`（minitools 不装 dependencies）。构建脚本要确保把依赖完整打包进 `dist/index.js`。
+3. 发布前跑 `npx @finchtoys/minitools doctor .` 校验 manifest。
+4. **npm 发布交由 agent 执行**；bump version 遵循 semver。
+5. 发布后安装到 `~/.finch/extensions` 并在 Toolcase 启用，做一次本地冒烟验证。
+
+## Git 规范
+
+- 提交信息用 Conventional Commits（`feat:` / `fix:` / `chore:` …），一个提交一个原子变更。
+- **每个提交必须附带 trailer**，另起一行：
+  ```
+  Co-authored-by: 帕亚 <noreply@finchwork.app>
+  ```
+
+## README 规范
+
+- 用**用户视角**撰写：讲场景与用法，不写技术实现细节。
+- 默认**英文完整版在前，中文完整版在后**。
+
+## 当前包状态
+
+| 包 | manifest id | 版本 | 说明 |
+|---|---|---|---|
+| finch-ego-lite | ego-browser | 0.1.0 | Ego Lite 网页浏览小工具，仅支持 macOS |

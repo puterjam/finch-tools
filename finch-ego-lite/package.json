@@ -19,8 +19,9 @@
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "prepublishOnly": "npm run build && npx @finchtoys/minitools doctor ."
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
   },
   "finch": {
     "manifestVersion": 1,
@@ -29,9 +30,14 @@
     "description": "Control Ego Browser and see the pages your Agent is working on.",
     "systemPrompt": "Use ego_browser for browser automation. Call action=status to inspect Ego availability and task spaces. Call action=run with one coherent ego-browser JavaScript program for browser work. Reuse task spaces, respect user ownership, verify meaningful actions, and complete spaces when done.",
     "main": "dist/index.js",
-    "activationEvents": ["onStartup"],
+    "activationEvents": [
+      "onStartup"
+    ],
     "miniToolType": "local",
-    "categories": ["productivity", "developer"],
+    "categories": [
+      "productivity",
+      "developer"
+    ],
     "contributes": {
       "tools": true,
       "composerActions": [
@@ -58,7 +64,14 @@
   "devDependencies": {
     "@finchtoys/minitool-api": "^0.2.9",
     "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
     "typescript": "^6.0.3"
   },
-  "files": ["dist/", "i18n/", "skills/", "icon.png", "README.md"]
+  "files": [
+    "dist/",
+    "i18n/",
+    "skills/",
+    "icon.png",
+    "README.md"
+  ]
 }
