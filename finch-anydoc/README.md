@@ -46,6 +46,8 @@ Then enable **AnyDoc** in the Finch Toolcase.
 
 **First run downloads a document engine (~7 MB).** AnyDoc is powered by [anydoc](https://github.com/firecrawl/anydoc), a native engine that is a different binary on every platform. Rather than shipping every platform's copy, AnyDoc fetches the one your machine needs on the first document you open, verifies it against the npm registry checksum, and caches it. Every later document opens instantly.
 
+The cached engine lives in AnyDoc's own data directory, `~/.finch/extension-data/anydoc/engine/`. Deleting it is safe — the next document you open downloads it again. Updating or removing AnyDoc never touches it.
+
 Supported platforms: macOS (Apple Silicon and Intel), Linux (x64 and arm64, glibc and musl), Windows (x64).
 
 ## Limits
@@ -112,6 +114,8 @@ npx @finchtoys/minitools add finch-anydoc
 然后在 Finch 工具箱里启用 **AnyDoc**。
 
 **首次使用会下载约 7 MB 的文档引擎。** AnyDoc 基于 [anydoc](https://github.com/firecrawl/anydoc)，它是原生引擎，每个平台的二进制都不一样。与其把所有平台的版本都塞进安装包，AnyDoc 选择在你第一次打开文档时按需下载当前平台所需的那一个，用 npm registry 的校验和验证后缓存下来。之后每次打开文档都是瞬时的。
+
+缓存的引擎存在 AnyDoc 自己的数据目录 `~/.finch/extension-data/anydoc/engine/`。直接删掉也没关系，下次打开文档会重新下载；更新或卸载 AnyDoc 都不会动它。
 
 支持平台：macOS（Apple Silicon 与 Intel）、Linux（x64 与 arm64，glibc 与 musl）、Windows（x64）。
 

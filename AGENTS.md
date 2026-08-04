@@ -28,6 +28,8 @@
 - TypeScript，开启严格模式；源码与注释用英文，用户可见文案走 i18n。
 - **权限最小化**：`permissions.filesystem` / `permissions.network` 默认关闭，shell 按需开启。
 - **运行时零依赖**：minitools 不安装 `dependencies`，所有依赖必须在构建期打进产物。
+- **`files` 白名单只放运行时产物**：`dist/`、`i18n/`、`skills/`、`icons/`、`icon.png`、`README.md`。`src/`、`tsconfig.json`、`package-lock.json` 一律不发布。
+- **运行期数据写 `ctx.storagePath`**（实际落在 `~/.finch/extension-data/<id>/`），不要写进扩展安装目录——安装目录会在 update / remove 时被整体替换。
 - 包名用 `finch-<name>` 风格（如 `finch-ego-lite`），manifest `id` 用 kebab-case。
 - 所有包 `author.name` 统一为 `PuterJam`（中间无空格），url 为 `https://github.com/puterjam`。
 
@@ -38,6 +40,22 @@
 3. 发布前跑 `npx @finchtoys/minitools doctor .` 校验 manifest。
 4. **npm 发布交由 agent 执行**；bump version 遵循 semver。
 5. 发布后安装到 `~/.finch/extensions` 并在 Toolcase 启用，做一次本地冒烟验证。
+
+### 本地部署测试必须走 tarball
+
+`minitools add <目录>` 会把整个目录原样复制过去，`src/`、`tsconfig.json`、连同 `node_modules` 里的
+devDependencies 全都进了扩展目录（实测 48K 的包会变成 47M），和真实用户装到的东西完全不一样。
+
+本地测试一律先打包再装，确保验证对象就是 npm 上的那份产物：
+
+```bash
+npm run build
+npm pack --pack-destination /tmp
+npx @finchtoys/minitools remove <id>
+npx @finchtoys/minitools add /tmp/<package>-<version>.tgz
+```
+
+`remove` 不会删除 `~/.finch/extension-data/<id>/`，重装后缓存数据仍在。
 
 ## Git 规范
 
