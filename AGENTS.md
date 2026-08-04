@@ -29,6 +29,7 @@
 - **权限最小化**：`permissions.filesystem` / `permissions.network` 默认关闭，shell 按需开启。
 - **运行时零依赖**：minitools 不安装 `dependencies`，所有依赖必须在构建期打进产物。
 - 包名用 `finch-<name>` 风格（如 `finch-ego-lite`），manifest `id` 用 kebab-case。
+- 所有包 `author.name` 统一为 `PuterJam`（中间无空格），url 为 `https://github.com/puterjam`。
 
 ## 构建与发布
 
