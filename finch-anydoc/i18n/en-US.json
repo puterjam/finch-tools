@@ -1,0 +1,11 @@
+{
+  "name": "AnyDoc",
+  "description": "Read office documents and PDFs as clean Markdown.",
+  "progress": {
+    "locating": "Locating document engine…",
+    "downloading": "Downloading document engine (~7 MB)…",
+    "verifying": "Verifying document engine…",
+    "unpacking": "Unpacking document engine…",
+    "reading": "Reading document…"
+  }
+}

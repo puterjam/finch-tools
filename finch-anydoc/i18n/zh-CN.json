@@ -1,0 +1,12 @@
+{
+  "name": "AnyDoc 文档阅读",
+  "description": "把 Word、Excel、PPT、PDF 等文档读成干净的 Markdown。",
+  "systemPrompt": "使用 anydoc_read_document 读取 Word、Excel、PowerPoint、OpenDocument、RTF、EPUB、CSV 和 PDF 文件的内容，优先使用它，不要另写转换脚本。文档较大或结构不明时，先用 action=outline 查看结构，再用 action=read 配合 offset 翻到需要的部分。首次在新机器上调用时会下载约 7 MB 的文档引擎。",
+  "progress": {
+    "locating": "正在定位文档引擎…",
+    "downloading": "正在下载文档引擎（约 7 MB）…",
+    "verifying": "正在校验文档引擎…",
+    "unpacking": "正在解包文档引擎…",
+    "reading": "正在读取文档…"
+  }
+}

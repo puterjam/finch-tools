@@ -1,0 +1,72 @@
+{
+  "name": "finch-anydoc",
+  "version": "0.1.0",
+  "description": "Read Word, Excel, PowerPoint, OpenDocument, RTF, EPUB, CSV and PDF files as clean Markdown, right inside Finch.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-anydoc"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-anydoc#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "keywords": [
+    "finch",
+    "finch-minitool",
+    "document",
+    "markdown",
+    "docx",
+    "xlsx",
+    "pptx",
+    "pdf"
+  ],
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "id": "anydoc",
+    "name": "AnyDoc",
+    "description": "Read office documents and PDFs as clean Markdown.",
+    "systemPrompt": "Use anydoc_read_document to read the contents of Word, Excel, PowerPoint, OpenDocument, RTF, EPUB, CSV and PDF files. Prefer it over writing conversion scripts. Call action=outline first on large or unfamiliar documents to see their structure, then action=read with offset to page through the parts you need. The first call on a new machine downloads a document engine of about 7 MB.",
+    "main": "dist/index.js",
+    "activationEvents": [
+      "onStartup"
+    ],
+    "miniToolType": "local",
+    "categories": [
+      "productivity",
+      "developer"
+    ],
+    "contributes": {
+      "tools": true
+    },
+    "permissions": {
+      "filesystem": "readwrite",
+      "network": true,
+      "shell": false
+    }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.2.9",
+    "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "i18n/",
+    "icon.png",
+    "README.md"
+  ]
+}
