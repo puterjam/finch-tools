@@ -1,0 +1,104 @@
+{
+  "name": "Ego 浏览器",
+  "description": "让 Finch 在独立的 Ego Lite 任务空间中浏览网页，你可以随时查看它打开的每个页面。",
+  "systemPrompt": "使用 ego_browser 执行浏览器自动化。先用 action=status 检查 Ego 状态和任务空间；用 action=run 执行一段完整的 Ego Browser JavaScript。复用任务空间、尊重用户控制权、验证关键操作，并在完成后关闭任务空间。",
+  "composerActions": {
+    "ego-browser": {
+      "tooltip": "Ego 浏览器"
+    }
+  },
+  "toolMeta": {
+    "name": "Ego 浏览器"
+  },
+  "badge": {
+    "online": "Ego 在线",
+    "offline": "Ego 离线",
+    "unsupported": "仅支持 macOS"
+  },
+  "menu": {
+    "checking": {
+      "label": "正在检查 Ego 状态…",
+      "description": "完成后自动更新"
+    },
+    "help": {
+      "label": "安装与帮助"
+    },
+    "learn": {
+      "label": "了解 Ego Lite"
+    },
+    "unsupported": {
+      "label": "Ego Lite 仅支持 macOS",
+      "description": "当前设备暂不可用",
+      "hover": "Ego Lite 目前只能在 macOS 上运行。当前平台：{platform}。"
+    },
+    "install": {
+      "label": "安装 Ego Lite",
+      "description": "打开官方网站",
+      "hover": "安装后完成首次引导，Ego 会注册 ego-browser 命令。"
+    },
+    "launch": {
+      "label": "启动 Ego Lite"
+    },
+    "summary": {
+      "spaces": "{count} 个任务空间",
+      "pages": "{count} 个页面"
+    },
+    "resume": {
+      "label": "完成后让 Agent 继续",
+      "description": "插入继续指令"
+    },
+    "close": {
+      "label": "关闭任务空间",
+      "description": "关闭其中全部页面"
+    },
+    "space": {
+      "fallback": "任务空间 {id}"
+    },
+    "empty": {
+      "label": "Agent 在休息中",
+      "description": "点击发起浏览任务",
+      "hover": "告诉 Agent 想访问的网站和要完成的事情。"
+    }
+  },
+  "page": {
+    "untitled": "未命名页面"
+  },
+  "site": {
+    "unknown": "未知站点"
+  },
+  "ownership": {
+    "agent": "Agent 操作中",
+    "delegated": "等待你操作",
+    "user": "用户控制"
+  },
+  "status": {
+    "unsupported": "Ego Lite 目前仅支持 macOS。当前平台：{platform}。",
+    "notInstalled": "Ego Lite 未安装。请从 {website} 安装并完成首次引导。",
+    "notRunning": "Ego Lite 已安装（{version}），当前未运行。",
+    "error": "Ego Lite 正在运行，但状态读取失败：{error}"
+  },
+  "composer": {
+    "startPrompt": "请使用 Ego 浏览器帮我访问：",
+    "resumePrompt": "我已完成 Ego 任务空间 {id} 中的手动操作，请继续。"
+  },
+  "toast": {
+    "launched": "Ego Lite 已启动",
+    "closed": "任务空间已关闭",
+    "actionFailed": "无法打开 Ego 页面"
+  },
+  "dialog": {
+    "close": {
+      "title": "关闭 Ego 任务空间？",
+      "message": "将关闭其中 {count} 个页面。",
+      "confirm": "关闭",
+      "cancel": "取消"
+    }
+  },
+  "error": {
+    "notInstalled": "Ego Browser 未安装"
+  },
+  "progress": {
+    "launching": "正在启动 Ego Lite…",
+    "browsing": "Agent 正在操作 Ego Browser…"
+  }
+}

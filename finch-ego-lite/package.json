@@ -1,0 +1,64 @@
+{
+  "name": "finch-ego-lite",
+  "version": "0.1.0",
+  "description": "Let Finch browse the web in isolated Ego Lite task spaces while you follow every page it opens.",
+  "author": {
+    "name": "Puter Jam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-ego-lite"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-ego-lite#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "npm run build && npx @finchtoys/minitools doctor ."
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "id": "ego-browser",
+    "name": "Ego Browser",
+    "description": "Control Ego Browser and see the pages your Agent is working on.",
+    "systemPrompt": "Use ego_browser for browser automation. Call action=status to inspect Ego availability and task spaces. Call action=run with one coherent ego-browser JavaScript program for browser work. Reuse task spaces, respect user ownership, verify meaningful actions, and complete spaces when done.",
+    "main": "dist/index.js",
+    "activationEvents": ["onStartup"],
+    "miniToolType": "local",
+    "categories": ["productivity", "developer"],
+    "contributes": {
+      "tools": true,
+      "composerActions": [
+        {
+          "id": "ego-browser",
+          "icon": "ext:ego-browser-icons/ego",
+          "tooltip": "Ego Browser"
+        }
+      ],
+      "iconPacks": [
+        {
+          "id": "ego-browser-icons",
+          "label": "Ego Browser Icons"
+        }
+      ],
+      "skills": true
+    },
+    "permissions": {
+      "filesystem": "none",
+      "network": false,
+      "shell": true
+    }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.2.9",
+    "@types/node": "^26.1.0",
+    "typescript": "^6.0.3"
+  },
+  "files": ["dist/", "i18n/", "skills/", "icon.png", "README.md"]
+}

@@ -1,0 +1,104 @@
+{
+  "name": "Ego Browser",
+  "description": "Let Finch browse the web in isolated Ego Lite task spaces while you follow every page it opens.",
+  "systemPrompt": "Use ego_browser for browser automation. Call action=status to inspect Ego availability and task spaces. Call action=run with one coherent ego-browser JavaScript program for browser work. Reuse task spaces, respect user ownership, verify meaningful actions, and complete spaces when done.",
+  "composerActions": {
+    "ego-browser": {
+      "tooltip": "Ego Browser"
+    }
+  },
+  "toolMeta": {
+    "name": "Ego Browser"
+  },
+  "badge": {
+    "online": "Ego online",
+    "offline": "Ego offline",
+    "unsupported": "macOS only"
+  },
+  "menu": {
+    "checking": {
+      "label": "Checking Ego status…",
+      "description": "Updates automatically"
+    },
+    "help": {
+      "label": "Install and help"
+    },
+    "learn": {
+      "label": "Learn about Ego Lite"
+    },
+    "unsupported": {
+      "label": "Ego Lite requires macOS",
+      "description": "This device is not supported",
+      "hover": "Ego Lite currently runs on macOS only. Current platform: {platform}."
+    },
+    "install": {
+      "label": "Install Ego Lite",
+      "description": "Open official website",
+      "hover": "Finish first-time setup after installation so Ego can register the ego-browser command."
+    },
+    "launch": {
+      "label": "Launch Ego Lite"
+    },
+    "summary": {
+      "spaces": "{count} task spaces",
+      "pages": "{count} pages"
+    },
+    "resume": {
+      "label": "Let Agent continue when done",
+      "description": "Insert a continue message"
+    },
+    "close": {
+      "label": "Close task space",
+      "description": "Close every page inside"
+    },
+    "space": {
+      "fallback": "Task space {id}"
+    },
+    "empty": {
+      "label": "Agent is taking a break",
+      "description": "Click to start a browsing task",
+      "hover": "Tell Agent which website to visit and what you want done."
+    }
+  },
+  "page": {
+    "untitled": "Untitled page"
+  },
+  "site": {
+    "unknown": "Unknown site"
+  },
+  "ownership": {
+    "agent": "Agent working",
+    "delegated": "Waiting for you",
+    "user": "User control"
+  },
+  "status": {
+    "unsupported": "Ego Lite currently supports macOS only. Current platform: {platform}.",
+    "notInstalled": "Ego Lite is not installed. Install it from {website} and finish first-time setup.",
+    "notRunning": "Ego Lite {version} is installed but not running.",
+    "error": "Ego Lite is running, but its status could not be read: {error}"
+  },
+  "composer": {
+    "startPrompt": "Please use Ego Browser to visit: ",
+    "resumePrompt": "I finished the manual steps in Ego task space {id}. Please continue."
+  },
+  "toast": {
+    "launched": "Ego Lite launched",
+    "closed": "Task space closed",
+    "actionFailed": "Could not open the Ego page"
+  },
+  "dialog": {
+    "close": {
+      "title": "Close this Ego task space?",
+      "message": "This will close all {count} pages inside.",
+      "confirm": "Close",
+      "cancel": "Cancel"
+    }
+  },
+  "error": {
+    "notInstalled": "Ego Browser is not installed"
+  },
+  "progress": {
+    "launching": "Launching Ego Lite…",
+    "browsing": "Agent is working in Ego Browser…"
+  }
+}
