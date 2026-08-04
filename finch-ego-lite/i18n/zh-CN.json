@@ -1,7 +1,7 @@
 {
   "name": "Ego 浏览器",
   "description": "让 Finch 在独立的 Ego Lite 任务空间中浏览网页，你可以随时查看它打开的每个页面。",
-  "systemPrompt": "使用 ego_browser 执行浏览器自动化。先用 action=status 检查 Ego 状态和任务空间；用 action=run 执行一段完整的 Ego Browser JavaScript。复用任务空间、尊重用户控制权、验证关键操作，并在完成后关闭任务空间。",
+  "systemPrompt": "使用 ego_browser 执行浏览器自动化。先用 action=status 检查 Ego 状态和任务空间；日常操作优先用 open_url/snapshot/click/fill/type/press_key/scroll/screenshot/extract/close_space 等声明式 action，必要时传 space_id；高级场景才用 action=run 执行脚本。复用任务空间、尊重用户控制权、验证关键操作，并在完成后关闭任务空间。",
   "composerActions": {
     "ego-browser": {
       "tooltip": "Ego 浏览器"
@@ -98,7 +98,14 @@
     "notInstalled": "Ego Browser 未安装"
   },
   "progress": {
-    "launching": "正在启动 Ego Lite…",
+    "launching": "正在唤醒 Ego 浏览器…|给浏览器泡杯咖啡…|Ego 正在伸懒腰…",
+    "opening": "正在推开新世界的大门…|网页加载中…|正在敲响网络的大门…",
+    "reading": "正在环顾页面…|正在阅读页面…|正在扫描内容…",
+    "acting": "轻轻点了一下…|正在按下按钮…|正在填写…",
+    "scrolling": "正在往下滚动…|鼠标滚轮转起来了…",
+    "shooting": "咔嚓！拍照留念 📸|定格这一刻…",
+    "closing": "正在收摊…|正在收拾战场…|任务完成，整理中…",
+    "running": "Ego 正在忙活…|浏览器魔法进行中…",
     "browsing": "Agent 正在操作 Ego Browser…"
   }
 }

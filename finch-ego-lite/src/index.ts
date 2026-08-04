@@ -1,6 +1,6 @@
 import type * as finch from 'finch';
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -172,6 +172,116 @@ async function openWebsite(): Promise<void> {
   const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
   const args = process.platform === 'win32' ? ['/c', 'start', '', WEBSITE] : [WEBSITE];
   await execFileAsync(command, args, { timeout: 5000 });
+}
+
+interface ActionInput {
+  action?: string;
+  url?: string;
+  space_id?: number;
+  space_name?: string;
+  selector?: string;
+  text?: string;
+  value?: string;
+  key?: string;
+  delta_y?: number;
+  script?: string;
+  timeout_seconds?: number;
+}
+
+const ACTION_STAGES: Record<string, string> = {
+  open_url: 'opening',
+  snapshot: 'reading',
+  extract: 'reading',
+  click: 'acting',
+  fill: 'acting',
+  type: 'acting',
+  press_key: 'acting',
+  scroll: 'scrolling',
+  screenshot: 'shooting',
+  close_space: 'closing',
+  run: 'running',
+};
+
+// 趣味进度文案：i18n 值用 | 分隔多条候选，随机取一条。
+function pickProgress(t: Translate, stage: string): string {
+  const pool = t(`progress.${stage}`);
+  const list = pool.split('|').map((s) => s.trim()).filter(Boolean);
+  return list[Math.floor(Math.random() * list.length)] ?? pool;
+}
+
+// 未显式指定 space_id 时，若只有一个 agent 空间则用它，否则让 AI 先 status/open_url。
+async function resolveSpaceId(spaceId: number | undefined): Promise<number | undefined> {
+  if (spaceId !== undefined) return spaceId;
+  const status = await getStatus(false);
+  const agentSpaces = status.spaces.filter((space) => space.ownership === 'agent');
+  if (agentSpaces.length === 1) return agentSpaces[0].id;
+  return undefined;
+}
+
+// 生成 Ego 脚本。selector/url/text 等一律经 JSON.stringify 转义。
+function buildScript(action: string, input: ActionInput, spaceId: number | undefined): string {
+  const q = JSON.stringify;
+  const sel = input.selector ? q(input.selector) : 'null';
+  const spaceLine = spaceId !== undefined ? `await switchTaskSpace(${spaceId});` : '';
+
+  switch (action) {
+    case 'open_url': {
+      const name = input.space_name || 'web task';
+      const timeout = input.timeout_seconds ?? 20;
+      return `const space = await useOrCreateTaskSpace(${q(name)});
+await openOrReuseTab(${q(input.url ?? '')}, { wait: true, timeout: ${timeout} });
+const tab = await currentTab();
+cliLog(JSON.stringify({ spaceId: space.id, url: tab.url, title: tab.title }));`;
+    }
+    case 'snapshot':
+      return `${spaceLine}
+const text = await snapshotText();
+cliLog(String(text));`;
+    case 'extract':
+      return `${spaceLine}
+const sel = ${sel};
+let text;
+if (sel) {
+  text = String(await js('(() => { const el = document.querySelector(' + JSON.stringify(sel) + '); return el ? el.innerText : ""; })()'));
+} else {
+  text = String(await snapshotText());
+}
+cliLog(text);`;
+    case 'click':
+      return `${spaceLine}
+await click(${sel});
+await waitForLoad({ timeout: 15 }).catch(() => {});
+const info = await pageInfo();
+cliLog(JSON.stringify({ ok: true, url: info.url, title: info.title }));`;
+    case 'fill':
+      return `${spaceLine}
+await fillInput(${sel}, ${q(input.value ?? '')});
+cliLog('ok');`;
+    case 'type':
+      return `${spaceLine}
+${sel !== 'null' ? `await click(${sel});` : ''}
+await typeText(${q(input.text ?? '')});
+cliLog('ok');`;
+    case 'press_key':
+      return `${spaceLine}
+await pressKey(${q(input.key ?? 'Enter')});
+cliLog('ok');`;
+    case 'scroll':
+      return `${spaceLine}
+await scrollBy({ y: ${input.delta_y ?? 300} });
+const info = await pageInfo();
+cliLog(JSON.stringify({ ok: true, sy: info.sy }));`;
+    case 'screenshot':
+      return `${spaceLine}
+const path = await captureScreenshot();
+cliLog('__EGO_SHOT__' + path);`;
+    case 'close_space':
+      return `await completeTaskSpace(${spaceId}, { keep: false });
+cliLog('ok');`;
+    case 'run':
+    default:
+      return input.script ?? '';
+  }
 }
 
 function key(value: unknown): string {
@@ -471,37 +581,77 @@ export function activate(ctx: finch.ExtensionContext): void {
   ctx.subscriptions.push(ctx.tools.register({
     name: 'ego_browser',
     title: 'Ego Browser',
-    description: `Operate Ego Browser through its preloaded JavaScript helpers.
+    description: `Operate Ego Browser with declarative actions. Everyday browsing needs no scripts.
 action:
-  status — check installation, runtime, task-space ownership, and open pages
-  run    — execute one coherent Ego Browser JavaScript program (requires script)
-Use cliLog(...) for output. Reuse task spaces, respect user control, verify actions, and complete finished spaces.`,
+  status      — check installation, runtime, task spaces and open pages
+  open_url    — open a URL in a task space (url, space_name?) and return its spaceId
+  snapshot    — read the current page as text (space_id?)
+  click       — click an element by CSS selector (space_id?, selector)
+  fill        — fill a form field (space_id?, selector, value)
+  type        — type text; pass selector to focus the field first (space_id?, selector?, text)
+  press_key   — press a key: Enter, Tab, Escape, ArrowDown... (space_id?, key)
+  scroll      — scroll down by pixels (space_id?, delta_y?)
+  screenshot  — capture the page and return it as an image (space_id?)
+  extract     — extract innerText of a CSS selector, or the whole page (space_id?, selector?)
+  close_space — close a task space (space_id)
+  run         — advanced: run a raw Ego Browser script (script, timeout_seconds?)
+Most actions accept space_id; when omitted and exactly one agent-owned task space exists, it is used.
+Reuse task spaces, respect user ownership, verify meaningful actions, and complete spaces when done.`,
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['status', 'run'] },
-        script: { type: 'string', description: 'JavaScript program for action=run. Ego Browser helpers are preloaded.' },
-        timeout_seconds: { type: 'number', description: 'Execution timeout for action=run, from 1 to 300 seconds. Default 60.' },
+        action: { type: 'string', enum: ['status', 'open_url', 'snapshot', 'click', 'fill', 'type', 'press_key', 'scroll', 'screenshot', 'extract', 'close_space', 'run'] },
+        url: { type: 'string', description: 'URL to open (action=open_url).' },
+        space_id: { type: 'number', description: 'Task space id from status/open_url. Optional when only one agent space exists.' },
+        space_name: { type: 'string', description: 'Semantic name for the task space (action=open_url).' },
+        selector: { type: 'string', description: 'CSS selector of the target element (click/fill/type/extract).' },
+        text: { type: 'string', description: 'Text to type (action=type).' },
+        value: { type: 'string', description: 'Value to fill into the field (action=fill).' },
+        key: { type: 'string', description: 'Key to press (action=press_key): Enter, Tab, Escape...' },
+        delta_y: { type: 'number', description: 'Pixels to scroll down (action=scroll, default 300).' },
+        script: { type: 'string', description: 'Raw Ego Browser script (action=run only).' },
+        timeout_seconds: { type: 'number', description: 'Execution timeout, 1 to 300 seconds. Default 60.' },
       },
       required: ['action'],
     },
     risk: 'high',
     defaultEnabled: true,
     async execute(input, exec) {
-      const request = input as { action?: string; script?: string; timeout_seconds?: number };
-      if (request.action === 'status') {
+      const request = input as ActionInput;
+      const actionName = request.action ?? '';
+
+      if (actionName === 'status') {
         const status = await getStatus(true);
         cachedStatus = status;
         action.notifyUpdate();
         return { content: [{ type: 'text', text: statusText(status, t) }], isError: !status.supported || Boolean(status.error) };
       }
 
-      if (request.action !== 'run' || typeof request.script !== 'string' || !request.script.trim()) {
-        return { content: [{ type: 'text', text: 'action=run requires a non-empty script.' }], isError: true };
+      if (!ACTION_STAGES[actionName]) {
+        return { content: [{ type: 'text', text: `Unknown action: ${actionName}.` }], isError: true };
       }
-      if (request.script.length > 100_000 || request.script.includes('\0')) {
-        return { content: [{ type: 'text', text: 'The Ego Browser script is invalid or too large.' }], isError: true };
+
+      if (actionName === 'run') {
+        if (typeof request.script !== 'string' || !request.script.trim()) {
+          return { content: [{ type: 'text', text: 'action=run requires a non-empty script.' }], isError: true };
+        }
+        if (request.script.length > 100_000 || request.script.includes('\0')) {
+          return { content: [{ type: 'text', text: 'The Ego Browser script is invalid or too large.' }], isError: true };
+        }
       }
+      if (actionName === 'open_url' && !request.url) {
+        return { content: [{ type: 'text', text: 'action=open_url requires a url.' }], isError: true };
+      }
+      if ((actionName === 'click' || actionName === 'fill' || actionName === 'extract') && !request.selector) {
+        return { content: [{ type: 'text', text: `action=${actionName} requires a CSS selector.` }], isError: true };
+      }
+      if (actionName === 'fill' && request.value === undefined) {
+        return { content: [{ type: 'text', text: 'action=fill requires a value.' }], isError: true };
+      }
+      if (actionName === 'type' && !request.text) {
+        return { content: [{ type: 'text', text: 'action=type requires text.' }], isError: true };
+      }
+
       if (process.platform !== 'darwin') {
         return { content: [{ type: 'text', text: t('status.unsupported', { platform: process.platform }) }], isError: true };
       }
@@ -515,20 +665,45 @@ Use cliLog(...) for output. Reuse task spaces, respect user control, verify acti
         };
       }
 
+      let spaceId: number | undefined;
+      if (actionName !== 'open_url' && actionName !== 'run') {
+        spaceId = await resolveSpaceId(request.space_id);
+        if (spaceId === undefined) {
+          return {
+            content: [{ type: 'text', text: 'No task space resolved. Call action=status or action=open_url first, then pass its space_id.' }],
+            isError: true,
+          };
+        }
+      }
+
       if (!(await processRunning())) {
-        exec.progress.report({ stage: 'launching', message: t('progress.launching') });
+        exec.progress.report({ stage: 'launching', message: pickProgress(t, 'launching') });
         await launchEgo();
         await new Promise((resolve) => setTimeout(resolve, 1800));
       }
 
+      const script = buildScript(actionName, request, spaceId);
       const timeout = Math.min(300, Math.max(1, request.timeout_seconds ?? 60)) * 1000;
-      exec.progress.report({ stage: 'browsing', message: t('progress.browsing') });
+      exec.progress.report({ stage: ACTION_STAGES[actionName], message: pickProgress(t, ACTION_STAGES[actionName] ?? 'browsing') });
       try {
-        const output = await runCommand(binary, ['nodejs', '-e', request.script], timeout);
+        const output = await runCommand(binary, ['nodejs', '-e', script], timeout);
         cachedStatus = undefined;
         action.notifyUpdate();
         refreshStatus(false);
-        return { content: [{ type: 'text', text: output || 'Ego Browser script completed.' }] };
+        if (actionName === 'screenshot') {
+          const path = output.split('__EGO_SHOT__').pop()?.split('\n')[0]?.trim();
+          if (!path || !existsSync(path)) {
+            return { content: [{ type: 'text', text: output || 'Screenshot failed.' }], isError: true };
+          }
+          const data = readFileSync(path).toString('base64');
+          return {
+            content: [
+              { type: 'text', text: `Screenshot: ${path}` },
+              { type: 'image', data: `data:image/png;base64,${data}`, mimeType: 'image/png' },
+            ],
+          };
+        }
+        return { content: [{ type: 'text', text: output || 'ok' }] };
       } catch (error) {
         cachedStatus = undefined;
         action.notifyUpdate();

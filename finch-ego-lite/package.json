@@ -28,7 +28,7 @@
     "id": "ego-browser",
     "name": "Ego Browser",
     "description": "Control Ego Browser and see the pages your Agent is working on.",
-    "systemPrompt": "Use ego_browser for browser automation. Call action=status first to inspect Ego availability and task spaces. Call action=run with a goal-oriented script for each coherent browser task. Reuse task spaces, respect user ownership, verify meaningful actions, and complete spaces when done.",
+    "systemPrompt": "Use ego_browser for browser automation with declarative actions. Call action=status first to inspect Ego and task spaces. Use open_url, snapshot, click, fill, type, press_key, scroll, screenshot, extract and close_space for everyday tasks, passing space_id from open_url/status when needed. Fall back to action=run only for advanced cases. Reuse task spaces, respect user ownership, verify meaningful actions, and complete spaces when done.",
     "main": "dist/index.js",
     "activationEvents": [
       "onStartup"

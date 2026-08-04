@@ -1,7 +1,7 @@
 {
   "name": "Ego Browser",
   "description": "Let Finch browse the web in isolated Ego Lite task spaces while you follow every page it opens.",
-  "systemPrompt": "Use ego_browser for browser automation. Call action=status to inspect Ego availability and task spaces. Call action=run with one coherent ego-browser JavaScript program for browser work. Reuse task spaces, respect user ownership, verify meaningful actions, and complete spaces when done.",
+  "systemPrompt": "Use ego_browser for browser automation with declarative actions. Call action=status first to inspect Ego and task spaces. Use open_url, snapshot, click, fill, type, press_key, scroll, screenshot, extract and close_space for everyday tasks, passing space_id from open_url/status when needed. Fall back to action=run only for advanced cases. Reuse task spaces, respect user ownership, verify meaningful actions, and complete spaces when done.",
   "composerActions": {
     "ego-browser": {
       "tooltip": "Ego Browser"
@@ -98,7 +98,14 @@
     "notInstalled": "Ego Browser is not installed"
   },
   "progress": {
-    "launching": "Launching Ego Lite…",
+    "launching": "Waking up Ego Browser…|Pouring a coffee for the browser…|Ego is stretching…",
+    "opening": "Opening a new door…|Loading the page…|Knocking on the web…",
+    "reading": "Taking a look around…|Reading the page…|Scanning the content…",
+    "acting": "Clicking gently…|Tapping the button…|Filling things in…",
+    "scrolling": "Scrolling down…|Rolling the wheel…",
+    "shooting": "Saying cheese! 📸|Freezing the moment…",
+    "closing": "Tidying up…|Closing the tab circus…|Wrapping up…",
+    "running": "Ego is doing its thing…|Browser magic in progress…",
     "browsing": "Agent is working in Ego Browser…"
   }
 }
