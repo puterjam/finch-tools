@@ -8,7 +8,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
@@ -18,6 +18,31 @@ export const ENGINE_VERSION = '0.1.2';
 
 const REGISTRY = 'https://registry.npmjs.org';
 const SCOPE = '@firecrawl';
+
+/**
+ * The Windows binary is a Rust MSVC build, so it imports VCRUNTIME140.dll from
+ * the Visual C++ 2015-2022 redistributable. Every other DLL it needs ships with
+ * Windows itself. The redistributable is present on most machines but is not
+ * part of a clean install, so check for it instead of letting dlopen fail with
+ * "the specified module could not be found".
+ */
+const VC_REDIST_URL = 'https://aka.ms/vs/17/release/vc_redist.x64.exe';
+
+function missingVisualCppRuntime(): boolean {
+  if (process.platform !== 'win32') return false;
+
+  const root = process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows';
+  const candidates = [
+    join(root, 'System32', 'vcruntime140.dll'),
+    join(root, 'SysWOW64', 'vcruntime140.dll'),
+  ];
+
+  return !candidates.some((candidate) => existsSync(candidate));
+}
+
+const VC_REDIST_HINT =
+  'AnyDoc needs the Microsoft Visual C++ 2015-2022 Redistributable (x64), which is missing on this machine. ' +
+  `Install it from ${VC_REDIST_URL}, then restart Finch and try again.`;
 
 /** Subset of the native binding this mini tool relies on. */
 export interface DocumentEngine {
@@ -201,17 +226,45 @@ export function loadEngine(storagePath: string, onProgress?: ProgressReporter): 
     if (!target) {
       throw new Error(
         `AnyDoc has no document engine for ${process.platform}/${process.arch}. ` +
-          'Supported: macOS (arm64/x64), Linux (x64/arm64), Windows (x64).',
+          'Supported: macOS (arm64/x64), Linux (x64/arm64, glibc/musl), Windows (x64). ' +
+          'Windows on ARM is not supported because upstream publishes no build for it.',
       );
     }
 
-    const binaryPath = join(storagePath, 'engine', ENGINE_VERSION, `anydoc.${target}.node`);
+    // Check before spending a 7 MB download on a binary that cannot be loaded.
+    if (missingVisualCppRuntime()) {
+      throw new Error(VC_REDIST_HINT);
+    }
 
-    if (!existsSync(binaryPath)) {
+    const binaryPath = join(storagePath, 'engine', ENGINE_VERSION, `anydoc.${target}.node`);
+    const load = createRequire(import.meta.url);
+
+    const wasCached = existsSync(binaryPath);
+    if (!wasCached) {
       await installEngine(target, binaryPath, onProgress);
     }
 
-    const engine = createRequire(import.meta.url)(binaryPath) as DocumentEngine;
+    let engine: DocumentEngine;
+    try {
+      engine = load(binaryPath) as DocumentEngine;
+    } catch (error) {
+      // A cached binary that will not load is almost always a truncated or
+      // corrupted download from an earlier run. Heal it instead of asking the
+      // user to go delete files, but only retry a copy we did not just fetch.
+      if (!wasCached || isMissingSystemLibrary(error)) {
+        throw new Error(describeLoadFailure(error, binaryPath));
+      }
+
+      rmSync(binaryPath, { force: true });
+      await installEngine(target, binaryPath, onProgress);
+
+      try {
+        engine = load(binaryPath) as DocumentEngine;
+      } catch (retryError) {
+        throw new Error(describeLoadFailure(retryError, binaryPath));
+      }
+    }
+
     if (typeof engine.toMarkdown !== 'function') {
       throw new Error('document engine loaded but exposes no toMarkdown function');
     }
@@ -225,6 +278,38 @@ export function loadEngine(storagePath: string, onProgress?: ProgressReporter): 
   });
 
   return pending;
+}
+
+/**
+ * Turns a native module load failure into something the user can act on.
+ * The raw dlopen errors ("The specified module could not be found") name the
+ * .node file rather than the missing system library, which sends people
+ * looking in the wrong place.
+ */
+function describeLoadFailure(error: unknown, binaryPath: string): string {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (isMissingSystemLibrary(error)) {
+    return `${VC_REDIST_HINT} (original error: ${message})`;
+  }
+
+  return (
+    `AnyDoc could not load its document engine: ${message}. ` +
+    `Delete ${binaryPath} and try again to force a fresh download.`
+  );
+}
+
+/**
+ * True when Windows refused the module because a dependent DLL is absent
+ * rather than because our own file is broken. Re-downloading cannot fix that,
+ * so these failures must not trigger the self-healing retry.
+ */
+function isMissingSystemLibrary(error: unknown): boolean {
+  if (process.platform !== 'win32') return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return /specified module could not be found|specified procedure could not be found|error code 126|127/i.test(
+    message,
+  );
 }
 
 /** Whether the engine is already installed locally, for status reporting. */

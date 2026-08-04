@@ -191,12 +191,8 @@ Tables, headings, lists, footnotes and speaker notes are preserved. Scanned imag
             exec.progress.report({ stage: 'engine', message: t(engineProgressKey(message)), percent }),
           );
         } catch (error) {
-          return text(
-            `AnyDoc could not prepare its document engine: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-            true,
-          );
+          // engine.ts already phrases these for the user; do not wrap them again.
+          return text(error instanceof Error ? error.message : String(error), true);
         }
 
         if (exec.signal?.aborted) return text('Cancelled.', true);

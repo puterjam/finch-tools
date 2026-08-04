@@ -48,7 +48,16 @@ Then enable **AnyDoc** in the Finch Toolcase.
 
 The cached engine lives in AnyDoc's own data directory, `~/.finch/extension-data/anydoc/engine/`. Deleting it is safe — the next document you open downloads it again. Updating or removing AnyDoc never touches it.
 
-Supported platforms: macOS (Apple Silicon and Intel), Linux (x64 and arm64, glibc and musl), Windows (x64).
+You do not need Rust, Node.js or Python installed. The engine is a prebuilt binary and Finch supplies the runtime that loads it.
+
+| Platform | Status |
+|---|---|
+| macOS, Apple Silicon and Intel | works out of the box |
+| Linux x64 / arm64, glibc and musl | works out of the box |
+| Windows x64 | needs the [Microsoft Visual C++ 2015-2022 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe), which most machines already have |
+| Windows on ARM | not supported — upstream publishes no build for it |
+
+On Windows, AnyDoc checks for the Visual C++ runtime before downloading anything and links you straight to the installer if it is missing, rather than failing later with an unhelpful DLL error.
 
 ## Limits
 
@@ -117,7 +126,16 @@ npx @finchtoys/minitools add finch-anydoc
 
 缓存的引擎存在 AnyDoc 自己的数据目录 `~/.finch/extension-data/anydoc/engine/`。直接删掉也没关系，下次打开文档会重新下载；更新或卸载 AnyDoc 都不会动它。
 
-支持平台：macOS（Apple Silicon 与 Intel）、Linux（x64 与 arm64，glibc 与 musl）、Windows（x64）。
+你**不需要**安装 Rust、Node.js 或 Python。引擎是预编译二进制，加载它的运行时由 Finch 自己提供。
+
+| 平台 | 状态 |
+|---|---|
+| macOS（Apple Silicon 与 Intel） | 开箱即用 |
+| Linux x64 / arm64（glibc 与 musl） | 开箱即用 |
+| Windows x64 | 需要 [Microsoft Visual C++ 2015-2022 运行库](https://aka.ms/vs/17/release/vc_redist.x64.exe)，绝大多数机器已经装过 |
+| Windows on ARM | 不支持 —— 上游没有提供该平台的构建 |
+
+在 Windows 上，AnyDoc 会在下载任何东西之前先检查 Visual C++ 运行库，缺失时直接给出安装包链接，而不是等到后面报一句看不懂的 DLL 错误。
 
 ## 已知限制
 
