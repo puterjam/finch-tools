@@ -1,6 +1,6 @@
 {
   "name": "finch-ego-lite",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Let Finch browse the web in isolated Ego Lite task spaces while you follow every page it opens.",
   "author": {
     "name": "PuterJam",
