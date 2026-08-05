@@ -238,7 +238,14 @@ function buildScript(action: string, input: ActionInput, spaceId: number | undef
     case 'open_url': {
       const name = input.space_name || 'web task';
       const timeout = input.timeout_seconds ?? 20;
+      if (spaceId !== undefined) {
+        return `await switchTaskSpace(${spaceId});
+await openOrReuseTab(${q(input.url ?? '')}, { wait: true, timeout: ${timeout} });
+const tab = await currentTab();
+cliLog(JSON.stringify({ spaceId: ${spaceId}, url: tab.url, title: tab.title }));`;
+      }
       return `const space = await useOrCreateTaskSpace(${q(name)});
+await switchTaskSpace(space.id);
 await openOrReuseTab(${q(input.url ?? '')}, { wait: true, timeout: ${timeout} });
 const tab = await currentTab();
 cliLog(JSON.stringify({ spaceId: space.id, url: tab.url, title: tab.title }));`;
@@ -710,9 +717,9 @@ Reuse task spaces, respect user ownership, verify meaningful actions, and comple
       }
 
       let spaceId: number | undefined;
-      if (actionName !== 'open_url' && actionName !== 'run') {
+      if (actionName !== 'run') {
         spaceId = await resolveSpaceId(request.space_id);
-        if (spaceId === undefined) {
+        if (spaceId === undefined && actionName !== 'open_url') {
           return {
             content: [{ type: 'text', text: 'No task space resolved. Call action=status or action=open_url first, then pass its space_id.' }],
             isError: true,
