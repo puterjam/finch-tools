@@ -614,7 +614,7 @@ Reuse task spaces, respect user ownership, verify meaningful actions, and comple
       },
       required: ['action'],
     },
-    risk: 'high',
+    risk: 'medium',
     defaultEnabled: true,
     async execute(input, exec) {
       const request = input as ActionInput;
