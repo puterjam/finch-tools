@@ -2,7 +2,7 @@
 name: ego-browser
 description: Use Ego Browser whenever the user needs to open a website, navigate pages, click, type, upload, take screenshots, extract page data, test web apps, log in, or automate browser actions. Ego gives Agents isolated task spaces that reuse the user's login state without competing with normal browser windows.
 metadata:
-  version: "0.1.2"
+  version: "0.1.3"
 ---
 
 # Ego Browser 工具使用指南
@@ -31,6 +31,7 @@ metadata:
 | press_key | space_id?, key | 按键：Enter/Tab/Escape… |
 | scroll | space_id?, delta_y? | 向下滚动（默认 300px） |
 | screenshot | space_id? | 截图并作为图片返回 |
+| switch_tab | space_id, target_id | 先切到任务空间，再激活其中某个页面（target_id 来自 status 的 tabs） |
 | extract | space_id?, selector? | 提取区域 innerText 或整页文本 |
 | close_space | space_id | 关闭任务空间 |
 | run | script, timeout_seconds? | 高级：执行原始 Ego 脚本 |

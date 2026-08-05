@@ -187,6 +187,7 @@ interface ActionInput {
   url?: string;
   space_id?: number;
   space_name?: string;
+  target_id?: string;
   selector?: string;
   text?: string;
   value?: string;
@@ -206,6 +207,7 @@ const ACTION_STAGES: Record<string, string> = {
   press_key: 'acting',
   scroll: 'scrolling',
   screenshot: 'shooting',
+  switch_tab: 'switching',
   close_space: 'closing',
   run: 'running',
 };
@@ -283,6 +285,12 @@ cliLog(JSON.stringify({ ok: true, sy: info.sy }));`;
       return `${spaceLine}
 const path = await captureScreenshot();
 cliLog('__EGO_SHOT__' + path);`;
+    case 'switch_tab':
+      return `await switchTaskSpace(${spaceId});
+await switchTab(${q(input.target_id ?? '')});
+await waitForLoad({ timeout: 15 }).catch(() => {});
+const info = await pageInfo();
+cliLog(JSON.stringify({ ok: true, spaceId: ${spaceId}, url: info.url, title: info.title }));`;
     case 'close_space':
       return `await completeTaskSpace(${spaceId}, { keep: false });
 cliLog('ok');`;
@@ -623,6 +631,7 @@ action:
   press_key   — press a key: Enter, Tab, Escape, ArrowDown... (space_id?, key)
   scroll      — scroll down by pixels (space_id?, delta_y?)
   screenshot  — capture the page and return it as an image (space_id?)
+  switch_tab  — switch to a task space and activate one of its pages (space_id, target_id from status)
   extract     — extract innerText of a CSS selector, or the whole page (space_id?, selector?)
   close_space — close a task space (space_id)
   run         — advanced: run a raw Ego Browser script (script, timeout_seconds?)
@@ -631,10 +640,11 @@ Reuse task spaces, respect user ownership, verify meaningful actions, and comple
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['status', 'open_url', 'snapshot', 'click', 'fill', 'type', 'press_key', 'scroll', 'screenshot', 'extract', 'close_space', 'run'] },
+        action: { type: 'string', enum: ['status', 'open_url', 'snapshot', 'click', 'fill', 'type', 'press_key', 'scroll', 'screenshot', 'switch_tab', 'extract', 'close_space', 'run'] },
         url: { type: 'string', description: 'URL to open (action=open_url).' },
         space_id: { type: 'number', description: 'Task space id from status/open_url. Optional when only one agent space exists.' },
         space_name: { type: 'string', description: 'Semantic name for the task space (action=open_url).' },
+        target_id: { type: 'string', description: 'Tab target id from action=status (action=switch_tab).' },
         selector: { type: 'string', description: 'CSS selector of the target element (click/fill/type/extract).' },
         text: { type: 'string', description: 'Text to type (action=type).' },
         value: { type: 'string', description: 'Value to fill into the field (action=fill).' },
@@ -681,6 +691,9 @@ Reuse task spaces, respect user ownership, verify meaningful actions, and comple
       }
       if (actionName === 'type' && !request.text) {
         return { content: [{ type: 'text', text: 'action=type requires text.' }], isError: true };
+      }
+      if (actionName === 'switch_tab' && !request.target_id) {
+        return { content: [{ type: 'text', text: 'action=switch_tab requires target_id from action=status.' }], isError: true };
       }
 
       if (process.platform !== 'darwin') {
