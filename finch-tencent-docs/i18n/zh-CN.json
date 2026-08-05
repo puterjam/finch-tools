@@ -1,0 +1,85 @@
+{
+  "name": "腾讯文档",
+  "description": "在 Finch 中创建、读取、搜索和编辑腾讯文档（docs.qq.com）在线文档。",
+  "systemPrompt": "使用 tencent_docs 工具处理腾讯文档（docs.qq.com）：创建、读取、搜索和编辑在线文档。四个 MCP 服务共享同一个 Token：'tencent-docs'（通用工具：manage.*、get_content、create_smartcanvas_by_mdx、create_mind_by_markdown、create_flowchart_by_mermaid、scrape_url、ocr.*、smartsheet.*）、'slide-mcp'（PPT 编辑，slide_* 前缀）、'doc-mcp'（Word 编辑，doc.* 前缀）、'sheet-mcp'（Excel 编辑，sheet.* 前缀）。按文档类型路由：智能文档用 create_smartcanvas_by_mdx（MDX 兼容 Markdown），表格用 sheet.*，PPT 用 slide_*，Word 用 doc.*。读取任意文档用 get_content。搜索用 manage.search_file。连续 3 次及以上写入必须用批量接口（smartsheet.add_records、sheet.set_range_value_by_csv）。当调用返回鉴权错误（400006、token 过期）时，运行 tdocs_status 并引导用户重新授权。若 tdocs_auth 提示需要授权，告知用户完成已弹出的授权弹窗。",
+  "menu": {
+    "mcpMissing": {
+      "label": "MCP 客户端未启用",
+      "description": "请在工具箱中启用「MCP 客户端」扩展"
+    },
+    "connected": {
+      "label": "已连接",
+      "description": "腾讯文档已授权"
+    },
+    "server": {
+      "general": "通用文档服务 (tencent-docs)",
+      "slide": "幻灯片 (slide-mcp)",
+      "doc": "Word 文档 (doc-mcp)",
+      "sheet": "Excel 表格 (sheet-mcp)",
+      "ready": "已就绪",
+      "pending": "连接中…"
+    },
+    "reauth": {
+      "label": "重新授权",
+      "description": "Token 过期时重新登录"
+    },
+    "clear": {
+      "label": "退出登录",
+      "description": "清除 Token 并断开服务"
+    },
+    "signedOut": {
+      "label": "未授权",
+      "description": "需要登录后才能使用腾讯文档功能"
+    },
+    "auth": {
+      "label": "登录腾讯文档",
+      "description": "使用 QQ/微信扫码授权"
+    },
+    "home": {
+      "label": "打开腾讯文档主页",
+      "description": "docs.qq.com"
+    }
+  },
+  "toast": {
+    "signedOut": "已退出腾讯文档",
+    "actionFailed": "操作失败"
+  },
+  "dialog": {
+    "close": "关闭",
+    "home": {
+      "title": "腾讯文档",
+      "link": "在浏览器中打开腾讯文档主页"
+    },
+    "auth": {
+      "title": "登录腾讯文档",
+      "description": "请在浏览器中打开下面的链接完成授权",
+      "hint": "请使用 QQ 或微信扫码/登录授权。链接有效期为 5 分钟，完成后点击「已完成授权」。",
+      "link": "点击授权腾讯文档",
+      "done": "已完成授权"
+    }
+  },
+  "auth": {
+    "signedOut": "已退出腾讯文档。",
+    "cancelled": "已取消操作。",
+    "setToken": {
+      "title": "设置腾讯文档 Token",
+      "description": "粘贴从腾讯文档获取的 Token，四个服务将共享该 Token。",
+      "tokenLabel": "Token",
+      "linkLabel": "获取 Token"
+    },
+    "tokenSaved": "Token 已保存（{where}），服务已注册。",
+    "mcpMissing": "未找到 MCP 客户端能力，请在工具箱中启用「MCP 客户端」扩展后重试。",
+    "waiting": "等待完成授权…",
+    "start": {
+      "title": "登录腾讯文档",
+      "description": "在浏览器中打开下方链接并完成授权，然后返回点击「完成」。",
+      "linkLabel": "点击授权腾讯文档"
+    },
+    "exchanging": "正在换取 Token…",
+    "success": "授权成功！Token 已安全保存（{where}），四个文档服务已就绪。",
+    "vipRequired": "当前操作需要腾讯文档 VIP 权限，请升级 VIP 后重试。",
+    "expired": "授权已过期，请重新发起授权。",
+    "network": "网络请求失败，请检查网络后重试。",
+    "notAuthorized": "未检测到授权完成。请确认已在浏览器中完成授权，然后再次运行 tdocs_auth（将复用之前的授权链接）：{url}"
+  }
+}

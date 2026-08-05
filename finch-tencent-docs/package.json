@@ -1,0 +1,84 @@
+{
+  "name": "finch-tencent-docs",
+  "version": "0.1.0",
+  "description": "Create, read, search and edit Tencent Docs (docs.qq.com) online documents from Finch — smart docs, sheets, slides, Word, mind maps and more.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-tencent-docs"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-tencent-docs#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "id": "tencent-docs",
+    "name": "Tencent Docs",
+    "description": "Create, read, search and edit Tencent Docs online documents from Finch.",
+    "systemPrompt": "Use tencent_docs tools to work with Tencent Docs (docs.qq.com): creating, reading, searching and editing online documents. Four MCP services share one token: 'tencent-docs' (general tools: manage.*, get_content, create_smartcanvas_by_mdx, create_mind_by_markdown, create_flowchart_by_mermaid, scrape_url, ocr.*, smartsheet.*), 'slide-mcp' (PPT editing, slide_* prefix), 'doc-mcp' (Word editing, doc.* prefix), 'sheet-mcp' (Excel editing, sheet.* prefix). Route by document type: smartcanvas docs via create_smartcanvas_by_mdx (MDX is Markdown-compatible), sheets via sheet.*, PPT via slide_*, Word via doc.*. Read any doc with get_content. Search with manage.search_file. Prefer batch write APIs (smartsheet.add_records, sheet.set_range_value_by_csv) for 3+ consecutive writes. When a call fails with auth errors (400006, token expired), run tdocs_status and guide the user through re-auth. If tencent_docs_call says auth is required, tell the user to complete the auth dialog that was shown.",
+    "main": "dist/index.js",
+    "activationEvents": [
+      "onStartup"
+    ],
+    "miniToolType": "local",
+    "categories": [
+      "productivity"
+    ],
+    "requires": {
+      "capabilities": [
+        "mcp.client"
+      ]
+    },
+    "contributes": {
+      "tools": true,
+      "composerActions": [
+        {
+          "id": "tencent-docs",
+          "icon": "ext:tencent-docs-icons/tdocs",
+          "tooltip": "Tencent Docs"
+        }
+      ],
+      "iconPacks": [
+        {
+          "id": "tencent-docs-icons",
+          "label": "Tencent Docs Icons"
+        }
+      ],
+      "skills": true
+    },
+    "permissions": {
+      "filesystem": "none",
+      "network": true,
+      "shell": false,
+      "secrets": [
+        "TENCENT_DOCS_TOKEN"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.2.9",
+    "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "i18n/",
+    "skills/",
+    "icon.png",
+    "README.md"
+  ]
+}
