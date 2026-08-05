@@ -48,12 +48,20 @@ function egoBinary(): string | undefined {
 
 async function processRunning(): Promise<boolean> {
   if (process.platform !== 'darwin') return false;
-  try {
-    await execFileAsync('pgrep', ['-f', '/ego lite.app/Contents/MacOS/ego lite'], { timeout: 2000 });
-    return true;
-  } catch {
-    return false;
-  }
+  const probe = async () => {
+    try {
+      await execFileAsync('pgrep', ['-f', '/ego lite.app/Contents/MacOS/ego lite'], { timeout: 2000 });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const first = await probe();
+  if (first) return true;
+  // A transient pgrep failure (busy system, app relaunching) must not flip
+  // the badge to offline while Ego is actually running.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  return probe();
 }
 
 async function runCommand(file: string, args: string[], timeout = 20_000): Promise<string> {
@@ -575,7 +583,6 @@ export function activate(ctx: finch.ExtensionContext): void {
           if (!binary || !(await installedVersion(binary))) throw new Error(t('error.notInstalled')); 
           const script = `const result = await completeTaskSpace(${JSON.stringify(spaceId)}, { keep: false }); cliLog(JSON.stringify(result));`;
           await runCommand(binary, ['nodejs', '-e', script], 15_000);
-          cachedStatus = undefined;
           action.notifyUpdate();
           refreshStatus(true);
           await ctx.ui.showToast({ title: t('toast.closed'), variant: 'success', position: 'TC' });
@@ -711,7 +718,6 @@ Reuse task spaces, respect user ownership, verify meaningful actions, and comple
       exec.progress.report({ stage: ACTION_STAGES[actionName], message: pickProgress(t, ACTION_STAGES[actionName] ?? 'browsing') });
       try {
         const output = await runCommand(binary, ['nodejs', '-e', script], timeout);
-        cachedStatus = undefined;
         action.notifyUpdate();
         refreshStatus(true);
         if (actionName === 'screenshot') {
@@ -729,7 +735,6 @@ Reuse task spaces, respect user ownership, verify meaningful actions, and comple
         }
         return { content: [{ type: 'text', text: output || 'ok' }] };
       } catch (error) {
-        cachedStatus = undefined;
         action.notifyUpdate();
         refreshStatus(true);
         const message = error instanceof Error ? error.message : String(error);
