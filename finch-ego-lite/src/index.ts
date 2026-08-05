@@ -176,6 +176,14 @@ async function launchEgo(): Promise<void> {
   await execFileAsync('open', ['-a', 'ego lite'], { timeout: 5000 });
 }
 
+// Ego's CLI has no window/UI follow API: switchTaskSpace only changes the
+// command target, the window stays wherever the user left it. Bring Ego to
+// the front so agent activity is visible instead of running in the background.
+async function focusEgo(): Promise<void> {
+  if (process.platform !== 'darwin') return;
+  await execFileAsync('open', ['-a', 'ego lite'], { timeout: 5000 }).catch(() => {});
+}
+
 async function openWebsite(): Promise<void> {
   const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
   const args = process.platform === 'win32' ? ['/c', 'start', '', WEBSITE] : [WEBSITE];
@@ -731,6 +739,8 @@ Reuse task spaces, respect user ownership, verify meaningful actions, and comple
         exec.progress.report({ stage: 'launching', message: pickProgress(t, 'launching') });
         await launchEgo();
         await new Promise((resolve) => setTimeout(resolve, 1800));
+      } else {
+        await focusEgo();
       }
 
       const script = buildScript(actionName, request, spaceId);
