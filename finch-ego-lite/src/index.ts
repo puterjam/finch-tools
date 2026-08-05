@@ -354,9 +354,31 @@ export function activate(ctx: finch.ExtensionContext): void {
   }));
 
   let cachedStatus: EgoStatus | undefined;
+  let lastRefreshAt = 0;
   let refreshInFlight: Promise<void> | undefined;
   let pendingDetailedRefresh = false;
-  let refreshStatus: (detailed?: boolean) => void = () => {};
+  const refreshStatus = (detailed = false): Promise<void> => {
+    if (refreshInFlight) {
+      if (detailed) pendingDetailedRefresh = true;
+      return refreshInFlight;
+    }
+
+    refreshInFlight = getStatus(detailed)
+      .then((status) => {
+        cachedStatus = status;
+        lastRefreshAt = Date.now();
+        action.notifyUpdate();
+      })
+      .catch((error) => ctx.logger.warn('Ego background status refresh failed', error))
+      .finally(() => {
+        refreshInFlight = undefined;
+        if (pendingDetailedRefresh) {
+          pendingDetailedRefresh = false;
+          refreshStatus(true);
+        }
+      });
+    return refreshInFlight;
+  };
 
   const action = ctx.composerActions.register('ego-browser', {
     async getBadge() {
@@ -370,7 +392,9 @@ export function activate(ctx: finch.ExtensionContext): void {
     },
 
     async getMenu(): Promise<finch.ComposerActionMenuItem[]> {
-      refreshStatus(true);
+      if (cachedStatus === undefined || Date.now() - lastRefreshAt > 3000) {
+        await refreshStatus(true);
+      }
       if (!cachedStatus) {
         return [{
           id: '__checking__',
@@ -689,7 +713,7 @@ Reuse task spaces, respect user ownership, verify meaningful actions, and comple
         const output = await runCommand(binary, ['nodejs', '-e', script], timeout);
         cachedStatus = undefined;
         action.notifyUpdate();
-        refreshStatus(false);
+        refreshStatus(true);
         if (actionName === 'screenshot') {
           const path = output.split('__EGO_SHOT__').pop()?.split('\n')[0]?.trim();
           if (!path || !existsSync(path)) {
@@ -707,36 +731,15 @@ Reuse task spaces, respect user ownership, verify meaningful actions, and comple
       } catch (error) {
         cachedStatus = undefined;
         action.notifyUpdate();
-        refreshStatus(false);
+        refreshStatus(true);
         const message = error instanceof Error ? error.message : String(error);
         return { content: [{ type: 'text', text: message }], isError: true };
       }
     },
   }));
 
-  refreshStatus = (detailed = false) => {
-    if (refreshInFlight) {
-      pendingDetailedRefresh ||= detailed;
-      return;
-    }
-
-    refreshInFlight = getStatus(detailed)
-      .then((status) => {
-        cachedStatus = status;
-        action.notifyUpdate();
-      })
-      .catch((error) => ctx.logger.warn('Ego background status refresh failed', error))
-      .finally(() => {
-        refreshInFlight = undefined;
-        if (pendingDetailedRefresh) {
-          pendingDetailedRefresh = false;
-          refreshStatus(true);
-        }
-      });
-  };
-
   refreshStatus(true);
-  const timer = setInterval(() => refreshStatus(true), 10_000);
+  const timer = setInterval(() => refreshStatus(true), 5_000);
   ctx.subscriptions.push({ dispose: () => clearInterval(timer) });
 
   ctx.logger.info('ego-browser mini tool activated', { cached: Boolean(cachedStatus) });
