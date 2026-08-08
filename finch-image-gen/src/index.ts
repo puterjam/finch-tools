@@ -5,6 +5,7 @@ import * as path from 'node:path';
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_MODEL = 'gpt-image-1.5';
 const BASE_URL_STORAGE_KEY = 'baseUrl';
+const API_KEY_STORAGE_KEY = 'openaiApiKey';
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
@@ -219,13 +220,13 @@ Requests go to the OpenAI-compatible endpoint configured via the Image Gen setti
           return { content: [{ type: 'text', text: 'prompt is required and cannot be empty.' }], isError: true };
         }
 
-        const apiKey = await exec.secrets.get('OPENAI_API_KEY');
+        const apiKey = (await exec.secrets.get('OPENAI_API_KEY')) || (await exec.storage.get<string>(API_KEY_STORAGE_KEY));
         if (!apiKey) {
           return {
             content: [
               {
                 type: 'text',
-                text: 'OpenAI API key is not configured. Ask the user to open this mini tool\'s settings in Finch (Toolcase → Image Gen (OpenAI)) and fill in OPENAI_API_KEY, then retry.',
+                text: 'OpenAI API key is not configured. Ask the user to click the Image Gen settings button (gear icon) in the Composer toolbar → "OpenAI API Key" to enter it, then retry.',
               },
             ],
             isError: true,
@@ -298,31 +299,54 @@ Requests go to the OpenAI-compatible endpoint configured via the Image Gen setti
   ctx.subscriptions.push(
     ctx.composerActions.register('image-gen-settings', {
       async getMenu() {
-        const stored = await ctx.storage.get<string>(BASE_URL_STORAGE_KEY);
-        const effective = stored && stored.trim() ? normalizeBaseUrl(stored) : DEFAULT_BASE_URL;
+        const storedBaseUrl = await ctx.storage.get<string>(BASE_URL_STORAGE_KEY);
+        const effectiveBaseUrl = storedBaseUrl && storedBaseUrl.trim() ? normalizeBaseUrl(storedBaseUrl) : DEFAULT_BASE_URL;
+        const hasKeychainKey = !!(await ctx.secrets.get('OPENAI_API_KEY'));
+        const hasStoredKey = !!(await ctx.storage.get<string>(API_KEY_STORAGE_KEY));
+        const keyStatus = hasKeychainKey || hasStoredKey ? 'Configured' : 'Not set';
         return [
+          {
+            id: 'set-api-key',
+            label: 'OpenAI API Key',
+            iconName: 'settings',
+            description: keyStatus,
+            hoverText: `Set the OpenAI API key used by Image Gen. Currently: ${keyStatus}.`,
+          },
           {
             id: 'set-base-url',
             label: 'API Base URL',
             iconName: 'globe',
-            description: effective,
-            hoverText: `Change the OpenAI-compatible API endpoint used by Image Gen (e.g. a proxy/relay). Currently: ${effective}${stored ? '' : ' (default)'}`,
-          },
-          {
-            id: 'about-api-key',
-            label: 'OpenAI API Key',
-            iconName: 'settings',
-            hoverText: "The API key field lives on this mini tool's own card in Finch's Toolcase (Toolcase → Image Gen (OpenAI) → settings), not here — it's stored as a secret and can't be set from this menu.",
+            description: effectiveBaseUrl,
+            hoverText: `Change the OpenAI-compatible API endpoint used by Image Gen (e.g. a proxy/relay). Currently: ${effectiveBaseUrl}${storedBaseUrl ? '' : ' (default)'}`,
           },
         ];
       },
       async execute(_actionCtx, itemId) {
-        if (itemId === 'about-api-key') {
-          await ctx.ui.showModalDialog({
+        if (itemId === 'set-api-key') {
+          const result = await ctx.ui.showModalDialog({
             title: 'OpenAI API Key',
-            message: "Open Finch's Toolcase, find \"Image Gen (OpenAI)\", and fill in OPENAI_API_KEY on its settings card. It is stored securely by Finch and never shown in chat.",
-            actions: [{ id: 'ok', label: 'Got it', variant: 'primary' }],
+            description: 'Paste your OpenAI API key. It is stored locally and only sent to the API endpoint used by Image Gen — never shown in chat.',
+            fields: [
+              {
+                key: 'apiKey',
+                label: 'API Key',
+                type: 'password',
+                secret: true,
+                placeholder: 'sk-...',
+              },
+            ],
+            actions: [
+              { id: 'cancel', label: 'Cancel' },
+              { id: 'save', label: 'Save', variant: 'primary' },
+            ],
           });
+          if (result.action !== 'save') return;
+          const value = String(result.values?.apiKey ?? '').trim();
+          if (!value) {
+            await ctx.storage.delete(API_KEY_STORAGE_KEY);
+            return;
+          }
+          await ctx.storage.set(API_KEY_STORAGE_KEY, value);
           return;
         }
         if (itemId === 'set-base-url') {

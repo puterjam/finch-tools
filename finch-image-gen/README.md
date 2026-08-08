@@ -14,8 +14,8 @@ Generate and edit images with OpenAI's image models, right inside a Finch conver
 ## Setup
 
 1. Install and enable this mini tool in Finch's Toolcase.
-2. Open its card in Toolcase and fill in your **OpenAI API key** (`OPENAI_API_KEY`). Finch stores it securely — it is never shown in chat or sent anywhere except OpenAI's API.
-3. (Optional) In any Composer, click the **Image Gen settings** button (gear icon) in the toolbar → **API Base URL** if you want to use an OpenAI-compatible proxy/relay instead of the official `https://api.openai.com/v1`. Leave it empty to use the default.
+2. In any Composer, click the **Image Gen settings** button (gear icon) in the toolbar → **OpenAI API Key**, paste your key, and save.
+3. (Optional) Same menu → **API Base URL** if you want to use an OpenAI-compatible proxy/relay instead of the official `https://api.openai.com/v1`. Leave it empty to use the default.
 4. That's it. Just ask Finch to generate an image.
 
 ## Example prompts
@@ -34,6 +34,7 @@ Click the **Image Gen settings** button (gear icon) in the Composer toolbar → 
 - Reference images must be local files already on your machine (the model reads them from disk — no need to upload manually).
 - Generated files live in this mini tool's private storage folder and are safe to reuse, move, or delete.
 - Requires your own OpenAI API key and account credit; usage is billed by OpenAI, not by Finch.
+- The API key entered through the settings button is kept in this mini tool's private local storage (not chat, not the model), and is only ever sent to the configured API endpoint.
 
 ---
 
@@ -53,8 +54,8 @@ Click the **Image Gen settings** button (gear icon) in the Composer toolbar → 
 ## 使用前配置
 
 1. 在 Finch 工具箱（Toolcase）中安装并启用本小工具。
-2. 打开它的卡片，填入你的 **OpenAI API Key**（`OPENAI_API_KEY`）。Finch 会安全存储该密钥，不会出现在聊天记录里，也只会用于请求 OpenAI 接口。
-3. （可选）在任意对话的输入框工具栏里，点击 **Image Gen 设置**（齿轮图标）→ **API Base URL**，如果你想用兼容 OpenAI 接口格式的代理/中转站代替官方地址 `https://api.openai.com/v1`；留空即用官方默认地址。
+2. 在任意对话的输入框工具栏里，点击 **Image Gen 设置**（齿轮图标）→ **OpenAI API Key**，粘贴你的 Key 并保存。
+3. （可选）同一个菜单里点 **API Base URL**，如果你想用兼容 OpenAI 接口格式的代理/中转站代替官方地址 `https://api.openai.com/v1`；留空即用官方默认地址。
 4. 之后直接让 Finch 帮你生成图片即可。
 
 ## 示例提示词
@@ -73,3 +74,4 @@ Click the **Image Gen settings** button (gear icon) in the Composer toolbar → 
 - 参考图需要是本机已有的本地文件（模型直接从磁盘读取，不用手动上传）。
 - 生成的文件保存在本小工具的私有存储目录中，可以安全地复制、移动或删除。
 - 需要你自己的 OpenAI API Key 和账户余额，费用由 OpenAI 计费，与 Finch 无关。
+- 通过设置按钮填入的 API Key 保存在本小工具的私有本地存储中（不会出现在聊天记录或模型里），只会发送给你配置的接口地址。
