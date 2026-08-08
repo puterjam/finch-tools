@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 
 const OPENAI_API_BASE = 'https://api.openai.com/v1';
-const DEFAULT_MODEL = 'gpt-image-2';
+const DEFAULT_MODEL = 'gpt-image-1.5';
 
 const SIZE_ENUM = ['auto', '1024x1024', '1024x1536', '1536x1024'] as const;
 const QUALITY_ENUM = ['auto', 'low', 'medium', 'high'] as const;
