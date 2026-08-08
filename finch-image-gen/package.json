@@ -1,6 +1,6 @@
 {
   "name": "finch-image-gen",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Generate and edit images with OpenAI (or OpenAI-compatible relay) image models (text-to-image and image-to-image), right inside Finch.",
   "author": {
     "name": "PuterJam",

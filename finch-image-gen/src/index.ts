@@ -20,6 +20,31 @@ function isValidHttpUrl(url: string): boolean {
   }
 }
 
+/**
+ * Keep reporting progress on a fixed interval while `work` is in flight, so the
+ * UI still shows a live "N s elapsed" status if the user leaves and returns to
+ * the session mid-generation, instead of freezing on the first message.
+ */
+async function withHeartbeat<T>(
+  work: Promise<T>,
+  progress: finch.ToolProgress,
+  stage: string,
+  baseMessage: string,
+  intervalMs = 4000,
+): Promise<T> {
+  const startedAt = Date.now();
+  progress.report({ stage, message: baseMessage });
+  const timer = setInterval(() => {
+    const elapsed = Math.round((Date.now() - startedAt) / 1000);
+    progress.report({ stage, message: `${baseMessage} (${elapsed}s elapsed)` });
+  }, intervalMs);
+  try {
+    return await work;
+  } finally {
+    clearInterval(timer);
+  }
+}
+
 const SIZE_ENUM = ['auto', '1024x1024', '1024x1536', '1536x1024'] as const;
 const QUALITY_ENUM = ['auto', 'low', 'medium', 'high'] as const;
 
@@ -253,25 +278,21 @@ Requests go to the OpenAI-compatible endpoint configured via the Image Gen setti
           if (configured && configured.trim()) baseUrl = normalizeBaseUrl(configured);
         }
 
-        exec.progress.report({
-          stage: refPaths.length ? 'editing' : 'generating',
-          message: refPaths.length ? 'Generating image from reference…' : 'Generating image…',
-        });
-
         try {
           for (const refPath of refPaths) {
             await fs.access(refPath);
           }
 
-          const result = refPaths.length
-            ? await callEdit(
-                baseUrl,
-                apiKey,
-                { model, prompt, size, quality, n: String(n) },
-                refPaths,
-                exec.signal,
-              )
-            : await callGenerate(baseUrl, apiKey, { model, prompt, size, quality, n }, exec.signal);
+          const stage = refPaths.length ? 'editing' : 'generating';
+          const baseMessage = refPaths.length ? 'Generating image from reference…' : 'Generating image…';
+          const result = await withHeartbeat(
+            refPaths.length
+              ? callEdit(baseUrl, apiKey, { model, prompt, size, quality, n: String(n) }, refPaths, exec.signal)
+              : callGenerate(baseUrl, apiKey, { model, prompt, size, quality, n }, exec.signal),
+            exec.progress,
+            stage,
+            baseMessage,
+          );
 
           const items = result.data ?? [];
           if (!items.length) {

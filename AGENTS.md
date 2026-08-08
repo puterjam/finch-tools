@@ -76,4 +76,4 @@ npx @finchtoys/minitools add /tmp/<package>-<version>.tgz
 |---|---|---|---|
 | finch-ego-lite | ego-browser | 0.1.0 | Ego Lite 网页浏览小工具，仅支持 macOS |
 | finch-anydoc | anydoc | 0.1.0 | 办公文档转 Markdown 阅读工具，原生引擎首次使用时按需下载并缓存 |
-| finch-image-gen | image-gen | 0.5.0 | 对接 OpenAI 图像 API，支持文生图/图生图；API Key 与 API Base URL 都走同一个 Composer 工具栏齿轮按钮（composerActions + ctx.ui.showModalDialog 弹窗直接输入），存于 ctx.storage，读取时优先 exec.secrets.get('OPENAI_API_KEY')（如用户走了 permissions.secrets 官方通道）兜底 ctx.storage；支持单次调用 base_url 覆盖。注：finch.settings.fields 目前在 Toolcase 未渲染，勿用于必须暴露的配置项；ctx.secrets 只读、无 write 方法，需要用户手填的密钥只能靠 permissions.secrets 官方通道或自建 ctx.storage 弹窗 |
+| finch-image-gen | image-gen | 0.5.1 | 对接 OpenAI 图像 API，支持文生图/图生图；API Key 与 API Base URL 都走同一个 Composer 工具栏齿轮按钮（composerActions + ctx.ui.showModalDialog 弹窗直接输入），存于 ctx.storage，读取时优先 exec.secrets.get('OPENAI_API_KEY')（如用户走了 permissions.secrets 官方通道）兜底 ctx.storage；支持单次调用 base_url 覆盖；生成期间用 setInterval 心跳每 4s 调 exec.progress.report 更新耗时文案，避免切出会话再回来进度卡死不动。注：finch.settings.fields 目前在 Toolcase 未渲染，勿用于必须暴露的配置项；ctx.secrets 只读、无 write 方法，需要用户手填的密钥只能靠 permissions.secrets 官方通道或自建 ctx.storage 弹窗 |
