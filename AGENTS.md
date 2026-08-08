@@ -76,3 +76,4 @@ npx @finchtoys/minitools add /tmp/<package>-<version>.tgz
 |---|---|---|---|
 | finch-ego-lite | ego-browser | 0.1.0 | Ego Lite 网页浏览小工具，仅支持 macOS |
 | finch-anydoc | anydoc | 0.1.0 | 办公文档转 Markdown 阅读工具，原生引擎首次使用时按需下载并缓存 |
+| finch-image-gen | image-gen | 0.1.0 | 对接 OpenAI 图像 API，支持文生图/图生图，API Key 经 permissions.secrets 由 Finch 设置页安全存储 |

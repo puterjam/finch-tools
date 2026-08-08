@@ -1,0 +1,73 @@
+{
+  "name": "finch-image-gen",
+  "version": "0.1.0",
+  "description": "Generate and edit images with OpenAI's image models (text-to-image and image-to-image), right inside Finch.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-image-gen"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-image-gen#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "keywords": [
+    "finch",
+    "finch-minitool",
+    "openai",
+    "image-generation",
+    "text-to-image",
+    "image-to-image"
+  ],
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "id": "image-gen",
+    "name": "Image Gen (OpenAI)",
+    "description": "Generate and edit images with OpenAI's image models: text-to-image and image-to-image.",
+    "systemPrompt": "Use image_gen_create to generate images with OpenAI's image API. Text-to-image: pass only prompt. Image-to-image / reference-guided editing: also pass reference_image_paths (local absolute file paths). size controls aspect ratio/resolution. Generated images are saved locally as absolute file paths in the tool result — use wechat_send or Session attach to show or share them with the user afterward; do not re-download or re-encode them. If the tool reports the OpenAI API key is missing, tell the user to open this mini tool's settings in Finch and fill in the OPENAI_API_KEY field.",
+    "main": "dist/index.js",
+    "activationEvents": [
+      "onStartup"
+    ],
+    "miniToolType": "local",
+    "categories": [
+      "productivity",
+      "creative"
+    ],
+    "contributes": {
+      "tools": true
+    },
+    "permissions": {
+      "filesystem": "readwrite",
+      "network": true,
+      "shell": false,
+      "secrets": [
+        "OPENAI_API_KEY"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.2.9",
+    "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "i18n/",
+    "icon.png",
+    "README.md"
+  ]
+}
