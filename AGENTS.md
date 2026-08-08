@@ -76,4 +76,4 @@ npx @finchtoys/minitools add /tmp/<package>-<version>.tgz
 |---|---|---|---|
 | finch-ego-lite | ego-browser | 0.1.0 | Ego Lite 网页浏览小工具，仅支持 macOS |
 | finch-anydoc | anydoc | 0.1.0 | 办公文档转 Markdown 阅读工具，原生引擎首次使用时按需下载并缓存 |
-| finch-image-gen | image-gen | 0.3.0 | 对接 OpenAI 图像 API，支持文生图/图生图；API Key（permissions.secrets）与 API Base URL（finch.settings.fields）都在 Toolcase 详情页原生表单填写，代码用 ctx.secrets.get / ctx.settings.get 只读读取，中转站地址也支持单次调用 base_url 覆盖 |
+| finch-image-gen | image-gen | 0.4.0 | 对接 OpenAI 图像 API，支持文生图/图生图；API Key 走 permissions.secrets 在 Toolcase 卡片填写（ctx.secrets.get 只读）；API Base URL 走 Composer 工具栏按钮（composerActions + ctx.ui.showModalDialog 弹窗），存于 ctx.storage，支持单次调用 base_url 覆盖。注：finch.settings.fields 目前在 Toolcase 未渲染，勿用于必须暴露的配置项 |

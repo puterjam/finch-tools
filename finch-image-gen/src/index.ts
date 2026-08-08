@@ -4,6 +4,7 @@ import * as path from 'node:path';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_MODEL = 'gpt-image-1.5';
+const BASE_URL_STORAGE_KEY = 'baseUrl';
 
 function normalizeBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
@@ -164,7 +165,7 @@ export function activate(ctx: finch.MiniToolContext): void {
 - Image-to-image (reference-guided generation/editing): also pass "reference_image_paths" with one or more local absolute image file paths; the model uses them as visual reference while following "prompt".
 Generated images are saved to local files; the tool result returns their absolute paths. Use wechat_send or Session attach afterward to show/share the images — do not try to re-download or re-encode them yourself.
 size controls aspect ratio/resolution: 1024x1024 (square), 1024x1536 (portrait), 1536x1024 (landscape), or auto (let the model choose).
-Requests go to the OpenAI-compatible endpoint configured on this mini tool's Finch settings page (default api.openai.com); pass base_url to override it for a single call only.`,
+Requests go to the OpenAI-compatible endpoint configured via the Image Gen settings button in the Composer toolbar (default api.openai.com); pass base_url to override it for a single call only.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -203,7 +204,7 @@ Requests go to the OpenAI-compatible endpoint configured on this mini tool's Fin
           },
           base_url: {
             type: 'string',
-            description: `One-off override of the API base URL for this call only (e.g. a proxy/relay endpoint), without changing the saved default. Must include the protocol, e.g. "https://your-proxy.example.com/v1". Omit to use the endpoint configured on this mini tool's Finch settings page (default "${DEFAULT_BASE_URL}").`,
+            description: `One-off override of the API base URL for this call only (e.g. a proxy/relay endpoint), without changing the saved default. Must include the protocol, e.g. "https://your-proxy.example.com/v1". Omit to use the endpoint configured via the Composer's Image Gen settings button (default "${DEFAULT_BASE_URL}").`,
           },
         },
         required: ['prompt'],
@@ -247,7 +248,7 @@ Requests go to the OpenAI-compatible endpoint configured on this mini tool's Fin
           }
           baseUrl = normalizeBaseUrl(input.base_url);
         } else {
-          const configured = ctx.settings.get<string>('baseUrl');
+          const configured = await ctx.storage.get<string>(BASE_URL_STORAGE_KEY);
           if (configured && configured.trim()) baseUrl = normalizeBaseUrl(configured);
         }
 
@@ -289,6 +290,75 @@ Requests go to the OpenAI-compatible endpoint configured on this mini tool's Fin
           const message = err instanceof Error ? err.message : String(err);
           ctx.logger.error(`image_gen_create failed: ${message}`);
           return { content: [{ type: 'text', text: `Image generation failed: ${message}` }], isError: true };
+        }
+      },
+    }),
+  );
+
+  ctx.subscriptions.push(
+    ctx.composerActions.register('image-gen-settings', {
+      async getMenu() {
+        const stored = await ctx.storage.get<string>(BASE_URL_STORAGE_KEY);
+        const effective = stored && stored.trim() ? normalizeBaseUrl(stored) : DEFAULT_BASE_URL;
+        return [
+          {
+            id: 'set-base-url',
+            label: 'API Base URL',
+            iconName: 'globe',
+            description: effective,
+            hoverText: `Change the OpenAI-compatible API endpoint used by Image Gen (e.g. a proxy/relay). Currently: ${effective}${stored ? '' : ' (default)'}`,
+          },
+          {
+            id: 'about-api-key',
+            label: 'OpenAI API Key',
+            iconName: 'settings',
+            hoverText: "The API key field lives on this mini tool's own card in Finch's Toolcase (Toolcase → Image Gen (OpenAI) → settings), not here — it's stored as a secret and can't be set from this menu.",
+          },
+        ];
+      },
+      async execute(_actionCtx, itemId) {
+        if (itemId === 'about-api-key') {
+          await ctx.ui.showModalDialog({
+            title: 'OpenAI API Key',
+            message: "Open Finch's Toolcase, find \"Image Gen (OpenAI)\", and fill in OPENAI_API_KEY on its settings card. It is stored securely by Finch and never shown in chat.",
+            actions: [{ id: 'ok', label: 'Got it', variant: 'primary' }],
+          });
+          return;
+        }
+        if (itemId === 'set-base-url') {
+          const stored = await ctx.storage.get<string>(BASE_URL_STORAGE_KEY);
+          const result = await ctx.ui.showModalDialog({
+            title: 'Image Gen API Base URL',
+            description: `OpenAI-compatible base URL, e.g. a proxy/relay endpoint. Leave empty to use the official ${DEFAULT_BASE_URL}.`,
+            fields: [
+              {
+                key: 'baseUrl',
+                label: 'API Base URL',
+                type: 'text',
+                placeholder: DEFAULT_BASE_URL,
+                default: stored ?? '',
+              },
+            ],
+            actions: [
+              { id: 'cancel', label: 'Cancel' },
+              { id: 'save', label: 'Save', variant: 'primary' },
+            ],
+          });
+          if (result.action !== 'save') return;
+          const value = String(result.values?.baseUrl ?? '').trim();
+          if (!value) {
+            await ctx.storage.delete(BASE_URL_STORAGE_KEY);
+            return;
+          }
+          if (!isValidHttpUrl(value)) {
+            await ctx.ui.showModalDialog({
+              title: 'Invalid URL',
+              message: `"${value}" is not a valid http(s) URL. The base URL was not changed.`,
+              actions: [{ id: 'ok', label: 'OK', variant: 'primary' }],
+            });
+            return;
+          }
+          await ctx.storage.set(BASE_URL_STORAGE_KEY, normalizeBaseUrl(value));
         }
       },
     }),

@@ -14,8 +14,8 @@ Generate and edit images with OpenAI's image models, right inside a Finch conver
 ## Setup
 
 1. Install and enable this mini tool in Finch's Toolcase.
-2. Open its detail page in Toolcase and fill in your **OpenAI API key** (`OPENAI_API_KEY`). Finch stores it securely — it is never shown in chat or sent anywhere except OpenAI's API.
-3. (Optional) On the same detail page, set **API Base URL** if you want to use an OpenAI-compatible proxy/relay instead of the official `https://api.openai.com/v1`. Leave it empty to use the default.
+2. Open its card in Toolcase and fill in your **OpenAI API key** (`OPENAI_API_KEY`). Finch stores it securely — it is never shown in chat or sent anywhere except OpenAI's API.
+3. (Optional) In any Composer, click the **Image Gen settings** button (gear icon) in the toolbar → **API Base URL** if you want to use an OpenAI-compatible proxy/relay instead of the official `https://api.openai.com/v1`. Leave it empty to use the default.
 4. That's it. Just ask Finch to generate an image.
 
 ## Example prompts
@@ -27,7 +27,7 @@ Generate and edit images with OpenAI's image models, right inside a Finch conver
 
 ## Using a proxy / relay endpoint
 
-Open this mini tool's detail page in Finch's Toolcase and set the **API Base URL** field — it applies to every future generation until you change it again (leave it empty to go back to the official endpoint). For a one-off different endpoint on a single request, you can also just ask in chat, e.g. "这次用 https://my-relay.example.com/v1 生成" — that overrides only that call without touching the saved setting.
+Click the **Image Gen settings** button (gear icon) in the Composer toolbar → **API Base URL**, type the endpoint, and save. It applies to every future generation until you change it again (leave the field empty and save to go back to the official endpoint). For a one-off different endpoint on a single request, you can also just ask in chat, e.g. "这次用 https://my-relay.example.com/v1 生成" — that overrides only that call without touching the saved setting.
 
 ## Notes
 
@@ -53,8 +53,8 @@ Open this mini tool's detail page in Finch's Toolcase and set the **API Base URL
 ## 使用前配置
 
 1. 在 Finch 工具箱（Toolcase）中安装并启用本小工具。
-2. 打开它的详情页，填入你的 **OpenAI API Key**（`OPENAI_API_KEY`）。Finch 会安全存储该密钥，不会出现在聊天记录里，也只会用于请求 OpenAI 接口。
-3. （可选）在同一个详情页设置 **API Base URL**，如果你想用兼容 OpenAI 接口格式的代理/中转站代替官方地址 `https://api.openai.com/v1`；留空即用官方默认地址。
+2. 打开它的卡片，填入你的 **OpenAI API Key**（`OPENAI_API_KEY`）。Finch 会安全存储该密钥，不会出现在聊天记录里，也只会用于请求 OpenAI 接口。
+3. （可选）在任意对话的输入框工具栏里，点击 **Image Gen 设置**（齿轮图标）→ **API Base URL**，如果你想用兼容 OpenAI 接口格式的代理/中转站代替官方地址 `https://api.openai.com/v1`；留空即用官方默认地址。
 4. 之后直接让 Finch 帮你生成图片即可。
 
 ## 示例提示词
@@ -66,7 +66,7 @@ Open this mini tool's detail page in Finch's Toolcase and set the **API Base URL
 
 ## 使用中转站/代理接口
 
-打开本小工具在 Finch 工具箱（Toolcase）里的详情页，设置 **API Base URL** 字段即可——修改后对之后每次生成都生效，直到你再次修改（留空即恢复官方地址）。如果只想某一次请求临时换个地址，也可以直接在聊天里说，例如 "这次用 https://my-relay.example.com/v1 生成"，这只影响这一次调用，不会改动已保存的设置。
+点击输入框工具栏里的 **Image Gen 设置**（齿轮图标）→ **API Base URL**，填入地址后保存即可——修改后对之后每次生成都生效，直到你再次修改（清空后保存即恢复官方地址）。如果只想某一次请求临时换个地址，也可以直接在聊天里说，例如 "这次用 https://my-relay.example.com/v1 生成"，这只影响这一次调用，不会改动已保存的设置。
 
 ## 说明
 
