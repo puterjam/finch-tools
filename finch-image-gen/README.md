@@ -14,8 +14,9 @@ Generate and edit images with OpenAI's image models, right inside a Finch conver
 ## Setup
 
 1. Install and enable this mini tool in Finch's Toolcase.
-2. Open its settings and fill in your **OpenAI API key** (`OPENAI_API_KEY`). Finch stores it securely — it is never shown in chat or sent anywhere except OpenAI's API.
-3. That's it. Just ask Finch to generate an image.
+2. Open its detail page in Toolcase and fill in your **OpenAI API key** (`OPENAI_API_KEY`). Finch stores it securely — it is never shown in chat or sent anywhere except OpenAI's API.
+3. (Optional) On the same detail page, set **API Base URL** if you want to use an OpenAI-compatible proxy/relay instead of the official `https://api.openai.com/v1`. Leave it empty to use the default.
+4. That's it. Just ask Finch to generate an image.
 
 ## Example prompts
 
@@ -23,18 +24,10 @@ Generate and edit images with OpenAI's image models, right inside a Finch conver
 - "帮我把这张产品图换个背景，参考图见附件" (attach an image, then ask)
 - "用这张照片的构图，生成一张赛博朋克风格的插画"
 - "Give me 4 square icon variations of a friendly robot mascot"
-- "把 image gen 的接口换成 https://my-relay.example.com/v1" (switch the API endpoint)
-- "看看 image gen 现在用的是哪个接口地址" (check the current endpoint)
 
 ## Using a proxy / relay endpoint
 
-Ask Finch to change the endpoint and it will pop up a small form to type in the new base URL — no need to remember exact tool names or parameters:
-
-- "帮我把图片生成的接口换成中转站地址" → a form appears, type the URL, done.
-- "把接口改回官方的" → resets back to `https://api.openai.com/v1`.
-- "现在用的是哪个接口" → shows the currently configured endpoint.
-
-The change is saved and used for every future generation until you change it again. You can also ask for a one-off override ("这次用另一个地址生成") without changing the saved default.
+Open this mini tool's detail page in Finch's Toolcase and set the **API Base URL** field — it applies to every future generation until you change it again (leave it empty to go back to the official endpoint). For a one-off different endpoint on a single request, you can also just ask in chat, e.g. "这次用 https://my-relay.example.com/v1 生成" — that overrides only that call without touching the saved setting.
 
 ## Notes
 
@@ -60,8 +53,9 @@ The change is saved and used for every future generation until you change it aga
 ## 使用前配置
 
 1. 在 Finch 工具箱（Toolcase）中安装并启用本小工具。
-2. 打开它的设置，填入你的 **OpenAI API Key**（`OPENAI_API_KEY`）。Finch 会安全存储该密钥，不会出现在聊天记录里，也只会用于请求 OpenAI 接口。
-3. 之后直接让 Finch 帮你生成图片即可。
+2. 打开它的详情页，填入你的 **OpenAI API Key**（`OPENAI_API_KEY`）。Finch 会安全存储该密钥，不会出现在聊天记录里，也只会用于请求 OpenAI 接口。
+3. （可选）在同一个详情页设置 **API Base URL**，如果你想用兼容 OpenAI 接口格式的代理/中转站代替官方地址 `https://api.openai.com/v1`；留空即用官方默认地址。
+4. 之后直接让 Finch 帮你生成图片即可。
 
 ## 示例提示词
 
@@ -69,18 +63,10 @@ The change is saved and used for every future generation until you change it aga
 - "帮我把这张产品图换个背景"（附上参考图后再说）
 - "用这张照片的构图，生成一张赛博朋克风格的插画"
 - "给我生成 4 张正方形的友好机器人吉祥物图标"
-- "把 image gen 的接口换成 https://my-relay.example.com/v1"（切换接口地址）
-- "看看 image gen 现在用的是哪个接口"（查看当前接口）
 
 ## 使用中转站/代理接口
 
-直接让 Finch 帮你改接口即可，会弹出一个小表单填地址，不用记具体工具名或参数：
-
-- "帮我把图片生成的接口换成中转站地址" → 弹出表单，填入地址即可。
-- "把接口改回官方的" → 恢复为 `https://api.openai.com/v1`。
-- "现在用的是哪个接口" → 显示当前配置的接口地址。
-
-修改后会一直保存生效，直到你再次修改；也可以只临时用一次别的地址（"这次换个地址生成"），不影响已保存的默认值。
+打开本小工具在 Finch 工具箱（Toolcase）里的详情页，设置 **API Base URL** 字段即可——修改后对之后每次生成都生效，直到你再次修改（留空即恢复官方地址）。如果只想某一次请求临时换个地址，也可以直接在聊天里说，例如 "这次用 https://my-relay.example.com/v1 生成"，这只影响这一次调用，不会改动已保存的设置。
 
 ## 说明
 
