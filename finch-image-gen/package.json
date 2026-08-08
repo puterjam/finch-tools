@@ -1,7 +1,7 @@
 {
   "name": "finch-image-gen",
-  "version": "0.1.0",
-  "description": "Generate and edit images with OpenAI's image models (text-to-image and image-to-image), right inside Finch.",
+  "version": "0.2.0",
+  "description": "Generate and edit images with OpenAI (or OpenAI-compatible relay) image models (text-to-image and image-to-image), right inside Finch.",
   "author": {
     "name": "PuterJam",
     "url": "https://github.com/puterjam"
@@ -35,8 +35,8 @@
     "manifestVersion": 1,
     "id": "image-gen",
     "name": "Image Gen (OpenAI)",
-    "description": "Generate and edit images with OpenAI's image models: text-to-image and image-to-image.",
-    "systemPrompt": "Use image_gen_create to generate images with OpenAI's image API. Text-to-image: pass only prompt. Image-to-image / reference-guided editing: also pass reference_image_paths (local absolute file paths). size controls aspect ratio/resolution. Generated images are saved locally as absolute file paths in the tool result — use wechat_send or Session attach to show or share them with the user afterward; do not re-download or re-encode them. If the tool reports the OpenAI API key is missing, tell the user to open this mini tool's settings in Finch and fill in the OPENAI_API_KEY field.",
+    "description": "Generate and edit images with OpenAI (or an OpenAI-compatible relay) image models: text-to-image and image-to-image.",
+    "systemPrompt": "Use image_gen_create to generate images with OpenAI's image API. Text-to-image: pass only prompt. Image-to-image / reference-guided editing: also pass reference_image_paths (local absolute file paths). size controls aspect ratio/resolution. Generated images are saved locally as absolute file paths in the tool result — use wechat_send or Session attach to show or share them with the user afterward; do not re-download or re-encode them. If the tool reports the OpenAI API key is missing, tell the user to open this mini tool's settings in Finch and fill in the OPENAI_API_KEY field. Use image_gen_configure (action view/set/reset) when the user wants to check or change the API base URL, e.g. to switch to a proxy/relay ('中转站') instead of the official api.openai.com — action=set without base_url pops up a form for the user to type it in.",
     "main": "dist/index.js",
     "activationEvents": [
       "onStartup"

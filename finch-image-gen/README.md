@@ -9,6 +9,7 @@ Generate and edit images with OpenAI's image models, right inside a Finch conver
 - **Size / aspect ratio** — pick square, portrait, landscape, or let the model choose automatically.
 - **Multiple images at once** — ask for up to 4 variations in one go.
 - Every generated image is saved to a local file. Finch reports the file path back in the chat, so you can immediately ask to send it over WeChat, attach it to the composer, or open it.
+- **Custom / relay endpoint** — by default it talks to `https://api.openai.com/v1`, but you can point it at any OpenAI-compatible proxy or relay ("中转站") instead, either permanently or for a single request.
 
 ## Setup
 
@@ -22,6 +23,18 @@ Generate and edit images with OpenAI's image models, right inside a Finch conver
 - "帮我把这张产品图换个背景，参考图见附件" (attach an image, then ask)
 - "用这张照片的构图，生成一张赛博朋克风格的插画"
 - "Give me 4 square icon variations of a friendly robot mascot"
+- "把 image gen 的接口换成 https://my-relay.example.com/v1" (switch the API endpoint)
+- "看看 image gen 现在用的是哪个接口地址" (check the current endpoint)
+
+## Using a proxy / relay endpoint
+
+Ask Finch to change the endpoint and it will pop up a small form to type in the new base URL — no need to remember exact tool names or parameters:
+
+- "帮我把图片生成的接口换成中转站地址" → a form appears, type the URL, done.
+- "把接口改回官方的" → resets back to `https://api.openai.com/v1`.
+- "现在用的是哪个接口" → shows the currently configured endpoint.
+
+The change is saved and used for every future generation until you change it again. You can also ask for a one-off override ("这次用另一个地址生成") without changing the saved default.
 
 ## Notes
 
@@ -42,6 +55,7 @@ Generate and edit images with OpenAI's image models, right inside a Finch conver
 - **尺寸/比例**：可选正方形、竖版、横版，或让模型自动选择。
 - **一次多张**：一次最多可生成 4 张变体。
 - 每张生成的图片都会保存为本地文件，Finch 会在对话中返回文件路径，之后可以直接要求通过微信发送、放进输入框附件，或打开查看。
+- **自定义/中转接口**：默认请求 `https://api.openai.com/v1`，也可以换成任意兼容 OpenAI 接口格式的代理/中转站，可以永久生效也可以只用一次。
 
 ## 使用前配置
 
@@ -55,6 +69,18 @@ Generate and edit images with OpenAI's image models, right inside a Finch conver
 - "帮我把这张产品图换个背景"（附上参考图后再说）
 - "用这张照片的构图，生成一张赛博朋克风格的插画"
 - "给我生成 4 张正方形的友好机器人吉祥物图标"
+- "把 image gen 的接口换成 https://my-relay.example.com/v1"（切换接口地址）
+- "看看 image gen 现在用的是哪个接口"（查看当前接口）
+
+## 使用中转站/代理接口
+
+直接让 Finch 帮你改接口即可，会弹出一个小表单填地址，不用记具体工具名或参数：
+
+- "帮我把图片生成的接口换成中转站地址" → 弹出表单，填入地址即可。
+- "把接口改回官方的" → 恢复为 `https://api.openai.com/v1`。
+- "现在用的是哪个接口" → 显示当前配置的接口地址。
+
+修改后会一直保存生效，直到你再次修改；也可以只临时用一次别的地址（"这次换个地址生成"），不影响已保存的默认值。
 
 ## 说明
 

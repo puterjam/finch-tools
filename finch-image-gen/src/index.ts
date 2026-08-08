@@ -2,8 +2,22 @@ import type * as finch from 'finch';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 
-const OPENAI_API_BASE = 'https://api.openai.com/v1';
+const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_MODEL = 'gpt-image-1.5';
+const BASE_URL_STORAGE_KEY = 'baseUrl';
+
+function normalizeBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, '');
+}
+
+function isValidHttpUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
 
 const SIZE_ENUM = ['auto', '1024x1024', '1024x1536', '1536x1024'] as const;
 const QUALITY_ENUM = ['auto', 'low', 'medium', 'high'] as const;
@@ -19,6 +33,12 @@ interface CreateImageInput {
   n?: number;
   model?: string;
   output_name?: string;
+  base_url?: string;
+}
+
+interface ConfigureInput {
+  action: 'view' | 'set' | 'reset';
+  base_url?: string;
 }
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -62,11 +82,12 @@ interface OpenAiImageResponse {
 }
 
 async function callGenerate(
+  baseUrl: string,
   apiKey: string,
   body: Record<string, unknown>,
   signal?: AbortSignal,
 ): Promise<OpenAiImageResponse> {
-  const response = await fetch(`${OPENAI_API_BASE}/images/generations`, {
+  const response = await fetch(`${baseUrl}/images/generations`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -82,6 +103,7 @@ async function callGenerate(
 }
 
 async function callEdit(
+  baseUrl: string,
   apiKey: string,
   fields: Record<string, string>,
   referenceImagePaths: string[],
@@ -96,7 +118,7 @@ async function callEdit(
     const blob = new Blob([buf], { type: mimeForPath(refPath) });
     form.append('image[]', blob, path.basename(refPath));
   }
-  const response = await fetch(`${OPENAI_API_BASE}/images/edits`, {
+  const response = await fetch(`${baseUrl}/images/edits`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -147,7 +169,8 @@ export function activate(ctx: finch.MiniToolContext): void {
 - Text-to-image: pass only "prompt".
 - Image-to-image (reference-guided generation/editing): also pass "reference_image_paths" with one or more local absolute image file paths; the model uses them as visual reference while following "prompt".
 Generated images are saved to local files; the tool result returns their absolute paths. Use wechat_send or Session attach afterward to show/share the images — do not try to re-download or re-encode them yourself.
-size controls aspect ratio/resolution: 1024x1024 (square), 1024x1536 (portrait), 1536x1024 (landscape), or auto (let the model choose).`,
+size controls aspect ratio/resolution: 1024x1024 (square), 1024x1536 (portrait), 1536x1024 (landscape), or auto (let the model choose).
+Requests go to the OpenAI-compatible endpoint configured via image_gen_configure (default api.openai.com); pass base_url to override it for a single call only.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -184,6 +207,10 @@ size controls aspect ratio/resolution: 1024x1024 (square), 1024x1536 (portrait),
             type: 'string',
             description: 'Optional short file name prefix for the saved image(s), e.g. "poster". Letters, digits, - and _ only.',
           },
+          base_url: {
+            type: 'string',
+            description: `One-off override of the API base URL for this call only (e.g. a proxy/relay endpoint), without changing the saved default. Must include the protocol, e.g. "https://your-proxy.example.com/v1". Omit to use the endpoint configured via image_gen_configure (default "${DEFAULT_BASE_URL}").`,
+          },
         },
         required: ['prompt'],
       },
@@ -219,6 +246,17 @@ size controls aspect ratio/resolution: 1024x1024 (square), 1024x1536 (portrait),
           : [];
         const namePrefix = sanitizeName(input.output_name || 'image-gen') || 'image-gen';
 
+        let baseUrl = DEFAULT_BASE_URL;
+        if (typeof input.base_url === 'string' && input.base_url.trim()) {
+          if (!isValidHttpUrl(input.base_url)) {
+            return { content: [{ type: 'text', text: `base_url is not a valid http(s) URL: ${input.base_url}` }], isError: true };
+          }
+          baseUrl = normalizeBaseUrl(input.base_url);
+        } else {
+          const stored = await exec.storage.get<string>(BASE_URL_STORAGE_KEY);
+          if (stored) baseUrl = normalizeBaseUrl(stored);
+        }
+
         exec.progress.report({
           stage: refPaths.length ? 'editing' : 'generating',
           message: refPaths.length ? 'Generating image from reference…' : 'Generating image…',
@@ -231,12 +269,13 @@ size controls aspect ratio/resolution: 1024x1024 (square), 1024x1536 (portrait),
 
           const result = refPaths.length
             ? await callEdit(
+                baseUrl,
                 apiKey,
                 { model, prompt, size, quality, n: String(n) },
                 refPaths,
                 exec.signal,
               )
-            : await callGenerate(apiKey, { model, prompt, size, quality, n }, exec.signal);
+            : await callGenerate(baseUrl, apiKey, { model, prompt, size, quality, n }, exec.signal);
 
           const items = result.data ?? [];
           if (!items.length) {
@@ -248,7 +287,7 @@ size controls aspect ratio/resolution: 1024x1024 (square), 1024x1536 (portrait),
           const savedPaths = await saveImages(items, outDir, namePrefix);
 
           const lines = [
-            `Generated ${savedPaths.length} image(s) with model "${model}" (size: ${size}, quality: ${quality})${refPaths.length ? ` from ${refPaths.length} reference image(s)` : ''}.`,
+            `Generated ${savedPaths.length} image(s) with model "${model}" (size: ${size}, quality: ${quality})${refPaths.length ? ` from ${refPaths.length} reference image(s)` : ''} via ${baseUrl}.`,
             ...savedPaths,
           ];
           return { content: [{ type: 'text', text: lines.join('\n') }] };
@@ -257,6 +296,92 @@ size controls aspect ratio/resolution: 1024x1024 (square), 1024x1536 (portrait),
           ctx.logger.error(`image_gen_create failed: ${message}`);
           return { content: [{ type: 'text', text: `Image generation failed: ${message}` }], isError: true };
         }
+      },
+    }),
+  );
+
+  ctx.subscriptions.push(
+    ctx.tools.register({
+      name: 'image_gen_configure',
+      title: 'Configure Image Gen Endpoint',
+      description: `View or change the API base URL used by image_gen_create — useful for switching to an OpenAI-compatible proxy/relay ("中转站") instead of the official api.openai.com.
+action:
+  view  — show the currently configured base URL (and whether it's the default)
+  set   — change the saved base URL; if "base_url" is not provided in the call, this pops up a form for the user to type it in
+  reset — clear the override and go back to the default "${DEFAULT_BASE_URL}"`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['view', 'set', 'reset'],
+            description: 'view | set | reset',
+          },
+          base_url: {
+            type: 'string',
+            description: `Only used with action="set". The new API base URL, including protocol, e.g. "https://your-proxy.example.com/v1". If omitted, a form is shown to collect it interactively.`,
+          },
+        },
+        required: ['action'],
+      },
+      risk: 'low',
+      async execute(rawInput: Record<string, unknown>, exec: finch.ToolExecutionContext) {
+        const input = rawInput as unknown as ConfigureInput;
+        const current = (await exec.storage.get<string>(BASE_URL_STORAGE_KEY)) || undefined;
+        const effective = current ? normalizeBaseUrl(current) : DEFAULT_BASE_URL;
+
+        if (input.action === 'view') {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: current
+                  ? `Current API base URL: ${effective} (custom, overriding the default "${DEFAULT_BASE_URL}").`
+                  : `Current API base URL: ${effective} (default, not overridden).`,
+              },
+            ],
+          };
+        }
+
+        if (input.action === 'reset') {
+          await exec.storage.delete(BASE_URL_STORAGE_KEY);
+          return { content: [{ type: 'text', text: `Reverted to the default API base URL: ${DEFAULT_BASE_URL}` }] };
+        }
+
+        if (input.action === 'set') {
+          let newUrl = typeof input.base_url === 'string' ? input.base_url.trim() : '';
+          if (!newUrl) {
+            const result = await exec.ui.requestForm({
+              title: 'Configure Image Gen API Endpoint',
+              description: 'Set the OpenAI-compatible API base URL for image generation — e.g. a proxy/relay endpoint. Leave empty and submit to keep the current value.',
+              fields: [
+                {
+                  key: 'base_url',
+                  label: 'API Base URL',
+                  type: 'text',
+                  placeholder: DEFAULT_BASE_URL,
+                  default: effective,
+                  description: 'Must include the protocol, e.g. https://your-proxy.example.com/v1',
+                },
+              ],
+            });
+            if (!result.submitted) {
+              return { content: [{ type: 'text', text: 'Configuration cancelled; the base URL was not changed.' }], isError: true };
+            }
+            newUrl = String(result.values.base_url ?? '').trim();
+          }
+          if (!newUrl) {
+            return { content: [{ type: 'text', text: 'base_url cannot be empty.' }], isError: true };
+          }
+          if (!isValidHttpUrl(newUrl)) {
+            return { content: [{ type: 'text', text: `"${newUrl}" is not a valid http(s) URL.` }], isError: true };
+          }
+          const normalized = normalizeBaseUrl(newUrl);
+          await exec.storage.set(BASE_URL_STORAGE_KEY, normalized);
+          return { content: [{ type: 'text', text: `Saved. image_gen_create will now use: ${normalized}` }] };
+        }
+
+        return { content: [{ type: 'text', text: `Unknown action: ${String(input.action)}` }], isError: true };
       },
     }),
   );
