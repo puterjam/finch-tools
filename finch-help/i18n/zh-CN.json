@@ -1,0 +1,38 @@
+{
+  "name": "Finch 助手",
+  "description": "回答 Finch 用法、功能与小工具开发问题，答案来自官方文档。",
+  "sessionContainers": {
+    "help": {
+      "title": "Finch 助手",
+      "description": "回答 Finch 用法、功能与小工具开发问题",
+      "starterPrompts": [
+        {
+          "title": "小工具开发入门",
+          "description": "怎么开发一个 Finch 小工具？",
+          "prompt": "怎么开发 Finch 小工具？包结构是什么样，如何发布？"
+        },
+        {
+          "title": "记忆机制",
+          "description": "Finch 的记忆是怎么工作的？",
+          "prompt": "Finch 的记忆是怎么工作的？MEMORY.md、每日日志和 memory/spaces 分别是干什么的？"
+        },
+        {
+          "title": "会话容器",
+          "description": "什么是会话容器？",
+          "prompt": "什么是会话容器？inbox 模式和 assistant 模式有什么区别？"
+        },
+        {
+          "title": "定时自动化",
+          "description": "怎么创建定时任务？",
+          "prompt": "怎么用 Finch 的 Schedule 功能创建定时或周期性任务？"
+        }
+      ]
+    }
+  },
+  "agentProfiles": {
+    "finch-expert": {
+      "name": "Finch 专家",
+      "description": "基于官方文档回答 Finch 用法与开发问题"
+    }
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "name": "finch-help",
+  "version": "0.1.0",
+  "description": "A Finch assistant that answers questions about Finch usage, features and mini tool development from the official documentation.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-help"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-help#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "keywords": [
+    "finch",
+    "finch-minitool",
+    "help",
+    "docs",
+    "assistant",
+    "knowledge-base"
+  ],
+  "scripts": {
+    "kb": "node scripts/build-kb.mjs",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "id": "finch-help",
+    "name": "Finch Help",
+    "description": "Ask anything about Finch usage, features and mini tool development — answered from the official docs.",
+    "systemPrompt": "When the user asks how Finch works, what a feature does, or how to develop a Finch mini tool, you may call finch_help_search to retrieve relevant excerpts from the official Finch documentation knowledge base before answering. You can also suggest the user open the Finch Help assistant (session container) for dedicated Q&A.",
+    "main": "dist/index.js",
+    "activationEvents": [
+      "onStartup"
+    ],
+    "miniToolType": "local",
+    "categories": [
+      "productivity"
+    ],
+    "contributes": {
+      "tools": true,
+      "sessionContainers": [
+        {
+          "id": "help",
+          "icon": "message-circle",
+          "title": "Finch Help",
+          "description": "Ask about Finch usage, features and mini tool development.",
+          "mode": "assistant",
+          "agentProfile": "finch-expert",
+          "starterPrompts": [
+            {
+              "title": "Mini tools 101",
+              "description": "How do I build a Finch mini tool?",
+              "prompt": "How do I develop a Finch mini tool? What does the package structure look like and how do I publish it?"
+            },
+            {
+              "title": "Memory explained",
+              "description": "How does Finch memory work?",
+              "prompt": "How does Finch's memory work? What is MEMORY.md, the daily log, and memory/spaces for?"
+            },
+            {
+              "title": "Session containers",
+              "description": "What are session containers?",
+              "prompt": "What are session containers? What is the difference between inbox mode and assistant mode?"
+            },
+            {
+              "title": "Automation",
+              "description": "How do I schedule recurring tasks?",
+              "prompt": "How do I create scheduled or recurring tasks with the Schedule feature in Finch?"
+            }
+          ]
+        }
+      ],
+      "agentProfiles": [
+        {
+          "id": "finch-expert",
+          "name": "Finch Expert",
+          "description": "Answers Finch usage and development questions from the official documentation.",
+          "prompt": "You are the Finch Expert, a partner of the user's Finch assistant, specialized in Finch's usage, features, and mini tool development.\n\nWorking style:\n- Before answering any Finch-related question, call finch_help_search with the question or its key phrases to retrieve relevant excerpts from the official Finch documentation knowledge base.\n- Answer based on the retrieved excerpts and cite the source page title(s) when helpful.\n- Match the docs language to the user: Chinese questions should rely on zh excerpts, English questions on en excerpts.\n- When the knowledge base does not cover the question, say so honestly, then give the best general answer and clearly mark it as not from the official docs.\n- Keep answers concise and structured; include practical steps and code snippets when the docs provide them.\n- If the user's question is unrelated to Finch, gently point them back to Finch topics."
+        }
+      ]
+    },
+    "permissions": {
+      "filesystem": "none",
+      "network": false,
+      "shell": false,
+      "sessions": true
+    }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.2.9",
+    "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "i18n/",
+    "icon.png",
+    "README.md"
+  ]
+}
