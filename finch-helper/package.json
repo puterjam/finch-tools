@@ -1,5 +1,5 @@
 {
-  "name": "finch-help",
+  "name": "finch-helper",
   "version": "0.1.0",
   "description": "A Finch assistant that answers questions about Finch usage, features and mini tool development from the official documentation.",
   "author": {
@@ -9,9 +9,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/puterjam/finch-tools.git",
-    "directory": "finch-help"
+    "directory": "finch-helper"
   },
-  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-help#readme",
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-helper#readme",
   "bugs": {
     "url": "https://github.com/puterjam/finch-tools/issues"
   },
@@ -34,7 +34,7 @@
   },
   "finch": {
     "manifestVersion": 1,
-    "id": "finch-help",
+    "id": "finch-helper",
     "name": "Finch Help",
     "description": "Ask anything about Finch usage, features and mini tool development — answered from the official docs.",
     "systemPrompt": "When the user asks how Finch works, what a feature does, or how to develop a Finch mini tool, you may call finch_help_search to retrieve relevant excerpts from the official Finch documentation knowledge base before answering. You can also suggest the user open the Finch Help assistant (session container) for dedicated Q&A.",
@@ -48,10 +48,16 @@
     ],
     "contributes": {
       "tools": true,
+      "iconPacks": [
+        {
+          "id": "helper-icons",
+          "label": "Finch Helper Icons"
+        }
+      ],
       "sessionContainers": [
         {
           "id": "help",
-          "icon": "message-circle",
+          "icon": "ext:message-circle-question",
           "title": "Finch Help",
           "description": "Ask about Finch usage, features and mini tool development.",
           "mode": "assistant",

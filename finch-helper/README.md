@@ -35,8 +35,8 @@ npx @finchtoys/minitools doctor .   # manifest validation
 # local smoke test via tarball (never `minitools add <dir>`)
 npm run build
 npm pack --pack-destination /tmp
-npx @finchtoys/minitools remove finch-help
-npx @finchtoys/minitools add /tmp/finch-help-<version>.tgz
+npx @finchtoys/minitools remove finch-helper
+npx @finchtoys/minitools add /tmp/finch-helper-<version>.tgz
 ```
 
 ---
@@ -78,6 +78,6 @@ npx @finchtoys/minitools doctor .   # manifest 校验
 # 本地冒烟测试走 tarball（不要用 `minitools add <目录>`）
 npm run build
 npm pack --pack-destination /tmp
-npx @finchtoys/minitools remove finch-help
-npx @finchtoys/minitools add /tmp/finch-help-<version>.tgz
+npx @finchtoys/minitools remove finch-helper
+npx @finchtoys/minitools add /tmp/finch-helper-<version>.tgz
 ```
