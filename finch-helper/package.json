@@ -1,6 +1,6 @@
 {
   "name": "finch-helper",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A Finch assistant that answers questions about Finch usage, features and mini tool development from the official documentation.",
   "author": {
     "name": "PuterJam",
@@ -54,6 +54,12 @@
           "label": "Finch Helper Icons"
         }
       ],
+      "icons": {
+        "message-circle-question": {
+          "description": "Speech bubble with a question mark (container icon)",
+          "svg": "./icons/message-circle-question.svg"
+        }
+      },
       "sessionContainers": [
         {
           "id": "help",
@@ -111,6 +117,7 @@
   "files": [
     "dist/",
     "i18n/",
+    "icons/",
     "icon.png",
     "README.md"
   ]

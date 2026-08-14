@@ -33,8 +33,14 @@ function renderResult(
 }
 
 export function activate(ctx: finch.MiniToolContext): void {
-  // Custom container icon: lucide message-circle-question-mark (see package.json
-  // contributes.iconPacks -> "helper-icons"; referenced as ext:message-circle-question).
+  // Container icon: lucide message-circle-question-mark.
+  // Declared TWICE on purpose:
+  // 1. manifest "contributes.icons" (static SVG file path, ./icons/message-circle-question.svg) —
+  //    loaded by the Finch main process at manifest parse time, so the icon resolves even
+  //    before this extension's activate() finishes (avoids the startup race where the
+  //    container entry renders before the runtime icon registry is populated).
+  // 2. ctx.icons.register() below (runtime pack, "helper-icons") — keeps ext: references
+  //    working after activation for any other consumer.
   const iconPack = ctx.icons.register('helper-icons', {
     'message-circle-question': {
       svg:
