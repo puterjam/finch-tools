@@ -1,0 +1,83 @@
+{
+  "name": "finch-delivery",
+  "version": "0.1.0",
+  "description": "Track and browse deliverables (Markdown, Word, PPT, PDF, Excel, web pages, images) produced by the AI assistant across all sessions.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-delivery"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-delivery#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "keywords": [
+    "finch",
+    "finch-minitool",
+    "delivery",
+    "deliverables",
+    "panel",
+    "tracking"
+  ],
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js && cp src/panel.html dist/panel.html",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "name": "Deliveries",
+    "description": "Track and browse deliverables produced by the AI — Markdown, Word, PPT, PDF, Excel, web pages, and images.",
+    "systemPrompt": "When you produce a document-type deliverable for the user (Markdown, Word, PowerPoint, PDF, Excel, web page, or image file), call delivery_manage with action 'record' to log it. Do NOT record code files (.ts, .js, .py, .go, .rs, .java, .c, .cpp, .sh, .css, .json, etc). For Markdown files, include a textPreview of the first ~500 characters.",
+    "main": "dist/index.js",
+    "activationEvents": [
+      "onStartup"
+    ],
+    "miniToolType": "local",
+    "categories": [
+      "productivity"
+    ],
+    "contributes": {
+      "tools": true,
+      "iconPacks": [
+        { "id": "delivery-icons", "label": "Delivery Icons" }
+      ],
+      "panelEntry": {
+        "title": "Deliveries",
+        "icon": "ext:package",
+        "viewType": "delivery.gallery",
+        "instanceMode": "single",
+        "showInLauncher": true,
+        "source": {
+          "type": "local",
+          "path": "dist/panel.html"
+        }
+      }
+    },
+    "permissions": {
+      "filesystem": "none",
+      "network": false,
+      "shell": false
+    }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.2.9",
+    "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "i18n/",
+    "icons/",
+    "icon.png",
+    "README.md"
+  ]
+}

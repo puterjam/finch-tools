@@ -1,0 +1,324 @@
+import type * as finch from 'finch';
+import { randomUUID } from 'node:crypto';
+
+// ── Types ───────────────────────────────────────────────────────────────────
+
+interface DeliveryRecord {
+  id: string;
+  sessionId: string;
+  sessionTitle?: string;
+  filePath: string;
+  fileName: string;
+  fileType: string;
+  title: string;
+  description: string;
+  textPreview?: string;
+  createdAt: number;
+}
+
+type Deliveries = DeliveryRecord[];
+
+const STORAGE_KEY = 'deliveries';
+const MAX_PREVIEW = 500;
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+function text(message: string, isError = false): finch.ToolResult {
+  return { content: [{ type: 'text', text: message }], isError };
+}
+
+/** Extract a short file name from a full path. */
+function baseName(filePath: string): string {
+  const parts = filePath.replace(/\\/g, '/').split('/');
+  return parts[parts.length - 1] || filePath;
+}
+
+/** Map a file extension to a delivery file type. */
+function detectFileType(filePath: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'md' || ext === 'markdown') return 'md';
+  if (ext === 'doc' || ext === 'docx') return 'word';
+  if (ext === 'ppt' || ext === 'pptx') return 'ppt';
+  if (ext === 'pdf') return 'pdf';
+  if (ext === 'xls' || ext === 'xlsx' || ext === 'csv') return 'excel';
+  if (ext === 'html' || ext === 'htm') return 'web';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) return 'image';
+  return 'other';
+}
+
+/** Format a timestamp for display. */
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hours = String(d.getHours()).padStart(2, '0');
+  const mins = String(d.getMinutes()).padStart(2, '0');
+  return `${month}-${day} ${hours}:${mins}`;
+}
+
+/** Build a short summary for the Delivery sidebar row. */
+function buildDeliveryDetail(records: Deliveries): string {
+  if (records.length === 0) return '';
+  const types = [...new Set(records.map((r) => r.fileType))];
+  const typeBadge = types.map((t) => `\`${t}\``).join(' ');
+  return `${typeBadge} · {${records.length} files}\b`;
+}
+
+// ── Storage helpers ─────────────────────────────────────────────────────────
+
+async function loadDeliveries(ctx: finch.MiniToolContext): Promise<Deliveries> {
+  return (await ctx.storage.get<Deliveries>(STORAGE_KEY)) ?? [];
+}
+
+async function saveDeliveries(ctx: finch.MiniToolContext, data: Deliveries): Promise<void> {
+  await ctx.storage.set(STORAGE_KEY, data);
+}
+
+/** Update the Delivery sidebar row for the current session. */
+async function refreshDeliveryRow(
+  ctx: finch.MiniToolContext,
+  sessionId: string | undefined,
+): Promise<void> {
+  if (!sessionId) return;
+  const all = await loadDeliveries(ctx);
+  const sessionRecords = all.filter((r) => r.sessionId === sessionId);
+  if (sessionRecords.length === 0) {
+    await ctx.ui.delivery.remove();
+    return;
+  }
+  const latest = sessionRecords[sessionRecords.length - 1];
+  await ctx.ui.delivery.set({
+    title: sessionRecords.length === 1 ? latest.title : `${sessionRecords.length} deliverables`,
+    detail: buildDeliveryDetail(sessionRecords),
+    icon: 'ext:package',
+    payload: { sessionId, latestId: latest.id },
+  });
+}
+
+// ── Panel message handling ──────────────────────────────────────────────────
+
+interface PanelMessage {
+  type: string;
+  id?: string;
+  sessionId?: string;
+}
+
+async function handlePanelMessage(
+  ctx: finch.MiniToolContext,
+  panel: finch.WebviewPanel,
+  message: unknown,
+): Promise<void> {
+  const msg = message as PanelMessage;
+  const all = await loadDeliveries(ctx);
+
+  switch (msg.type) {
+    case 'requestDeliveries': {
+      // Send all deliveries + current env info
+      const env: Record<string, unknown> = {
+        sessionId: panel.sessionId ?? '',
+        view: panel.view ?? '',
+        spaceId: panel.spaceId ?? '',
+        spaceName: panel.spaceName ?? '',
+      };
+      await panel.postMessage({
+        type: 'deliveries',
+        data: all,
+        env,
+      });
+      break;
+    }
+    case 'remove': {
+      if (!msg.id) break;
+      const filtered = all.filter((r) => r.id !== msg.id);
+      await saveDeliveries(ctx, filtered);
+      await panel.postMessage({ type: 'deliveries', data: filtered });
+      // Refresh delivery row for the affected session
+      const removed = all.find((r) => r.id === msg.id);
+      if (removed) await refreshDeliveryRow(ctx, removed.sessionId);
+      break;
+    }
+    case 'clearSession': {
+      if (!msg.sessionId) break;
+      const filtered = all.filter((r) => r.sessionId !== msg.sessionId);
+      await saveDeliveries(ctx, filtered);
+      await panel.postMessage({ type: 'deliveries', data: filtered });
+      await refreshDeliveryRow(ctx, msg.sessionId);
+      break;
+    }
+  }
+}
+
+// ── Activate ────────────────────────────────────────────────────────────────
+
+export function activate(ctx: finch.MiniToolContext): void {
+  // ── Icon pack ─────────────────────────────────────────────────────────────
+  const iconPack = ctx.icons.register('delivery-icons', {
+    'package': {
+      svg:
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="m7.5 4.27 9 5.15"/>' +
+        '<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>' +
+        '<path d="m3.3 7 8.7 5 8.7-5"/>' +
+        '<path d="M12 22V12"/>' +
+        '</svg>',
+    },
+  });
+  ctx.subscriptions.push(iconPack);
+
+  // ── Panel open listener ──────────────────────────────────────────────────
+  ctx.subscriptions.push(
+    ctx.ui.onDidOpenPanel((panel) => {
+      ctx.subscriptions.push(
+        panel.onDidReceiveMessage((msg) => handlePanelMessage(ctx, panel, msg)),
+      );
+      // Proactively send current data on open
+      loadDeliveries(ctx).then((all) => {
+        const env: Record<string, unknown> = {
+          sessionId: panel.sessionId ?? '',
+          view: panel.view ?? '',
+          spaceId: panel.spaceId ?? '',
+          spaceName: panel.spaceName ?? '',
+        };
+        panel.postMessage({ type: 'deliveries', data: all, env });
+      });
+    }),
+  );
+
+  // ── Agent tool ───────────────────────────────────────────────────────────
+  const tool = ctx.tools.register({
+    name: 'delivery_manage',
+    title: 'Delivery Manager',
+    description:
+      "Record and manage deliverables (document-type files) produced for the user.\n" +
+      'action:\n' +
+      '  record — log a new deliverable (filePath, title, description, textPreview for md)\n' +
+      '  list   — list deliverables, optionally filtered by sessionId\n' +
+      '  remove — remove a deliverable by id',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['record', 'list', 'remove'],
+          description: 'Operation to perform.',
+        },
+        filePath: {
+          type: 'string',
+          description: 'Absolute path to the deliverable file (required for record).',
+        },
+        fileType: {
+          type: 'string',
+          enum: ['md', 'word', 'ppt', 'pdf', 'excel', 'web', 'image', 'other'],
+          description: 'File type category. If omitted, auto-detected from extension.',
+        },
+        title: {
+          type: 'string',
+          description: 'Short title for the deliverable (required for record).',
+        },
+        description: {
+          type: 'string',
+          description: 'One-line description of what this deliverable contains.',
+        },
+        textPreview: {
+          type: 'string',
+          description: 'For Markdown files: first ~500 characters of content for thumbnail preview.',
+        },
+        sessionId: {
+          type: 'string',
+          description: 'Session ID to filter by (for list) or to associate with (for record).',
+        },
+        id: {
+          type: 'string',
+          description: 'Delivery record ID (required for remove).',
+        },
+      },
+      required: ['action'],
+    },
+    risk: 'low',
+    async execute(input, exec): Promise<finch.ToolResult> {
+      const action = String(input.action ?? '');
+
+      switch (action) {
+        // ── record ─────────────────────────────────────────────────────────
+        case 'record': {
+          const filePath = String(input.filePath ?? '').trim();
+          const title = String(input.title ?? '').trim();
+          if (!filePath || !title) {
+            return text('`record` requires both `filePath` and `title`.', true);
+          }
+          const description = String(input.description ?? '').trim();
+          const fileType = String(input.fileType ?? '') || detectFileType(filePath);
+          const textPreview = String(input.textPreview ?? '').slice(0, MAX_PREVIEW) || undefined;
+          const sessionId = String(input.sessionId ?? exec.sessionId ?? '');
+
+          const record: DeliveryRecord = {
+            id: randomUUID(),
+            sessionId,
+            filePath,
+            fileName: baseName(filePath),
+            fileType,
+            title,
+            description,
+            textPreview,
+            createdAt: Date.now(),
+          };
+
+          const all = await loadDeliveries(ctx);
+          all.push(record);
+          await saveDeliveries(ctx, all);
+          await refreshDeliveryRow(ctx, sessionId || undefined);
+
+          return text(
+            `Deliverable recorded: ${title} (${fileType})\nID: ${record.id}\nFile: ${record.fileName}`,
+          );
+        }
+
+        // ── list ───────────────────────────────────────────────────────────
+        case 'list': {
+          const all = await loadDeliveries(ctx);
+          const filterSession = String(input.sessionId ?? '');
+          const filtered = filterSession
+            ? all.filter((r) => r.sessionId === filterSession)
+            : all;
+
+          if (filtered.length === 0) {
+            return text('No deliverables found.');
+          }
+
+          const lines = filtered.map((r, i) => {
+            const time = formatTime(r.createdAt);
+            return `${i + 1}. [${r.fileType}] ${r.title} — ${r.fileName} (${time})\n   ID: ${r.id}`;
+          });
+          return text(
+            `${filtered.length} deliverable(s):\n\n${lines.join('\n\n')}`,
+          );
+        }
+
+        // ── remove ─────────────────────────────────────────────────────────
+        case 'remove': {
+          const id = String(input.id ?? '').trim();
+          if (!id) {
+            return text('`remove` requires `id`.', true);
+          }
+          const all = await loadDeliveries(ctx);
+          const found = all.find((r) => r.id === id);
+          if (!found) {
+            return text(`No deliverable found with id: ${id}`, true);
+          }
+          const filtered = all.filter((r) => r.id !== id);
+          await saveDeliveries(ctx, filtered);
+          await refreshDeliveryRow(ctx, found.sessionId);
+
+          return text(`Removed: ${found.title} (${found.fileName})`);
+        }
+
+        default:
+          return text(`Unknown action: ${action}`, true);
+      }
+    },
+  });
+
+  ctx.subscriptions.push(tool);
+
+  ctx.logger.info('finch-delivery activated');
+}

@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deliveries</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--finch-font-body, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+    background: var(--finch-bg-root, #f5f5f5);
+    color: var(--finch-text-primary, #1a1a1a);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Layout ── */
+  #app {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 24px 20px 48px;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .header .count {
+    font-size: 13px;
+    color: var(--finch-text-secondary, #666);
+    background: var(--finch-bg-elevated, #fff);
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--finch-border, #e0e0e0);
+  }
+
+  /* ── Filter tabs ── */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 20px;
+    background: var(--finch-bg-elevated, #fff);
+    border-radius: 10px;
+    padding: 3px;
+    border: 1px solid var(--finch-border, #e0e0e0);
+    width: fit-content;
+  }
+  .tab {
+    padding: 6px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    border: none;
+    background: transparent;
+    color: var(--finch-text-secondary, #666);
+    border-radius: 7px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .tab.active {
+    background: var(--finch-accent, #3b82f6);
+    color: #fff;
+  }
+  .tab:not(.active):hover {
+    background: var(--finch-bg-hover, #f0f0f0);
+  }
+
+  /* ── Card grid ── */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 14px;
+  }
+
+  /* ── Card ── */
+  .card {
+    background: var(--finch-bg-elevated, #fff);
+    border: 1px solid var(--finch-border, #e0e0e0);
+    border-radius: var(--finch-radius-md, 12px);
+    padding: 16px;
+    cursor: pointer;
+    transition: box-shadow 0.2s, border-color 0.2s, transform 0.1s;
+    position: relative;
+    overflow: hidden;
+  }
+  .card:hover {
+    box-shadow: var(--finch-shadow-sm, 0 2px 8px rgba(0,0,0,0.08));
+    border-color: var(--finch-accent, #3b82f6);
+  }
+  .card:active {
+    transform: scale(0.99);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+
+  .type-badge {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .type-badge.md { background: #4a9eff; }
+  .type-badge.word { background: #2b579a; }
+  .type-badge.ppt { background: #d24726; }
+  .type-badge.pdf { background: #e0533d; }
+  .type-badge.excel { background: #217346; }
+  .type-badge.web { background: #e8a317; }
+  .type-badge.image { background: #9b59b6; }
+  .type-badge.other { background: #6b7280; }
+
+  .card-title {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.4;
+    flex: 1;
+    word-break: break-word;
+  }
+  .card-time {
+    font-size: 11px;
+    color: var(--finch-text-tertiary, #999);
+    white-space: nowrap;
+    margin-top: 2px;
+  }
+
+  .card-desc {
+    font-size: 12px;
+    color: var(--finch-text-secondary, #666);
+    line-height: 1.5;
+    margin-bottom: 8px;
+    word-break: break-word;
+  }
+
+  /* ── MD text preview ── */
+  .text-preview {
+    font-size: 11px;
+    color: var(--finch-text-tertiary, #888);
+    line-height: 1.5;
+    background: var(--finch-bg-root, #f5f5f5);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    max-height: 60px;
+    overflow: hidden;
+    position: relative;
+    font-family: var(--finch-font-mono, 'SF Mono', monospace);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .text-preview::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 20px;
+    background: linear-gradient(transparent, var(--finch-bg-root, #f5f5f5));
+  }
+
+  .card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .session-tag {
+    font-size: 10px;
+    color: var(--finch-text-tertiary, #999);
+    background: var(--finch-bg-root, #f5f5f5);
+    padding: 3px 8px;
+    border-radius: 6px;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .session-tag.current {
+    color: var(--finch-accent, #3b82f6);
+    font-weight: 600;
+  }
+
+  .card-actions {
+    display: flex;
+    gap: 6px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .card:hover .card-actions {
+    opacity: 1;
+  }
+  .btn-icon {
+    width: 26px;
+    height: 26px;
+    border: 1px solid var(--finch-border, #e0e0e0);
+    background: var(--finch-bg-elevated, #fff);
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: var(--finch-text-secondary, #666);
+    transition: all 0.15s;
+    text-decoration: none;
+    font-family: inherit;
+  }
+  .btn-icon:hover {
+    border-color: var(--finch-accent, #3b82f6);
+    color: var(--finch-accent, #3b82f6);
+  }
+  .btn-icon.danger:hover {
+    border-color: #e0533d;
+    color: #e0533d;
+  }
+
+  /* ── Expanded preview ── */
+  .card.expanded .text-preview {
+    max-height: none;
+  }
+  .card.expanded .text-preview::after {
+    display: none;
+  }
+
+  /* ── Empty state ── */
+  .empty {
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--finch-text-tertiary, #999);
+  }
+  .empty-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+    opacity: 0.4;
+  }
+  .empty-text {
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  /* ── Preview modal ── */
+  .preview-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 32px;
+  }
+  .preview-overlay.show {
+    display: flex;
+  }
+  .preview-modal {
+    background: var(--finch-bg-elevated, #fff);
+    border-radius: 16px;
+    max-width: 720px;
+    width: 100%;
+    max-height: 80vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  }
+  .preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--finch-border, #e0e0e0);
+  }
+  .preview-header h3 {
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .preview-close {
+    width: 30px;
+    height: 30px;
+    border: none;
+    background: var(--finch-bg-root, #f5f5f5);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 16px;
+    color: var(--finch-text-secondary, #666);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: inherit;
+  }
+  .preview-close:hover {
+    background: var(--finch-bg-hover, #e8e8e8);
+  }
+  .preview-body {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .preview-body pre {
+    font-family: var(--finch-font-mono, 'SF Mono', monospace);
+    font-size: 13px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--finch-text-primary, #1a1a1a);
+  }
+  .preview-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+    font-size: 12px;
+    color: var(--finch-text-secondary, #666);
+  }
+  .preview-meta span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .preview-jump {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 14px;
+    background: var(--finch-accent, #3b82f6);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    text-decoration: none;
+    font-family: inherit;
+    margin-top: 12px;
+  }
+  .preview-jump:hover {
+    opacity: 0.9;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="header">
+    <h1>📦 Deliveries</h1>
+    <span class="count" id="count">0 files</span>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-filter="current">Current Session</button>
+    <button class="tab" data-filter="all">All Sessions</button>
+  </div>
+
+  <div id="content"></div>
+</div>
+
+<!-- Preview modal -->
+<div class="preview-overlay" id="previewOverlay">
+  <div class="preview-modal">
+    <div class="preview-header">
+      <h3 id="previewTitle"></h3>
+      <button class="preview-close" id="previewClose">✕</button>
+    </div>
+    <div class="preview-body" id="previewBody"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ── State ──────────────────────────────────────────────────────────────
+  var deliveries = [];
+  var currentSessionId = '';
+  var filterMode = 'current'; // 'current' | 'all'
+  var expandedIds = {}; // track expanded cards
+
+  // ── Finch Bridge ───────────────────────────────────────────────────────
+  var finchApi = (window).finch;
+
+  // ── DOM ────────────────────────────────────────────────────────────────
+  var contentEl = document.getElementById('content');
+  var countEl = document.getElementById('count');
+  var tabs = document.querySelectorAll('.tab');
+
+  // ── Tabs ───────────────────────────────────────────────────────────────
+  tabs.forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      tabs.forEach(function(t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      filterMode = tab.dataset.filter;
+      render();
+    });
+  });
+
+  // ── Helpers ────────────────────────────────────────────────────────────
+  function formatTime(ts) {
+    var d = new Date(ts);
+    var month = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    var hours = String(d.getHours()).padStart(2, '0');
+    var mins = String(d.getMinutes()).padStart(2, '0');
+    return month + '-' + day + ' ' + hours + ':' + mins;
+  }
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+              .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function getFiltered() {
+    if (filterMode === 'current' && currentSessionId) {
+      return deliveries.filter(function(r) { return r.sessionId === currentSessionId; });
+    }
+    return deliveries;
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────
+  function render() {
+    var filtered = getFiltered();
+    countEl.textContent = filtered.length + ' file' + (filtered.length !== 1 ? 's' : '');
+
+    if (filtered.length === 0) {
+      contentEl.innerHTML =
+        '<div class="empty">' +
+        '<div class="empty-icon">📦</div>' +
+        '<div class="empty-text">' +
+          (filterMode === 'current'
+            ? 'No deliverables in this session yet.<br>Ask the AI to create a document — it will show up here.'
+            : 'No deliverables yet.<br>Ask the AI to create a document — it will show up here.') +
+        '</div></div>';
+      return;
+    }
+
+    // Sort by createdAt descending
+    var sorted = filtered.slice().sort(function(a, b) { return b.createdAt - a.createdAt; });
+
+    var html = '<div class="grid">';
+    sorted.forEach(function(r) {
+      var isExpanded = !!expandedIds[r.id];
+      var isCurrent = r.sessionId === currentSessionId;
+      var sessionLabel = escapeHtml(r.sessionTitle || (r.sessionId ? r.sessionId.slice(0, 8) : 'unknown'));
+
+      html += '<div class="card' + (isExpanded ? ' expanded' : '') + '" data-id="' + r.id + '">';
+      html += '<div class="card-header">';
+      html += '<div class="type-badge ' + r.fileType + '">' + r.fileType + '</div>';
+      html += '<div style="flex:1;min-width:0;">';
+      html += '<div class="card-title">' + escapeHtml(r.title) + '</div>';
+      html += '<div class="card-time">' + formatTime(r.createdAt) + '</div>';
+      html += '</div>';
+      html += '</div>';
+
+      if (r.description) {
+        html += '<div class="card-desc">' + escapeHtml(r.description) + '</div>';
+      }
+
+      if (r.textPreview && r.fileType === 'md') {
+        html += '<div class="text-preview">' + escapeHtml(r.textPreview) + '</div>';
+      }
+
+      html += '<div class="card-footer">';
+      html += '<span class="session-tag' + (isCurrent ? ' current' : '') + '">' + sessionLabel + '</span>';
+      html += '<div class="card-actions">';
+      html += '<a class="btn-icon" href="finch://open?id=' + encodeURIComponent(r.sessionId) + '" title="Jump to session" onclick="event.stopPropagation()">↗</a>';
+      html += '<button class="btn-icon danger" data-remove="' + r.id + '" title="Remove">✕</button>';
+      html += '</div>';
+      html += '</div>';
+
+      html += '</div>';
+    });
+    html += '</div>';
+    contentEl.innerHTML = html;
+
+    // Attach event listeners
+    var cards = contentEl.querySelectorAll('.card');
+    cards.forEach(function(card) {
+      var id = card.dataset.id;
+
+      // Card click → expand/collapse (for md) or open preview
+      card.addEventListener('click', function(e) {
+        // Don't trigger if clicking a button or link
+        if (e.target.closest('.btn-icon') || e.target.closest('a')) return;
+
+        var record = deliveries.find(function(r) { return r.id === id; });
+        if (!record) return;
+
+        if (record.textPreview && record.fileType === 'md') {
+          // Toggle expand
+          expandedIds[id] = !expandedIds[id];
+          render();
+        } else {
+          // Open preview modal for non-md
+          openPreview(record);
+        }
+      });
+    });
+
+    // Remove buttons
+    var removeBtns = contentEl.querySelectorAll('[data-remove]');
+    removeBtns.forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var id = btn.dataset.remove;
+        if (finchApi) {
+          finchApi.postMessage({ type: 'remove', id: id });
+        }
+      });
+    });
+  }
+
+  // ── Preview modal ──────────────────────────────────────────────────────
+  var previewOverlay = document.getElementById('previewOverlay');
+  var previewTitle = document.getElementById('previewTitle');
+  var previewBody = document.getElementById('previewBody');
+  var previewClose = document.getElementById('previewClose');
+
+  function openPreview(record) {
+    previewTitle.textContent = record.title;
+    var html = '';
+
+    html += '<div class="preview-meta">';
+    html += '<span>📁 ' + escapeHtml(record.fileName) + '</span>';
+    html += '<span>🏷️ ' + record.fileType + '</span>';
+    html += '<span>🕐 ' + formatTime(record.createdAt) + '</span>';
+    if (record.filePath) {
+      html += '<span>📂 ' + escapeHtml(record.filePath) + '</span>';
+    }
+    html += '</div>';
+
+    if (record.description) {
+      html += '<p style="margin-bottom:12px;font-size:13px;color:var(--finch-text-secondary,#666);">' + escapeHtml(record.description) + '</p>';
+    }
+
+    if (record.textPreview) {
+      html += '<pre>' + escapeHtml(record.textPreview) + '</pre>';
+    } else {
+      html += '<p style="color:var(--finch-text-tertiary,#999);font-size:13px;">No text preview available for this file type.</p>';
+    }
+
+    if (record.sessionId) {
+      html += '<a class="preview-jump" href="finch://open?id=' + encodeURIComponent(record.sessionId) + '">↗ Jump to Session</a>';
+    }
+
+    previewBody.innerHTML = html;
+    previewOverlay.classList.add('show');
+  }
+
+  previewClose.addEventListener('click', function() {
+    previewOverlay.classList.remove('show');
+  });
+  previewOverlay.addEventListener('click', function(e) {
+    if (e.target === previewOverlay) {
+      previewOverlay.classList.remove('show');
+    }
+  });
+
+  // ── Finch bridge messages ──────────────────────────────────────────────
+  if (finchApi && finchApi.onMessage) {
+    finchApi.onMessage(function(message) {
+      if (!message || typeof message !== 'object') return;
+
+      // Handle finch:env
+      if (message.type === 'finch:env') {
+        currentSessionId = message.sessionId || '';
+        render();
+        return;
+      }
+
+      // Handle deliveries data
+      if (message.type === 'deliveries') {
+        deliveries = message.data || [];
+        if (message.env && message.env.sessionId !== undefined) {
+          currentSessionId = message.env.sessionId || currentSessionId;
+        }
+        render();
+        return;
+      }
+    });
+  }
+
+  // ── Initial render ─────────────────────────────────────────────────────
+  render();
+
+  // Request data from backend
+  if (finchApi && finchApi.postMessage) {
+    finchApi.postMessage({ type: 'requestDeliveries' });
+  }
+})();
+</script>
+</body>
+</html>
