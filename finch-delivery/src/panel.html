@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Deliveries</title>
+<title>Artifacts</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -78,134 +78,42 @@
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 14px;
+    gap: 16px;
   }
 
   /* ── Card ── */
   .card {
     background: var(--finch-bg-elevated, #fff);
-    border: 1px solid var(--finch-border, #e0e0e0);
-    border-radius: var(--finch-radius-md, 12px);
-    padding: 16px;
+    border: 1px solid var(--finch-border, #ececec);
+    border-radius: var(--finch-radius-md, 14px);
     cursor: pointer;
     transition: box-shadow 0.2s, border-color 0.2s, transform 0.1s;
     position: relative;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 220px;
   }
   .card:hover {
-    box-shadow: var(--finch-shadow-sm, 0 2px 8px rgba(0,0,0,0.08));
-    border-color: var(--finch-accent, #3b82f6);
+    box-shadow: var(--finch-shadow-sm, 0 4px 16px rgba(0,0,0,0.08));
+    border-color: var(--finch-border, #ececec);
   }
   .card:active {
     transform: scale(0.99);
   }
 
-  .card-header {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    margin-bottom: 10px;
-  }
-
-  .type-badge {
-    width: 36px;
-    height: 36px;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    color: #fff;
-    flex-shrink: 0;
-  }
-  .type-badge.md { background: #4a9eff; }
-  .type-badge.word { background: #2b579a; }
-  .type-badge.ppt { background: #d24726; }
-  .type-badge.pdf { background: #e0533d; }
-  .type-badge.excel { background: #217346; }
-  .type-badge.web { background: #e8a317; }
-  .type-badge.image { background: #9b59b6; }
-  .type-badge.other { background: #6b7280; }
-
-  .card-title {
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 1.4;
-    flex: 1;
-    word-break: break-word;
-  }
-  .card-time {
-    font-size: 11px;
-    color: var(--finch-text-tertiary, #999);
-    white-space: nowrap;
-    margin-top: 2px;
-  }
-
-  .card-desc {
-    font-size: 12px;
-    color: var(--finch-text-secondary, #666);
-    line-height: 1.5;
-    margin-bottom: 8px;
-    word-break: break-word;
-  }
-
-  /* ── MD text preview ── */
-  .text-preview {
-    font-size: 11px;
-    color: var(--finch-text-tertiary, #888);
-    line-height: 1.5;
-    background: var(--finch-bg-root, #f5f5f5);
-    border-radius: 8px;
-    padding: 8px 10px;
-    margin-bottom: 8px;
-    max-height: 60px;
-    overflow: hidden;
-    position: relative;
-    font-family: var(--finch-font-mono, 'SF Mono', monospace);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .text-preview::after {
-    content: '';
+  /* ── Hover action overlay ── */
+  .card-actions-overlay {
     position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 20px;
-    background: linear-gradient(transparent, var(--finch-bg-root, #f5f5f5));
-  }
-
-  .card-footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .session-tag {
-    font-size: 10px;
-    color: var(--finch-text-tertiary, #999);
-    background: var(--finch-bg-root, #f5f5f5);
-    padding: 3px 8px;
-    border-radius: 6px;
-    max-width: 160px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .session-tag.current {
-    color: var(--finch-accent, #3b82f6);
-    font-weight: 600;
-  }
-
-  .card-actions {
+    top: 10px;
+    right: 10px;
     display: flex;
     gap: 6px;
     opacity: 0;
     transition: opacity 0.15s;
+    z-index: 2;
   }
-  .card:hover .card-actions {
+  .card:hover .card-actions-overlay {
     opacity: 1;
   }
   .btn-icon {
@@ -213,7 +121,7 @@
     height: 26px;
     border: 1px solid var(--finch-border, #e0e0e0);
     background: var(--finch-bg-elevated, #fff);
-    border-radius: 6px;
+    border-radius: 7px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -223,6 +131,7 @@
     transition: all 0.15s;
     text-decoration: none;
     font-family: inherit;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
   }
   .btn-icon:hover {
     border-color: var(--finch-accent, #3b82f6);
@@ -233,12 +142,125 @@
     color: #e0533d;
   }
 
-  /* ── Expanded preview ── */
-  .card.expanded .text-preview {
-    max-height: none;
+  /* ── Preview area (top, faded content) ── */
+  .card-preview {
+    flex: 1;
+    min-height: 0;
+    padding: 16px 16px 0;
+    position: relative;
+    overflow: hidden;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--finch-text-secondary, #666);
   }
-  .card.expanded .text-preview::after {
-    display: none;
+  .card-preview::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 44px;
+    background: linear-gradient(transparent, var(--finch-bg-elevated, #fff));
+    pointer-events: none;
+  }
+  .preview-heading {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--finch-text-primary, #1a1a1a);
+    line-height: 1.4;
+    margin-bottom: 6px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .preview-body {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .preview-placeholder {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: var(--finch-text-tertiary, #b0b0b0);
+  }
+  .preview-placeholder .glyph {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 5px 12px;
+    border-radius: 8px;
+    background: var(--finch-bg-root, #f5f5f5);
+  }
+  .preview-placeholder .hint {
+    font-size: 11px;
+    color: var(--finch-text-tertiary, #b0b0b0);
+    text-align: center;
+    padding: 0 16px;
+  }
+
+  /* ── Footer (title + meta) ── */
+  .card-footer {
+    padding: 12px 16px 14px;
+    border-top: 1px solid var(--finch-border, #f0f0f0);
+    background: var(--finch-bg-elevated, #fff);
+    position: relative;
+    z-index: 1;
+  }
+  .card-title {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.4;
+    color: var(--finch-text-primary, #1a1a1a);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+    margin-bottom: 6px;
+  }
+  .card-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .card-time {
+    font-size: 12px;
+    color: var(--finch-text-tertiary, #999);
+    white-space: nowrap;
+  }
+  .type-pill {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    padding: 2px 7px;
+    border-radius: 5px;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .type-pill.md { background: #4a9eff; }
+  .type-pill.word { background: #2b579a; }
+  .type-pill.ppt { background: #d24726; }
+  .type-pill.pdf { background: #e0533d; }
+  .type-pill.excel { background: #217346; }
+  .type-pill.web { background: #e8a317; }
+  .type-pill.image { background: #9b59b6; }
+  .type-pill.other { background: #6b7280; }
+
+  .session-tag {
+    font-size: 10px;
+    color: var(--finch-accent, #3b82f6);
+    font-weight: 600;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* ── Empty state ── */
@@ -256,131 +278,21 @@
     font-size: 14px;
     line-height: 1.6;
   }
-
-  /* ── Preview modal ── */
-  .preview-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0,0,0,0.4);
-    display: none;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-    padding: 32px;
-  }
-  .preview-overlay.show {
-    display: flex;
-  }
-  .preview-modal {
-    background: var(--finch-bg-elevated, #fff);
-    border-radius: 16px;
-    max-width: 720px;
-    width: 100%;
-    max-height: 80vh;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-  }
-  .preview-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--finch-border, #e0e0e0);
-  }
-  .preview-header h3 {
-    font-size: 16px;
-    font-weight: 600;
-  }
-  .preview-close {
-    width: 30px;
-    height: 30px;
-    border: none;
-    background: var(--finch-bg-root, #f5f5f5);
-    border-radius: 8px;
-    cursor: pointer;
-    font-size: 16px;
-    color: var(--finch-text-secondary, #666);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: inherit;
-  }
-  .preview-close:hover {
-    background: var(--finch-bg-hover, #e8e8e8);
-  }
-  .preview-body {
-    padding: 20px;
-    overflow-y: auto;
-    flex: 1;
-  }
-  .preview-body pre {
-    font-family: var(--finch-font-mono, 'SF Mono', monospace);
-    font-size: 13px;
-    line-height: 1.6;
-    white-space: pre-wrap;
-    word-break: break-word;
-    color: var(--finch-text-primary, #1a1a1a);
-  }
-  .preview-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    margin-bottom: 16px;
-    font-size: 12px;
-    color: var(--finch-text-secondary, #666);
-  }
-  .preview-meta span {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .preview-jump {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 6px 14px;
-    background: var(--finch-accent, #3b82f6);
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    text-decoration: none;
-    font-family: inherit;
-    margin-top: 12px;
-  }
-  .preview-jump:hover {
-    opacity: 0.9;
-  }
 </style>
 </head>
 <body>
 <div id="app">
   <div class="header">
-    <h1>📦 Deliveries</h1>
+    <h1>📦 Artifacts</h1>
     <span class="count" id="count">0 files</span>
   </div>
 
   <div class="tabs">
-    <button class="tab active" data-filter="current">Current Session</button>
-    <button class="tab" data-filter="all">All Sessions</button>
+    <button class="tab" data-filter="current">Current Session</button>
+    <button class="tab active" data-filter="all">All Sessions</button>
   </div>
 
   <div id="content"></div>
-</div>
-
-<!-- Preview modal -->
-<div class="preview-overlay" id="previewOverlay">
-  <div class="preview-modal">
-    <div class="preview-header">
-      <h3 id="previewTitle"></h3>
-      <button class="preview-close" id="previewClose">✕</button>
-    </div>
-    <div class="preview-body" id="previewBody"></div>
-  </div>
 </div>
 
 <script>
@@ -390,8 +302,13 @@
   // ── State ──────────────────────────────────────────────────────────────
   var deliveries = [];
   var currentSessionId = '';
-  var filterMode = 'current'; // 'current' | 'all'
-  var expandedIds = {}; // track expanded cards
+  // Default to "All" — this page opens both as a Session-scoped Panel App
+  // (which has a real sessionId) and as an application-level Full View
+  // sidebar entry (which has no session concept). We auto-switch to
+  // "current" once a real sessionId arrives, unless the user already
+  // picked a tab themselves.
+  var filterMode = 'all'; // 'current' | 'all'
+  var userPickedTab = false;
 
   // ── Finch Bridge ───────────────────────────────────────────────────────
   var finchApi = (window).finch;
@@ -401,15 +318,27 @@
   var countEl = document.getElementById('count');
   var tabs = document.querySelectorAll('.tab');
 
+  function setActiveTab(mode) {
+    filterMode = mode;
+    tabs.forEach(function(t) {
+      t.classList.toggle('active', t.dataset.filter === mode);
+    });
+  }
+
   // ── Tabs ───────────────────────────────────────────────────────────────
   tabs.forEach(function(tab) {
     tab.addEventListener('click', function() {
-      tabs.forEach(function(t) { t.classList.remove('active'); });
-      tab.classList.add('active');
-      filterMode = tab.dataset.filter;
+      userPickedTab = true;
+      setActiveTab(tab.dataset.filter);
       render();
     });
   });
+
+  function onSessionIdKnown(sessionId) {
+    if (!sessionId || currentSessionId === sessionId) return;
+    currentSessionId = sessionId;
+    if (!userPickedTab) setActiveTab('current');
+  }
 
   // ── Helpers ────────────────────────────────────────────────────────────
   function formatTime(ts) {
@@ -421,10 +350,66 @@
     return month + '-' + day + ' ' + hours + ':' + mins;
   }
 
+  function formatRelativeTime(ts) {
+    var diff = Math.max(0, Date.now() - ts) / 1000; // seconds
+    if (diff < 60) return 'Edited just now';
+    if (diff < 3600) {
+      var m = Math.floor(diff / 60);
+      return 'Edited ' + m + ' minute' + (m !== 1 ? 's' : '') + ' ago';
+    }
+    if (diff < 86400) {
+      var h = Math.floor(diff / 3600);
+      return 'Edited ' + h + ' hour' + (h !== 1 ? 's' : '') + ' ago';
+    }
+    if (diff < 30 * 86400) {
+      var d = Math.floor(diff / 86400);
+      return 'Edited ' + d + ' day' + (d !== 1 ? 's' : '') + ' ago';
+    }
+    if (diff < 365 * 86400) {
+      var mo = Math.floor(diff / (30 * 86400));
+      return 'Edited ' + mo + ' month' + (mo !== 1 ? 's' : '') + ' ago';
+    }
+    var y = Math.floor(diff / (365 * 86400));
+    return 'Edited ' + y + ' year' + (y !== 1 ? 's' : '') + ' ago';
+  }
+
   function escapeHtml(str) {
     if (!str) return '';
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
               .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  /** Build the faded preview-area content for a card. */
+  function buildPreviewHtml(r) {
+    var src = r.textPreview || r.description || '';
+    if (!src) {
+      return '<div class="preview-placeholder">' +
+        '<span class="glyph">' + r.fileType + '</span>' +
+        '<span class="hint">No preview available</span>' +
+        '</div>';
+    }
+
+    if (r.textPreview) {
+      // Split first heading line (starts with #) from the rest.
+      var lines = src.split('\n');
+      var headingLine = '';
+      var bodyStart = 0;
+      var firstNonEmpty = lines.findIndex(function(l) { return l.trim() !== ''; });
+      if (firstNonEmpty !== -1 && /^#{1,6}\s+/.test(lines[firstNonEmpty])) {
+        headingLine = lines[firstNonEmpty].replace(/^#{1,6}\s+/, '');
+        bodyStart = firstNonEmpty + 1;
+      }
+      var body = lines.slice(bodyStart).join('\n').trim();
+      var html = '';
+      if (headingLine) {
+        html += '<div class="preview-heading">' + escapeHtml(headingLine) + '</div>';
+      }
+      html += '<div class="preview-body">' + escapeHtml(body || src) + '</div>';
+      return html;
+    }
+
+    // Fallback: description only
+    return '<div class="preview-body">' + escapeHtml(src) + '</div>';
   }
 
   function getFiltered() {
@@ -456,32 +441,27 @@
 
     var html = '<div class="grid">';
     sorted.forEach(function(r) {
-      var isExpanded = !!expandedIds[r.id];
       var isCurrent = r.sessionId === currentSessionId;
       var sessionLabel = escapeHtml(r.sessionTitle || (r.sessionId ? r.sessionId.slice(0, 8) : 'unknown'));
 
-      html += '<div class="card' + (isExpanded ? ' expanded' : '') + '" data-id="' + r.id + '">';
-      html += '<div class="card-header">';
-      html += '<div class="type-badge ' + r.fileType + '">' + r.fileType + '</div>';
-      html += '<div style="flex:1;min-width:0;">';
-      html += '<div class="card-title">' + escapeHtml(r.title) + '</div>';
-      html += '<div class="card-time">' + formatTime(r.createdAt) + '</div>';
-      html += '</div>';
-      html += '</div>';
+      html += '<div class="card" data-id="' + r.id + '">';
 
-      if (r.description) {
-        html += '<div class="card-desc">' + escapeHtml(r.description) + '</div>';
-      }
-
-      if (r.textPreview && r.fileType === 'md') {
-        html += '<div class="text-preview">' + escapeHtml(r.textPreview) + '</div>';
-      }
-
-      html += '<div class="card-footer">';
-      html += '<span class="session-tag' + (isCurrent ? ' current' : '') + '">' + sessionLabel + '</span>';
-      html += '<div class="card-actions">';
+      html += '<div class="card-actions-overlay">';
       html += '<a class="btn-icon" href="finch://open?id=' + encodeURIComponent(r.sessionId) + '" title="Jump to session" onclick="event.stopPropagation()">↗</a>';
       html += '<button class="btn-icon danger" data-remove="' + r.id + '" title="Remove">✕</button>';
+      html += '</div>';
+
+      html += '<div class="card-preview">' + buildPreviewHtml(r) + '</div>';
+
+      html += '<div class="card-footer">';
+      html += '<div class="card-title">' + escapeHtml(r.title) + '</div>';
+      html += '<div class="card-meta">';
+      html += '<span class="card-time">' + formatRelativeTime(r.createdAt) + '</span>';
+      if (filterMode === 'all' && !isCurrent) {
+        html += '<span class="session-tag">' + sessionLabel + '</span>';
+      } else {
+        html += '<span class="type-pill ' + r.fileType + '">' + r.fileType + '</span>';
+      }
       html += '</div>';
       html += '</div>';
 
@@ -495,21 +475,16 @@
     cards.forEach(function(card) {
       var id = card.dataset.id;
 
-      // Card click → expand/collapse (for md) or open preview
+      // Card click → open the file in Finch's native file preview
       card.addEventListener('click', function(e) {
         // Don't trigger if clicking a button or link
         if (e.target.closest('.btn-icon') || e.target.closest('a')) return;
 
         var record = deliveries.find(function(r) { return r.id === id; });
-        if (!record) return;
+        if (!record || !record.filePath) return;
 
-        if (record.textPreview && record.fileType === 'md') {
-          // Toggle expand
-          expandedIds[id] = !expandedIds[id];
-          render();
-        } else {
-          // Open preview modal for non-md
-          openPreview(record);
+        if (finchApi) {
+          finchApi.postMessage({ type: 'openPreview', filePath: record.filePath });
         }
       });
     });
@@ -527,52 +502,6 @@
     });
   }
 
-  // ── Preview modal ──────────────────────────────────────────────────────
-  var previewOverlay = document.getElementById('previewOverlay');
-  var previewTitle = document.getElementById('previewTitle');
-  var previewBody = document.getElementById('previewBody');
-  var previewClose = document.getElementById('previewClose');
-
-  function openPreview(record) {
-    previewTitle.textContent = record.title;
-    var html = '';
-
-    html += '<div class="preview-meta">';
-    html += '<span>📁 ' + escapeHtml(record.fileName) + '</span>';
-    html += '<span>🏷️ ' + record.fileType + '</span>';
-    html += '<span>🕐 ' + formatTime(record.createdAt) + '</span>';
-    if (record.filePath) {
-      html += '<span>📂 ' + escapeHtml(record.filePath) + '</span>';
-    }
-    html += '</div>';
-
-    if (record.description) {
-      html += '<p style="margin-bottom:12px;font-size:13px;color:var(--finch-text-secondary,#666);">' + escapeHtml(record.description) + '</p>';
-    }
-
-    if (record.textPreview) {
-      html += '<pre>' + escapeHtml(record.textPreview) + '</pre>';
-    } else {
-      html += '<p style="color:var(--finch-text-tertiary,#999);font-size:13px;">No text preview available for this file type.</p>';
-    }
-
-    if (record.sessionId) {
-      html += '<a class="preview-jump" href="finch://open?id=' + encodeURIComponent(record.sessionId) + '">↗ Jump to Session</a>';
-    }
-
-    previewBody.innerHTML = html;
-    previewOverlay.classList.add('show');
-  }
-
-  previewClose.addEventListener('click', function() {
-    previewOverlay.classList.remove('show');
-  });
-  previewOverlay.addEventListener('click', function(e) {
-    if (e.target === previewOverlay) {
-      previewOverlay.classList.remove('show');
-    }
-  });
-
   // ── Finch bridge messages ──────────────────────────────────────────────
   if (finchApi && finchApi.onMessage) {
     finchApi.onMessage(function(message) {
@@ -580,7 +509,7 @@
 
       // Handle finch:env
       if (message.type === 'finch:env') {
-        currentSessionId = message.sessionId || '';
+        onSessionIdKnown(message.sessionId || '');
         render();
         return;
       }
@@ -588,8 +517,8 @@
       // Handle deliveries data
       if (message.type === 'deliveries') {
         deliveries = message.data || [];
-        if (message.env && message.env.sessionId !== undefined) {
-          currentSessionId = message.env.sessionId || currentSessionId;
+        if (message.env && message.env.sessionId) {
+          onSessionIdKnown(message.env.sessionId);
         }
         render();
         return;

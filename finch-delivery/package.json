@@ -33,8 +33,8 @@
   },
   "finch": {
     "manifestVersion": 1,
-    "name": "Deliveries",
-    "description": "Track and browse deliverables produced by the AI — Markdown, Word, PPT, PDF, Excel, web pages, and images.",
+    "name": "Artifacts",
+    "description": "Track and browse artifacts produced by the AI — Markdown, Word, PPT, PDF, Excel, web pages, and images.",
     "systemPrompt": "When you produce a document-type deliverable for the user (Markdown, Word, PowerPoint, PDF, Excel, web page, or image file), call delivery_manage with action 'record' to log it. Do NOT record code files (.ts, .js, .py, .go, .rs, .java, .c, .cpp, .sh, .css, .json, etc). For Markdown files, include a textPreview of the first ~500 characters.",
     "main": "dist/index.js",
     "activationEvents": [
@@ -49,12 +49,29 @@
       "iconPacks": [
         { "id": "delivery-icons", "label": "Delivery Icons" }
       ],
-      "panelEntry": {
-        "title": "Deliveries",
+      "icons": {
+        "package": {
+          "description": "Package box icon (appPanel entry icon)",
+          "svg": "./icons/package.svg"
+        },
+        "library": {
+          "description": "Library icon (left sidebar appView entry icon)",
+          "svg": "./icons/library.svg"
+        }
+      },
+      "appPanel": {
         "icon": "ext:package",
         "viewType": "delivery.gallery",
         "instanceMode": "single",
         "showInLauncher": true,
+        "source": {
+          "type": "local",
+          "path": "dist/panel.html"
+        }
+      },
+      "appView": {
+        "icon": "ext:library",
+        "description": "Browse every artifact produced by the AI across all sessions.",
         "source": {
           "type": "local",
           "path": "dist/panel.html"

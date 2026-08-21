@@ -101,11 +101,26 @@ interface PanelMessage {
   type: string;
   id?: string;
   sessionId?: string;
+  filePath?: string;
+}
+
+/**
+ * Opens Finch's built-in file preview for a local absolute path.
+ * `openFilePreview` is not yet part of the published `@finchtoys/minitool-api`
+ * type definitions, so it is accessed via a loose cast.
+ */
+async function openFilePreview(ctx: finch.MiniToolContext, filePath: string): Promise<void> {
+  const ui = ctx.ui as unknown as { openFilePreview?: (path: string) => Promise<void> };
+  if (typeof ui.openFilePreview !== 'function') {
+    ctx.logger.warn('ctx.ui.openFilePreview is not available on this Finch version');
+    return;
+  }
+  await ui.openFilePreview(filePath);
 }
 
 async function handlePanelMessage(
   ctx: finch.MiniToolContext,
-  panel: finch.WebviewPanel,
+  panel: finch.AppPanel,
   message: unknown,
 ): Promise<void> {
   const msg = message as PanelMessage;
@@ -145,6 +160,11 @@ async function handlePanelMessage(
       await refreshDeliveryRow(ctx, msg.sessionId);
       break;
     }
+    case 'openPreview': {
+      if (!msg.filePath) break;
+      await openFilePreview(ctx, msg.filePath);
+      break;
+    }
   }
 }
 
@@ -155,11 +175,19 @@ export function activate(ctx: finch.MiniToolContext): void {
   const iconPack = ctx.icons.register('delivery-icons', {
     'package': {
       svg:
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-        '<path d="m7.5 4.27 9 5.15"/>' +
-        '<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>' +
-        '<path d="m3.3 7 8.7 5 8.7-5"/>' +
+        '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/>' +
         '<path d="M12 22V12"/>' +
+        '<polyline points="3.29 7 12 12 20.71 7"/>' +
+        '<path d="m7.5 4.27 9 5.15"/>' +
+        '</svg>',
+    },
+    'library': {
+      svg:
+        '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<rect width="8" height="18" x="3" y="3" rx="1"/>' +
+        '<path d="M7 3v18"/>' +
+        '<path d="M20.4 18.9c.2.5-.1 1.1-.6 1.3l-1.9.7c-.5.2-1.1-.1-1.3-.6L11.1 5.1c-.2-.5.1-1.1.6-1.3l1.9-.7c.5-.2 1.1.1 1.3.6Z"/>' +
         '</svg>',
     },
   });
