@@ -1,1 +1,13 @@
-{}
+{
+  "delivery.title": "Artifact",
+  "delivery.type.md": "MD",
+  "delivery.type.word": "Word",
+  "delivery.type.ppt": "PPT",
+  "delivery.type.pdf": "PDF",
+  "delivery.type.excel": "Excel",
+  "delivery.type.web": "Web",
+  "delivery.type.image": "Image",
+  "delivery.type.other": "File",
+  "delivery.detailSingle": "{count} {type}",
+  "delivery.detailMixed": "{count} files"
+}

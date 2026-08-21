@@ -1,3 +1,14 @@
 {
-  "name": "交付"
+  "name": "交付",
+  "delivery.title": "产物",
+  "delivery.type.md": "MD",
+  "delivery.type.word": "Word",
+  "delivery.type.ppt": "PPT",
+  "delivery.type.pdf": "PDF",
+  "delivery.type.excel": "Excel",
+  "delivery.type.web": "网页",
+  "delivery.type.image": "图片",
+  "delivery.type.other": "文件",
+  "delivery.detailSingle": "{count} 个 {type}",
+  "delivery.detailMixed": "{count} 个文件"
 }

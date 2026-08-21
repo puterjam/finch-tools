@@ -56,12 +56,35 @@ function formatTime(ts: number): string {
   return `${month}-${day} ${hours}:${mins}`;
 }
 
-/** Build a short summary for the Delivery sidebar row. */
-function buildDeliveryDetail(records: Deliveries): string {
+/** Human-readable label for each file type, per fallback (non-localized) English. */
+const TYPE_LABEL_EN: Record<string, string> = {
+  md: 'MD',
+  word: 'Word',
+  ppt: 'PPT',
+  pdf: 'PDF',
+  excel: 'Excel',
+  web: 'Web',
+  image: 'Image',
+  other: 'File',
+};
+
+/**
+ * Build a short summary for the Delivery sidebar row, e.g. "3 MD" when every
+ * record shares one file type, or a generic "5 files" when mixed. Space in
+ * the sidebar row is very limited, so this never lists every type by name.
+ */
+function buildDeliveryDetail(ctx: finch.MiniToolContext, records: Deliveries): string {
   if (records.length === 0) return '';
-  const types = [...new Set(records.map((r) => r.fileType))];
-  const typeBadge = types.map((t) => `\`${t}\``).join(' ');
-  return `${typeBadge} · {${records.length} files}\b`;
+  const counts = new Map<string, number>();
+  for (const r of records) counts.set(r.fileType, (counts.get(r.fileType) ?? 0) + 1);
+
+  if (counts.size === 1) {
+    const [fileType, count] = [...counts.entries()][0];
+    const typeKey = `delivery.type.${fileType}`;
+    const typeLabel = ctx.i18n.has(typeKey) ? ctx.i18n.t(typeKey) : TYPE_LABEL_EN[fileType] ?? TYPE_LABEL_EN.other;
+    return ctx.i18n.t('delivery.detailSingle', { count: String(count), type: typeLabel });
+  }
+  return ctx.i18n.t('delivery.detailMixed', { count: String(records.length) });
 }
 
 // ── Storage helpers ─────────────────────────────────────────────────────────
@@ -88,8 +111,10 @@ async function refreshDeliveryRow(
   }
   const latest = sessionRecords[sessionRecords.length - 1];
   await ctx.ui.delivery.set({
-    title: sessionRecords.length === 1 ? latest.title : `${sessionRecords.length} deliverables`,
-    detail: buildDeliveryDetail(sessionRecords),
+    // Keep the title short and stable — the record's own title can be long
+    // and would crowd this narrow row; the type/count breakdown goes in detail.
+    title: ctx.i18n.t('delivery.title'),
+    detail: buildDeliveryDetail(ctx, sessionRecords),
     icon: 'ext:package',
     payload: { sessionId, latestId: latest.id },
   });
@@ -209,7 +234,8 @@ export function activate(ctx: finch.MiniToolContext): void {
     name: 'delivery_manage',
     title: 'Delivery Manager',
     description:
-      "Record and manage deliverables (document-type files) produced for the user.\n" +
+      "Record and manage deliverables (finished document-type files: Markdown, Word, PPT, PDF, Excel, web pages, images) produced for the user.\n" +
+      "Never call action 'record' for source code, config, or project files (.ts, .js, .py, .css, .json, etc) — those are not deliverables.\n" +
       'action:\n' +
       '  record — log a new deliverable (filePath, title, description, textPreview for md)\n' +
       '  list   — list deliverables, optionally filtered by sessionId\n' +
