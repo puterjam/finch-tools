@@ -312,6 +312,11 @@
 
   // ── Finch Bridge ───────────────────────────────────────────────────────
   var finchApi = (window).finch;
+  // Set from `finch:env.view` once it arrives — 'appView' when this page is
+  // the application-level sidebar entry (Appview), vs 'session'/'home'/
+  // 'container' when it's the right-side Panel App instance. File preview
+  // must route differently depending on which surface hosts the page.
+  var currentView = '';
 
   // ── DOM ────────────────────────────────────────────────────────────────
   var contentEl = document.getElementById('content');
@@ -483,7 +488,16 @@
         var record = deliveries.find(function(r) { return r.id === id; });
         if (!record || !record.filePath) return;
 
-        if (finchApi) {
+        // In Appview, ctx.ui.openFilePreview() would open the file in the
+        // right-side Panel — a surface Appview doesn't render — so nothing
+        // visibly happens. Push it onto this App View's own navigation
+        // stack instead. Falls back to the old backend round trip when
+        // running as a right-Panel App instance (currentView !== 'appView').
+        if (currentView === 'appView' && finchApi && finchApi.appView && finchApi.appView.openPreview) {
+          finchApi.appView.openPreview(record.filePath).catch(function (err) {
+            console.error('[finch-delivery] appView.openPreview failed:', err);
+          });
+        } else if (finchApi) {
           finchApi.postMessage({ type: 'openPreview', filePath: record.filePath });
         }
       });
@@ -509,6 +523,7 @@
 
       // Handle finch:env
       if (message.type === 'finch:env') {
+        currentView = message.view || '';
         onSessionIdKnown(message.sessionId || '');
         render();
         return;
