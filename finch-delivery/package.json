@@ -51,12 +51,8 @@
       ],
       "icons": {
         "package": {
-          "description": "Package box icon (appPanel entry icon)",
+          "description": "Package box icon (appPanel and appView entry icon)",
           "svg": "./icons/package.svg"
-        },
-        "library": {
-          "description": "Library icon (left sidebar appView entry icon)",
-          "svg": "./icons/library.svg"
         }
       },
       "appPanel": {
@@ -70,7 +66,7 @@
         }
       },
       "appView": {
-        "icon": "ext:library",
+        "icon": "ext:package",
         "description": "Browse every artifact produced by the AI across all sessions.",
         "source": {
           "type": "local",
