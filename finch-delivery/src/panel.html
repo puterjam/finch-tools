@@ -159,6 +159,7 @@
     opacity: 1;
   }
   .btn-icon {
+    position: relative;
     width: 26px;
     height: 26px;
     border: 1px solid var(--df-border);
@@ -187,6 +188,31 @@
     width: 14px;
     height: 14px;
     flex-shrink: 0;
+  }
+
+  /* ── Custom hover tooltip (not the OS-native `title` attribute) ── */
+  .btn-tooltip {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: var(--df-text-primary);
+    color: var(--df-bg-elevated);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    padding: 4px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.12s ease, transform 0.12s ease;
+    z-index: 6;
+  }
+  .btn-icon:hover .btn-tooltip {
+    opacity: 1;
+    transform: translateY(0);
+    transition-delay: 0.25s;
   }
 
   /* ── Preview area (top, faded content) ── */
@@ -325,6 +351,88 @@
     font-size: 14px;
     line-height: 1.6;
   }
+
+  /* ── Delete confirmation modal ──
+     window.finch.ui.confirm() can't render a checkbox (pure text/token
+     dialog), so the delete-with-file-checkbox flow uses a small custom
+     overlay instead. */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .modal {
+    background: var(--df-bg-elevated);
+    border: 1px solid var(--df-border);
+    border-radius: var(--finch-radius-md, 14px);
+    padding: 20px;
+    width: 320px;
+    max-width: calc(100vw - 40px);
+    box-shadow: var(--finch-shadow-md, 0 12px 32px rgba(0, 0, 0, 0.25));
+  }
+  .modal-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--df-text-primary);
+    margin-bottom: 8px;
+  }
+  .modal-message {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--df-text-secondary);
+    margin-bottom: 14px;
+  }
+  .modal-checkbox {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--df-text-primary);
+    margin-bottom: 18px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .modal-checkbox input {
+    width: 15px;
+    height: 15px;
+    margin-top: 1px;
+    accent-color: #e0533d;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .modal-btn {
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 8px;
+    border: 1px solid var(--df-border);
+    background: var(--df-bg-hover);
+    color: var(--df-text-primary);
+    cursor: pointer;
+    font-family: inherit;
+    transition: opacity 0.15s, background 0.15s;
+  }
+  .modal-btn:hover {
+    background: var(--df-bg-elevated);
+  }
+  .modal-btn.danger {
+    background: #e0533d;
+    border-color: #e0533d;
+    color: #fff;
+  }
+  .modal-btn.danger:hover {
+    opacity: 0.9;
+  }
 </style>
 </head>
 <body>
@@ -378,9 +486,11 @@
       'panel.editedYearsAgo': 'Edited {n} year{s} ago',
       'panel.deleteConfirm.title': 'Delete this file?',
       'panel.deleteConfirm.message': '"{title}" will be removed from the record. This cannot be undone.',
+      'panel.deleteConfirm.deleteFileLabel': 'Also delete the file from disk — permanent, cannot be undone.',
       'panel.deleteConfirm.confirm': 'Delete',
       'panel.deleteConfirm.cancel': 'Cancel',
-      'panel.deleteToast.title': 'Deleted'
+      'panel.deleteToast.title': 'Deleted',
+      'panel.deleteToast.fileError': 'Record removed, but the file on disk could not be deleted'
     },
     zh: {
       'panel.title': '产物库',
@@ -408,9 +518,11 @@
       'panel.editedYearsAgo': '{n} 年前编辑',
       'panel.deleteConfirm.title': '删除这份文件？',
       'panel.deleteConfirm.message': '「{title}」将从记录中移除，此操作无法撤销。',
+      'panel.deleteConfirm.deleteFileLabel': '同时从磁盘删除该文件——永久删除，无法恢复。',
       'panel.deleteConfirm.confirm': '删除',
       'panel.deleteConfirm.cancel': '取消',
-      'panel.deleteToast.title': '已删除'
+      'panel.deleteToast.title': '已删除',
+      'panel.deleteToast.fileError': '记录已删除，但磁盘上的文件删除失败'
     }
   };
 
@@ -522,6 +634,24 @@
     '<path d="M21.378 12.626a1 1 0 0 0-3.004-3.004l-4.01 4.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>' +
     '</svg>';
 
+  // Lucide "square-arrow-out-up-right" for jump-to-session.
+  var JUMP_ICON =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"/>' +
+    '<path d="m21 3-9 9"/>' +
+    '<path d="M15 3h6v6"/>' +
+    '</svg>';
+
+  // Lucide "trash-2" for remove.
+  var REMOVE_ICON =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M10 11v6"/>' +
+    '<path d="M14 11v6"/>' +
+    '<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>' +
+    '<path d="M3 6h18"/>' +
+    '<path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>' +
+    '</svg>';
+
   function escapeHtml(str) {
     if (!str) return '';
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -614,13 +744,16 @@
       // draft, which the appView sidebar entry never has (no session, no
       // draft to attach into) — so this button is Panel-only.
       if (currentView !== 'appView') {
-        html += '<button class="btn-icon" data-annotate="' + r.id + '" title="' + t('panel.annotate') + '">' + ANNOTATE_ICON + '</button>';
+        html += '<button class="btn-icon" data-annotate="' + r.id + '">' + ANNOTATE_ICON +
+          '<span class="btn-tooltip">' + escapeHtml(t('panel.annotate')) + '</span></button>';
       }
       // Session navigation belongs to the Finch host. A raw finch:// anchor
       // makes the guest webview navigate away (blank Panel) or escape through
       // the OS protocol handler (different window), so use the Bridge instead.
-      html += '<button class="btn-icon" data-open-session="' + escapeHtml(r.sessionId) + '" title="' + t('panel.jumpToSession') + '">↗</button>';
-      html += '<button class="btn-icon danger" data-remove="' + r.id + '" title="' + t('panel.remove') + '">✕</button>';
+      html += '<button class="btn-icon" data-open-session="' + escapeHtml(r.sessionId) + '">' + JUMP_ICON +
+        '<span class="btn-tooltip">' + escapeHtml(t('panel.jumpToSession')) + '</span></button>';
+      html += '<button class="btn-icon danger" data-remove="' + r.id + '">' + REMOVE_ICON +
+        '<span class="btn-tooltip">' + escapeHtml(t('panel.remove')) + '</span></button>';
       html += '</div>';
 
       html += '<div class="card-preview">' + buildPreviewHtml(r) + '</div>';
@@ -712,41 +845,57 @@
       });
     });
 
-    // Remove buttons — confirm before deleting, native dialog when available.
+    // Remove buttons — open the custom delete-confirm modal (it carries a
+    // "also delete from disk" checkbox that window.finch.ui.confirm() has
+    // no way to render).
     var removeBtns = contentEl.querySelectorAll('[data-remove]');
     removeBtns.forEach(function(btn) {
       btn.addEventListener('click', function(e) {
         e.stopPropagation();
         var id = btn.dataset.remove;
         var record = deliveries.find(function(r) { return r.id === id; });
-        var titleText = record ? record.title : '';
-
-        function doRemove() {
-          if (!finchApi) return;
-          finchApi.postMessage({ type: 'remove', id: id });
-          if (finchApi.ui && finchApi.ui.toast) {
-            finchApi.ui.toast({ title: t('panel.deleteToast.title'), variant: 'success' }).catch(function() {});
-          }
-        }
-
-        if (finchApi && finchApi.ui && finchApi.ui.confirm) {
-          finchApi.ui.confirm({
-            title: t('panel.deleteConfirm.title'),
-            message: t('panel.deleteConfirm.message', { title: titleText }),
-            confirmLabel: t('panel.deleteConfirm.confirm'),
-            cancelLabel: t('panel.deleteConfirm.cancel'),
-            variant: 'danger'
-          }).then(function(res) {
-            if (res && res.confirmed) doRemove();
-          }).catch(function(err) {
-            console.error('[finch-delivery] ui.confirm failed:', err);
-          });
-        } else {
-          // Older Finch versions without the confirm bridge — degrade to
-          // removing directly rather than silently doing nothing.
-          doRemove();
-        }
+        if (record) showDeleteModal(record);
       });
+    });
+  }
+
+  // ── Delete confirmation modal ─────────────────────────────────────────
+  function showDeleteModal(record) {
+    var overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML =
+      '<div class="modal">' +
+        '<div class="modal-title">' + escapeHtml(t('panel.deleteConfirm.title')) + '</div>' +
+        '<div class="modal-message">' + t('panel.deleteConfirm.message', { title: escapeHtml(record.title) }) + '</div>' +
+        '<label class="modal-checkbox">' +
+          '<input type="checkbox" id="df-delete-file-checkbox">' +
+          '<span>' + escapeHtml(t('panel.deleteConfirm.deleteFileLabel')) + '</span>' +
+        '</label>' +
+        '<div class="modal-actions">' +
+          '<button type="button" class="modal-btn" data-modal-cancel>' + escapeHtml(t('panel.deleteConfirm.cancel')) + '</button>' +
+          '<button type="button" class="modal-btn danger" data-modal-confirm>' + escapeHtml(t('panel.deleteConfirm.confirm')) + '</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+
+    function close() {
+      overlay.remove();
+      document.removeEventListener('keydown', onKeydown);
+    }
+    function onKeydown(e) {
+      if (e.key === 'Escape') close();
+    }
+    document.addEventListener('keydown', onKeydown);
+
+    overlay.addEventListener('click', function(e) {
+      if (e.target === overlay) close();
+    });
+    overlay.querySelector('[data-modal-cancel]').addEventListener('click', close);
+    overlay.querySelector('[data-modal-confirm]').addEventListener('click', function() {
+      var deleteFile = overlay.querySelector('#df-delete-file-checkbox').checked;
+      close();
+      if (!finchApi) return;
+      finchApi.postMessage({ type: 'remove', id: record.id, deleteFile: deleteFile });
     });
   }
 
@@ -773,6 +922,19 @@
           if (message.env.sessionId) onSessionIdKnown(message.env.sessionId);
         }
         render();
+        return;
+      }
+
+      // Result of a 'remove' request — the backend has already applied the
+      // record deletion and, if requested, attempted the disk delete too.
+      if (message.type === 'removeResult') {
+        if (finchApi.ui && finchApi.ui.toast) {
+          if (message.deleteFileRequested && message.fileDeleteError) {
+            finchApi.ui.toast({ title: t('panel.deleteToast.fileError'), variant: 'warning' }).catch(function() {});
+          } else {
+            finchApi.ui.toast({ title: t('panel.deleteToast.title'), variant: 'success' }).catch(function() {});
+          }
+        }
         return;
       }
     });

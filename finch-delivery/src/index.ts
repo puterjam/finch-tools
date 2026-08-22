@@ -1,5 +1,6 @@
 import type * as finch from 'finch';
 import { randomUUID } from 'node:crypto';
+import { unlink } from 'node:fs/promises';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -127,6 +128,8 @@ interface PanelMessage {
   id?: string;
   sessionId?: string;
   filePath?: string;
+  /** Panel-only: when true, also delete the underlying file from disk (best-effort). */
+  deleteFile?: boolean;
 }
 
 /**
@@ -174,12 +177,30 @@ async function handlePanelMessage(
     }
     case 'remove': {
       if (!msg.id) break;
+      const removed = all.find((r) => r.id === msg.id);
       const filtered = all.filter((r) => r.id !== msg.id);
       await saveDeliveries(ctx, filtered);
       await panel.postMessage({ type: 'deliveries', data: filtered });
       // Refresh delivery row for the affected session
-      const removed = all.find((r) => r.id === msg.id);
       if (removed) await refreshDeliveryRow(ctx, removed.sessionId);
+
+      // Deleting the record never blocks on the disk delete below — the
+      // record is the source of truth for this tool, the file is best-effort.
+      let fileDeleteError: string | undefined;
+      if (removed && msg.deleteFile) {
+        try {
+          await unlink(removed.filePath);
+        } catch (err) {
+          fileDeleteError = err instanceof Error ? err.message : String(err);
+          ctx.logger.warn(`Failed to delete file on disk: ${removed.filePath} — ${fileDeleteError}`);
+        }
+      }
+      await panel.postMessage({
+        type: 'removeResult',
+        id: msg.id,
+        deleteFileRequested: !!msg.deleteFile,
+        fileDeleteError,
+      });
       break;
     }
     case 'clearSession': {

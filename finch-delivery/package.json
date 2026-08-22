@@ -75,7 +75,7 @@
       }
     },
     "permissions": {
-      "filesystem": "none",
+      "filesystem": "readwrite",
       "network": false,
       "shell": false
     }

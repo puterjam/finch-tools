@@ -35,7 +35,7 @@
 - **悬浮时右上角会出现几个小按钮**：
   - ✎ 添加批注 — 把这份文件作为引用插入当前对话的输入框，方便接着跟 AI 讨论它（只在右侧面板里出现，见下）
   - ↗ 跳转到这份文件是在哪个会话里生成的
-  - ✕ 从记录里删除这条——会先弹出一次确认，误点不会直接删掉
+  - ✕ 删除这条记录——会先弹出确认弹窗，里面还有一个「同时从磁盘删除该文件」的勾选框，**默认不勾选**；勾上再确认才会真的删掉磁盘上的原文件，且不可恢复，请谨慎使用
 
 「添加批注」只在右侧面板打开时才会出现——因为它要把文件插入*当前对话*的输入框，而左侧栏的独立页面不属于任何一个具体会话，没有输入框可以插。
 
@@ -47,10 +47,10 @@
 不会。这个工具只登记 AI 明确产出的文档/图片类"交付物"，源代码、配置文件从一开始就被排除在外。
 
 **删除记录会不会把文件本身也删掉？**
-不会。这里删除的只是"记录"（一条索引），不会碰你磁盘上的原始文件。
+默认不会——删除只清掉"记录"（一条索引），不碰磁盘上的原始文件。如果你在删除弹窗里主动勾选了「同时从磁盘删除该文件」，才会真的把源文件也删掉，而且是永久删除、无法恢复，请谨慎操作。
 
 **数据存在哪里？会联网吗？**
-所有记录都存在本地（Finch 的扩展私有存储里），这个工具本身不需要任何文件系统或网络权限——数据完全由 AI 主动上报，工具本身不主动读写你的磁盘。
+所有记录都存在本地（Finch 的扩展私有存储里），不联网。为了支持"同时从磁盘删除文件"这个可选功能，这个工具持有本地文件的读写权限，但只有你在删除弹窗里主动勾选时才会触发真正的磁盘删除操作，其余时候不会主动读写你的磁盘。
 
 ## 支持的文件类型
 
@@ -103,7 +103,7 @@ Cards are sorted newest first. Markdown files show a live text preview (heading 
 - **Hover a card** to reveal a few small buttons in the corner:
   - ✎ add an annotation — inserts a reference to this file into the current conversation's Composer, so you can keep discussing it with the AI (only shown in the right-side panel, see below)
   - ↗ jump to the session where it was created
-  - ✕ remove it from the record — a confirmation dialog pops up first, so a stray click won't delete anything
+  - ✕ remove this record — a confirmation dialog pops up first, with an "Also delete the file from disk" checkbox that is **unchecked by default**; only checking it and confirming actually deletes the original file, and that deletion is permanent
 
 "Add annotation" only appears when opened as the right-side panel — it inserts into *that conversation's* Composer draft, and the standalone left-sidebar page isn't tied to any single session, so there's no draft to insert into.
 
@@ -115,10 +115,10 @@ The UI language follows Finch's own language setting, and it adapts to light/dar
 No. Only document/image-type deliverables the AI explicitly produces get logged — source and config files are excluded by design.
 
 **If I delete a record, does it delete the actual file too?**
-No. Deleting here only removes the index entry, not the file on disk.
+Not by default — deleting only removes the index entry, not the file on disk. If you explicitly check "Also delete the file from disk" in the delete dialog, the original file is permanently removed too — that action cannot be undone, so use it carefully.
 
 **Where's the data stored? Does it need internet access?**
-Everything is stored locally in the extension's own private storage. This tool requires zero filesystem or network permissions — all data comes from what the AI reports, the tool itself never reads or writes your disk on its own.
+Everything is stored locally in the extension's own private storage — no network access. To support the optional "delete from disk" action, this tool holds local read/write file permission, but it only touches your disk when you explicitly check that box in the delete dialog; otherwise it never reads or writes files on its own.
 
 ## Supported file types
 
