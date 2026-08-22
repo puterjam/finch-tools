@@ -236,6 +236,14 @@
     background: linear-gradient(transparent, var(--df-bg-elevated));
     pointer-events: none;
   }
+  /* Image previews replace the text+fade treatment entirely: no padding,
+     no bottom fade, and the picture fills the whole area edge-to-edge. */
+  .card-preview--image {
+    padding: 0;
+  }
+  .card-preview--image::after {
+    display: none;
+  }
   .preview-heading {
     font-size: 14px;
     font-weight: 700;
@@ -282,14 +290,6 @@
     height: 100%;
     overflow: hidden;
     background: var(--df-bg-root);
-    /* The parent .card-preview applies padding for *text* previews
-       (16px top/sides); images should break out of that and fill the
-       whole area edge-to-edge, so cancel it here. */
-    margin: -16px -16px 0;
-    /* .card-preview::after lays a fade-to-background gradient over the
-       bottom of *text* previews. Images should render fully — not be
-       dimmed by that fade — so lift them above the gradient. */
-    z-index: 1;
   }
   .preview-image img {
     /* Fill the card's preview area edge-to-edge (object-fit: cover crops
@@ -821,7 +821,8 @@
         '<span class="btn-tooltip">' + escapeHtml(t('panel.remove')) + '</span></button>';
       html += '</div>';
 
-      html += '<div class="card-preview">' + buildPreviewHtml(r) + '</div>';
+      var previewClass = r.fileType === 'image' ? 'card-preview card-preview--image' : 'card-preview';
+      html += '<div class="' + previewClass + '">' + buildPreviewHtml(r) + '</div>';
 
       html += '<div class="card-footer">';
       html += '<div class="card-title">' + escapeHtml(r.title) + '</div>';
