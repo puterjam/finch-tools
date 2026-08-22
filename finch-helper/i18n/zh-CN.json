@@ -1,15 +1,15 @@
 {
   "name": "Finch 助手",
-  "description": "回答 Finch 用法、功能与小工具开发问题，答案来自官方文档。",
+  "description": "回答 Finch 用法、功能与小程序开发问题，答案来自官方文档。",
   "sessionContainers": {
     "help": {
       "title": "Finch 助手",
-      "description": "回答 Finch 用法、功能与小工具开发问题",
+      "description": "回答 Finch 用法、功能与小程序开发问题",
       "starterPrompts": [
         {
-          "title": "小工具开发入门",
-          "description": "怎么开发一个 Finch 小工具？",
-          "prompt": "怎么开发 Finch 小工具？包结构是什么样，如何发布？"
+          "title": "小程序开发入门",
+          "description": "怎么开发一个 Finch 小程序？",
+          "prompt": "怎么开发 Finch 小程序？包结构是什么样，如何发布？"
         },
         {
           "title": "记忆机制",
