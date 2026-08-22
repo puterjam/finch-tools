@@ -1,6 +1,6 @@
 import type * as finch from 'finch';
 import { randomUUID } from 'node:crypto';
-import { unlink } from 'node:fs/promises';
+import { readFile, stat, unlink } from 'node:fs/promises';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -46,6 +46,29 @@ function detectFileType(filePath: string): string {
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) return 'image';
   return 'other';
 }
+
+/** MIME type for an image file path, used to build a `data:` URL for the card thumbnail. */
+function imageMime(filePath: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'gif') return 'image/gif';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'bmp') return 'image/bmp';
+  if (ext === 'svg') return 'image/svg+xml';
+  return 'image/png';
+}
+
+/**
+ * Cap for a base64 thumbnail embedded in a card. Full-resolution source
+ * images (9:16 posters, PNGs) can be megabytes; embedding the whole thing
+ * would bloat the stored record and the webview postMessage. We embed a
+ * downscaled version where possible, but the backend has no image
+ * processing deps — so instead we just refuse to embed images larger than a
+ * practical ceiling and let the card fall back to its text preview. This
+ * keeps the feature safe without pulling in a canvas/sharp dependency.
+ */
+const MAX_IMAGE_EMBED_BYTES = 1.5 * 1024 * 1024; // ~1.5 MB
 
 /** Format a timestamp for display. */
 function formatTime(ts: number): string {
@@ -214,6 +237,30 @@ async function handlePanelMessage(
     case 'openPreview': {
       if (!msg.filePath) break;
       await openFilePreview(ctx, msg.filePath);
+      break;
+    }
+    case 'requestImage': {
+      // The card gallery reads image thumbnails on demand instead of
+      // persisting them — keeps the stored record small and also works for
+      // already-recorded images. Read the file, embed as a base64 data URL
+      // (bounded), and let the page slot it into the matching card.
+      if (!msg.filePath) break;
+      const filePath = msg.filePath;
+      try {
+        const fileStat = await stat(filePath).catch(() => null);
+        if (fileStat && fileStat.size > MAX_IMAGE_EMBED_BYTES) {
+          ctx.logger.warn(`Skipping thumbnail for oversized image: ${filePath} (${fileStat.size} bytes)`);
+          await panel.postMessage({ type: 'imageData', filePath, error: 'too-large' });
+          break;
+        }
+        const buf = await readFile(filePath);
+        const dataUrl = `data:${imageMime(filePath)};base64,${buf.toString('base64')}`;
+        await panel.postMessage({ type: 'imageData', filePath, dataUrl });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        ctx.logger.warn(`Failed to read image for thumbnail: ${filePath} — ${message}`);
+        await panel.postMessage({ type: 'imageData', filePath, error: 'unreadable' });
+      }
       break;
     }
   }
