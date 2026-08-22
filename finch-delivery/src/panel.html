@@ -8,19 +8,17 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   /* Finch 平台会在 webview dom-ready 时才异步 insertCSS 注入 --finch-* 变量，
-     在那之前页面用下面这套 fallback 自己先画一遍。之前这里的 fallback 是写
-     死的浅色（#f5f5f5 等），深色皮肤下 dom-ready 前的这一帧永远是浅色，
-     看起来就像一次白闪。改成跟随系统 prefers-color-scheme 的 fallback后，
-     深色系统下第一帧就已经是深色调，不再等平台注入才纠正颜色。 */
+     在那之前页面用下面这套 fallback 自己先画一遍，浅色/深色分别给出真实的
+     字面量兜底（不要写成自引用的 var(--df-x)，那是无效值，等同没有兜底）。 */
   :root {
-    --df-bg-root: var(--df-bg-root);
+    --df-bg-root: var(--finch-bg-root, #f7f7f8);
     --df-bg-elevated: var(--finch-bg-elevated, #ffffff);
-    --df-bg-hover: var(--df-bg-hover);
-    --df-text-primary: var(--df-text-primary);
+    --df-bg-hover: var(--finch-bg-hover, #eeeef0);
+    --df-text-primary: var(--finch-text-primary, #1a1a1a);
     --df-text-secondary: var(--finch-text-secondary, #666666);
     --df-text-tertiary: var(--finch-text-tertiary, #999999);
-    --df-border: var(--df-border);
-    --df-accent: var(--df-accent);
+    --df-border: var(--finch-border, #e5e5e7);
+    --df-accent: var(--finch-accent, #3b82f6);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -57,6 +55,21 @@
     justify-content: space-between;
     margin-bottom: 20px;
   }
+  .header .title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .header .title-icon {
+    width: 22px;
+    height: 22px;
+    color: var(--df-accent);
+    flex-shrink: 0;
+  }
+  .header .title-icon svg {
+    width: 100%;
+    height: 100%;
+  }
   .header h1 {
     font-size: 22px;
     font-weight: 700;
@@ -71,19 +84,18 @@
     border: 1px solid var(--df-border);
   }
 
-  /* ── Filter tabs ── */
+  /* ── Filter tabs — flat segmented control ── */
   .tabs {
     display: flex;
-    gap: 4px;
+    gap: 2px;
     margin-bottom: 20px;
-    background: var(--df-bg-elevated);
+    background: var(--df-bg-hover);
     border-radius: 10px;
     padding: 3px;
-    border: 1px solid var(--df-border);
     width: fit-content;
   }
   .tab {
-    padding: 6px 16px;
+    padding: 6px 14px;
     font-size: 13px;
     font-weight: 500;
     border: none;
@@ -91,15 +103,17 @@
     color: var(--df-text-secondary);
     border-radius: 7px;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: background 0.15s, color 0.15s, box-shadow 0.15s;
     font-family: inherit;
+    white-space: nowrap;
   }
   .tab.active {
-    background: var(--df-accent);
-    color: #fff;
+    background: var(--df-bg-elevated);
+    color: var(--df-text-primary);
+    box-shadow: var(--finch-shadow-sm, 0 1px 3px rgba(0,0,0,0.1));
   }
   .tab:not(.active):hover {
-    background: var(--df-bg-hover);
+    color: var(--df-text-primary);
   }
 
   /* ── Card grid ── */
@@ -311,14 +325,14 @@
 <body>
 <div id="app">
   <div class="header">
-    <h1>📦 Artifacts</h1>
-    <span class="count" id="count">0 files</span>
+    <div class="title-group">
+      <span class="title-icon"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="18" x="3" y="3" rx="1"/><path d="M7 3v18"/><path d="M20.4 18.9c.2.5-.1 1.1-.6 1.3l-1.9.7c-.5.2-1.1-.1-1.3-.6L11.1 5.1c-.2-.5.1-1.1.6-1.3l1.9-.7c.5-.2 1.1.1 1.3.6Z"/></svg></span>
+      <h1 id="title">Artifacts</h1>
+    </div>
+    <span class="count" id="count">0</span>
   </div>
 
-  <div class="tabs">
-    <button class="tab" data-filter="current">Current Session</button>
-    <button class="tab active" data-filter="all">All Sessions</button>
-  </div>
+  <div class="tabs" id="tabs"></div>
 
   <div id="content"></div>
 </div>
@@ -327,83 +341,162 @@
 (function() {
   'use strict';
 
+  // ── i18n ───────────────────────────────────────────────────────────────
+  // This is a static webview page shipped as one HTML file — no fetch, no
+  // extra round trip. It keeps its own copy of the small set of UI strings
+  // it needs, mirroring the backend's i18n/*.json. Only two locale groups
+  // are distinguished: 'zh' (zh-CN / zh-HK) and 'en' (everything else).
+  var I18N = {
+    en: {
+      'panel.title': 'Artifacts',
+      'panel.tab.all': 'All',
+      'panel.tab.current': 'Current Session',
+      'panel.tab.image': 'Images',
+      'panel.tab.file': 'Files',
+      'panel.count': '{count} files',
+      'panel.emptyCurrent': 'No files generated in this session yet.<br>Ask the AI to create a document — it will show up here.',
+      'panel.emptyAll': 'No files generated yet.<br>Ask the AI to create a document — it will show up here.',
+      'panel.emptyImage': 'No images yet.<br>Ask the AI to generate an image — it will show up here.',
+      'panel.emptyFile': 'No files yet.<br>Ask the AI to create a document — it will show up here.',
+      'panel.noPreview': 'No preview available',
+      'panel.jumpToSession': 'Jump to session',
+      'panel.remove': 'Remove',
+      'panel.unknownSession': 'unknown session',
+      'panel.editedJustNow': 'Edited just now',
+      'panel.editedMinutesAgo': 'Edited {n} minute{s} ago',
+      'panel.editedHoursAgo': 'Edited {n} hour{s} ago',
+      'panel.editedDaysAgo': 'Edited {n} day{s} ago',
+      'panel.editedMonthsAgo': 'Edited {n} month{s} ago',
+      'panel.editedYearsAgo': 'Edited {n} year{s} ago',
+      'panel.deleteConfirm.title': 'Delete this file?',
+      'panel.deleteConfirm.message': '"{title}" will be removed from the record. This cannot be undone.',
+      'panel.deleteConfirm.confirm': 'Delete',
+      'panel.deleteConfirm.cancel': 'Cancel',
+      'panel.deleteToast.title': 'Deleted'
+    },
+    zh: {
+      'panel.title': '库',
+      'panel.tab.all': '全部',
+      'panel.tab.current': '当前会话',
+      'panel.tab.image': '图片',
+      'panel.tab.file': '文件',
+      'panel.count': '{count} 个文件',
+      'panel.emptyCurrent': '此会话还没有生成文件。<br>让 AI 生成一份文档，它就会出现在这里。',
+      'panel.emptyAll': '还没有生成文件。<br>让 AI 生成一份文档，它就会出现在这里。',
+      'panel.emptyImage': '还没有图片。<br>让 AI 生成一张图片，它就会出现在这里。',
+      'panel.emptyFile': '还没有文件。<br>让 AI 生成一份文档，它就会出现在这里。',
+      'panel.noPreview': '暂无预览',
+      'panel.jumpToSession': '跳转到会话',
+      'panel.remove': '删除',
+      'panel.unknownSession': '未知会话',
+      'panel.editedJustNow': '刚刚编辑',
+      'panel.editedMinutesAgo': '{n} 分钟前编辑',
+      'panel.editedHoursAgo': '{n} 小时前编辑',
+      'panel.editedDaysAgo': '{n} 天前编辑',
+      'panel.editedMonthsAgo': '{n} 个月前编辑',
+      'panel.editedYearsAgo': '{n} 年前编辑',
+      'panel.deleteConfirm.title': '删除这份文件？',
+      'panel.deleteConfirm.message': '「{title}」将从记录中移除，此操作无法撤销。',
+      'panel.deleteConfirm.confirm': '删除',
+      'panel.deleteConfirm.cancel': '取消',
+      'panel.deleteToast.title': '已删除'
+    }
+  };
+
+  var lang = 'en';
+
+  function resolveLang(locale) {
+    return locale && locale.indexOf('zh') === 0 ? 'zh' : 'en';
+  }
+
+  function t(key, values) {
+    var dict = I18N[lang] || I18N.en;
+    var str = dict[key] || I18N.en[key] || key;
+    if (values) {
+      Object.keys(values).forEach(function(k) {
+        str = str.split('{' + k + '}').join(String(values[k]));
+      });
+    }
+    return str;
+  }
+
+  // Best-effort guess before the backend tells us the real Finch app
+  // locale — avoids an English flash for zh-CN/zh-HK users on first paint.
+  try {
+    lang = resolveLang((navigator.language || '').toLowerCase());
+  } catch (e) { /* ignore */ }
+
   // ── State ──────────────────────────────────────────────────────────────
   var deliveries = [];
   var currentSessionId = '';
-  // Default to "All" — this page opens both as a Session-scoped Panel App
-  // (which has a real sessionId) and as an application-level Full View
-  // sidebar entry (which has no session concept). We auto-switch to
-  // "current" once a real sessionId arrives, unless the user already
-  // picked a tab themselves.
-  var filterMode = 'all'; // 'current' | 'all'
+  // Single-select flat filter: 'all' | 'current' | 'image' | 'file'.
+  // 'current' is only offered when this page is hosted as a Session-scoped
+  // right-side Panel App — the appView sidebar entry has no session concept.
+  var filterMode = 'all';
   var userPickedTab = false;
 
   // ── Finch Bridge ───────────────────────────────────────────────────────
   var finchApi = (window).finch;
-  // Set from `finch:env.view` once it arrives — 'appView' when this page is
-  // the application-level sidebar entry (Appview), vs 'session'/'home'/
-  // 'container' when it's the right-side Panel App instance. File preview
-  // must route differently depending on which surface hosts the page.
+  // Set from `finch:env.view` / our own `deliveries.env.view` — 'appView'
+  // when this page is the application-level sidebar entry, vs
+  // 'session'/'home'/'container' when it's the right-side Panel App
+  // instance. File preview and the "current session" tab both depend on it.
   var currentView = '';
 
   // ── DOM ────────────────────────────────────────────────────────────────
   var contentEl = document.getElementById('content');
   var countEl = document.getElementById('count');
-  var tabs = document.querySelectorAll('.tab');
+  var tabsEl = document.getElementById('tabs');
+  var titleEl = document.getElementById('title');
 
-  function setActiveTab(mode) {
-    filterMode = mode;
-    tabs.forEach(function(t) {
-      t.classList.toggle('active', t.dataset.filter === mode);
+  var TAB_ORDER = ['all', 'current', 'image', 'file'];
+
+  function renderTabs() {
+    var showCurrent = currentView === 'session' && !!currentSessionId;
+    var html = '';
+    TAB_ORDER.forEach(function(key) {
+      if (key === 'current' && !showCurrent) return;
+      var active = filterMode === key ? ' active' : '';
+      html += '<button class="tab' + active + '" data-filter="' + key + '">' + t('panel.tab.' + key) + '</button>';
+    });
+    tabsEl.innerHTML = html;
+    tabsEl.querySelectorAll('.tab').forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        userPickedTab = true;
+        filterMode = tab.dataset.filter;
+        render();
+      });
     });
   }
-
-  // ── Tabs ───────────────────────────────────────────────────────────────
-  tabs.forEach(function(tab) {
-    tab.addEventListener('click', function() {
-      userPickedTab = true;
-      setActiveTab(tab.dataset.filter);
-      render();
-    });
-  });
 
   function onSessionIdKnown(sessionId) {
     if (!sessionId || currentSessionId === sessionId) return;
     currentSessionId = sessionId;
-    if (!userPickedTab) setActiveTab('current');
+    if (!userPickedTab) filterMode = 'current';
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────
-  function formatTime(ts) {
-    var d = new Date(ts);
-    var month = String(d.getMonth() + 1).padStart(2, '0');
-    var day = String(d.getDate()).padStart(2, '0');
-    var hours = String(d.getHours()).padStart(2, '0');
-    var mins = String(d.getMinutes()).padStart(2, '0');
-    return month + '-' + day + ' ' + hours + ':' + mins;
-  }
-
   function formatRelativeTime(ts) {
     var diff = Math.max(0, Date.now() - ts) / 1000; // seconds
-    if (diff < 60) return 'Edited just now';
+    if (diff < 60) return t('panel.editedJustNow');
     if (diff < 3600) {
       var m = Math.floor(diff / 60);
-      return 'Edited ' + m + ' minute' + (m !== 1 ? 's' : '') + ' ago';
+      return t('panel.editedMinutesAgo', { n: m, s: m !== 1 ? 's' : '' });
     }
     if (diff < 86400) {
       var h = Math.floor(diff / 3600);
-      return 'Edited ' + h + ' hour' + (h !== 1 ? 's' : '') + ' ago';
+      return t('panel.editedHoursAgo', { n: h, s: h !== 1 ? 's' : '' });
     }
     if (diff < 30 * 86400) {
       var d = Math.floor(diff / 86400);
-      return 'Edited ' + d + ' day' + (d !== 1 ? 's' : '') + ' ago';
+      return t('panel.editedDaysAgo', { n: d, s: d !== 1 ? 's' : '' });
     }
     if (diff < 365 * 86400) {
       var mo = Math.floor(diff / (30 * 86400));
-      return 'Edited ' + mo + ' month' + (mo !== 1 ? 's' : '') + ' ago';
+      return t('panel.editedMonthsAgo', { n: mo, s: mo !== 1 ? 's' : '' });
     }
     var y = Math.floor(diff / (365 * 86400));
-    return 'Edited ' + y + ' year' + (y !== 1 ? 's' : '') + ' ago';
+    return t('panel.editedYearsAgo', { n: y, s: y !== 1 ? 's' : '' });
   }
 
   function escapeHtml(str) {
@@ -418,7 +511,7 @@
     if (!src) {
       return '<div class="preview-placeholder">' +
         '<span class="glyph">' + r.fileType + '</span>' +
-        '<span class="hint">No preview available</span>' +
+        '<span class="hint">' + t('panel.noPreview') + '</span>' +
         '</div>';
     }
 
@@ -449,23 +542,36 @@
     if (filterMode === 'current' && currentSessionId) {
       return deliveries.filter(function(r) { return r.sessionId === currentSessionId; });
     }
+    if (filterMode === 'image') {
+      return deliveries.filter(function(r) { return r.fileType === 'image'; });
+    }
+    if (filterMode === 'file') {
+      return deliveries.filter(function(r) { return r.fileType !== 'image'; });
+    }
     return deliveries;
+  }
+
+  function emptyTextKey() {
+    if (filterMode === 'current') return 'panel.emptyCurrent';
+    if (filterMode === 'image') return 'panel.emptyImage';
+    if (filterMode === 'file') return 'panel.emptyFile';
+    return 'panel.emptyAll';
   }
 
   // ── Render ─────────────────────────────────────────────────────────────
   function render() {
+    titleEl.textContent = t('panel.title');
+    renderTabs();
+
     var filtered = getFiltered();
-    countEl.textContent = filtered.length + ' file' + (filtered.length !== 1 ? 's' : '');
+    countEl.textContent = t('panel.count', { count: filtered.length });
 
     if (filtered.length === 0) {
       contentEl.innerHTML =
         '<div class="empty">' +
         '<div class="empty-icon">📦</div>' +
-        '<div class="empty-text">' +
-          (filterMode === 'current'
-            ? 'No deliverables in this session yet.<br>Ask the AI to create a document — it will show up here.'
-            : 'No deliverables yet.<br>Ask the AI to create a document — it will show up here.') +
-        '</div></div>';
+        '<div class="empty-text">' + t(emptyTextKey()) + '</div>' +
+        '</div>';
       return;
     }
 
@@ -475,7 +581,7 @@
     var html = '<div class="grid">';
     sorted.forEach(function(r) {
       var isCurrent = r.sessionId === currentSessionId;
-      var sessionLabel = escapeHtml(r.sessionTitle || (r.sessionId ? r.sessionId.slice(0, 8) : 'unknown'));
+      var sessionLabel = escapeHtml(r.sessionTitle || (r.sessionId ? r.sessionId.slice(0, 8) : t('panel.unknownSession')));
 
       html += '<div class="card" data-id="' + r.id + '">';
 
@@ -483,8 +589,8 @@
       // Session navigation belongs to the Finch host. A raw finch:// anchor
       // makes the guest webview navigate away (blank Panel) or escape through
       // the OS protocol handler (different window), so use the Bridge instead.
-      html += '<button class="btn-icon" data-open-session="' + escapeHtml(r.sessionId) + '" title="Jump to session">↗</button>';
-      html += '<button class="btn-icon danger" data-remove="' + r.id + '" title="Remove">✕</button>';
+      html += '<button class="btn-icon" data-open-session="' + escapeHtml(r.sessionId) + '" title="' + t('panel.jumpToSession') + '">↗</button>';
+      html += '<button class="btn-icon danger" data-remove="' + r.id + '" title="' + t('panel.remove') + '">✕</button>';
       html += '</div>';
 
       html += '<div class="card-preview">' + buildPreviewHtml(r) + '</div>';
@@ -493,7 +599,7 @@
       html += '<div class="card-title">' + escapeHtml(r.title) + '</div>';
       html += '<div class="card-meta">';
       html += '<span class="card-time">' + formatRelativeTime(r.createdAt) + '</span>';
-      if (filterMode === 'all' && !isCurrent) {
+      if (filterMode !== 'current' && !isCurrent) {
         html += '<span class="session-tag">' + sessionLabel + '</span>';
       } else {
         html += '<span class="type-pill ' + r.fileType + '">' + r.fileType + '</span>';
@@ -547,14 +653,39 @@
       });
     });
 
-    // Remove buttons
+    // Remove buttons — confirm before deleting, native dialog when available.
     var removeBtns = contentEl.querySelectorAll('[data-remove]');
     removeBtns.forEach(function(btn) {
       btn.addEventListener('click', function(e) {
         e.stopPropagation();
         var id = btn.dataset.remove;
-        if (finchApi) {
+        var record = deliveries.find(function(r) { return r.id === id; });
+        var titleText = record ? record.title : '';
+
+        function doRemove() {
+          if (!finchApi) return;
           finchApi.postMessage({ type: 'remove', id: id });
+          if (finchApi.ui && finchApi.ui.toast) {
+            finchApi.ui.toast({ title: t('panel.deleteToast.title'), variant: 'success' }).catch(function() {});
+          }
+        }
+
+        if (finchApi && finchApi.ui && finchApi.ui.confirm) {
+          finchApi.ui.confirm({
+            title: t('panel.deleteConfirm.title'),
+            message: t('panel.deleteConfirm.message', { title: titleText }),
+            confirmLabel: t('panel.deleteConfirm.confirm'),
+            cancelLabel: t('panel.deleteConfirm.cancel'),
+            variant: 'danger'
+          }).then(function(res) {
+            if (res && res.confirmed) doRemove();
+          }).catch(function(err) {
+            console.error('[finch-delivery] ui.confirm failed:', err);
+          });
+        } else {
+          // Older Finch versions without the confirm bridge — degrade to
+          // removing directly rather than silently doing nothing.
+          doRemove();
         }
       });
     });
@@ -568,6 +699,7 @@
       // Handle finch:env
       if (message.type === 'finch:env') {
         currentView = message.view || '';
+        if (message.locale) lang = resolveLang(message.locale);
         onSessionIdKnown(message.sessionId || '');
         render();
         return;
@@ -576,8 +708,10 @@
       // Handle deliveries data
       if (message.type === 'deliveries') {
         deliveries = message.data || [];
-        if (message.env && message.env.sessionId) {
-          onSessionIdKnown(message.env.sessionId);
+        if (message.env) {
+          if (message.env.view) currentView = message.env.view;
+          if (message.env.locale) lang = resolveLang(message.env.locale);
+          if (message.env.sessionId) onSessionIdKnown(message.env.sessionId);
         }
         render();
         return;

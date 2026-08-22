@@ -50,13 +50,13 @@
         { "id": "delivery-icons", "label": "Delivery Icons" }
       ],
       "icons": {
-        "package": {
-          "description": "Package box icon (appPanel and appView entry icon)",
-          "svg": "./icons/package.svg"
+        "library": {
+          "description": "Library icon (appPanel, appView, and delivery row icon)",
+          "svg": "./icons/library.svg"
         }
       },
       "appPanel": {
-        "icon": "ext:package",
+        "icon": "ext:library",
         "viewType": "delivery.gallery",
         "instanceMode": "single",
         "showInLauncher": true,
@@ -66,7 +66,7 @@
         }
       },
       "appView": {
-        "icon": "ext:package",
+        "icon": "ext:library",
         "description": "Browse every artifact produced by the AI across all sessions.",
         "source": {
           "type": "local",

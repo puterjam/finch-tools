@@ -115,7 +115,7 @@ async function refreshDeliveryRow(
     // and would crowd this narrow row; the type/count breakdown goes in detail.
     title: ctx.i18n.t('delivery.title'),
     detail: buildDeliveryDetail(ctx, sessionRecords),
-    icon: 'ext:package',
+    icon: 'ext:library',
     payload: { sessionId, latestId: latest.id },
   });
 }
@@ -159,6 +159,11 @@ async function handlePanelMessage(
         view: panel.view ?? '',
         spaceId: panel.spaceId ?? '',
         spaceName: panel.spaceName ?? '',
+        // `finch:env.locale` is only delivered for the appView scope today,
+        // so thread the resolved locale through our own env payload instead
+        // — it works uniformly for both the right-side Panel App and the
+        // appView sidebar entry.
+        locale: ctx.i18n.locale,
       };
       await panel.postMessage({
         type: 'deliveries',
@@ -198,13 +203,12 @@ async function handlePanelMessage(
 export function activate(ctx: finch.MiniToolContext): void {
   // ── Icon pack ─────────────────────────────────────────────────────────────
   const iconPack = ctx.icons.register('delivery-icons', {
-    'package': {
+    'library': {
       svg:
         '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-        '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/>' +
-        '<path d="M12 22V12"/>' +
-        '<polyline points="3.29 7 12 12 20.71 7"/>' +
-        '<path d="m7.5 4.27 9 5.15"/>' +
+        '<rect width="8" height="18" x="3" y="3" rx="1"/>' +
+        '<path d="M7 3v18"/>' +
+        '<path d="M20.4 18.9c.2.5-.1 1.1-.6 1.3l-1.9.7c-.5.2-1.1-.1-1.3-.6L11.1 5.1c-.2-.5.1-1.1.6-1.3l1.9-.7c.5-.2 1.1.1 1.3.6Z"/>' +
         '</svg>',
     },
   });
@@ -223,6 +227,7 @@ export function activate(ctx: finch.MiniToolContext): void {
           view: panel.view ?? '',
           spaceId: panel.spaceId ?? '',
           spaceName: panel.spaceName ?? '',
+          locale: ctx.i18n.locale,
         };
         panel.postMessage({ type: 'deliveries', data: all, env });
       });
