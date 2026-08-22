@@ -286,6 +286,10 @@
        (16px top/sides); images should break out of that and fill the
        whole area edge-to-edge, so cancel it here. */
     margin: -16px -16px 0;
+    /* .card-preview::after lays a fade-to-background gradient over the
+       bottom of *text* previews. Images should render fully — not be
+       dimmed by that fade — so lift them above the gradient. */
+    z-index: 1;
   }
   .preview-image img {
     /* Fill the card's preview area edge-to-edge (object-fit: cover crops
