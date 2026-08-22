@@ -361,6 +361,9 @@
       'panel.noPreview': 'No preview available',
       'panel.jumpToSession': 'Jump to session',
       'panel.remove': 'Remove',
+      'panel.annotate': 'Add annotation',
+      'panel.annotateToast.title': 'Annotation added',
+      'panel.annotateError.title': 'Could not add annotation',
       'panel.unknownSession': 'unknown session',
       'panel.editedJustNow': 'Edited just now',
       'panel.editedMinutesAgo': 'Edited {n} minute{s} ago',
@@ -388,6 +391,9 @@
       'panel.noPreview': '暂无预览',
       'panel.jumpToSession': '跳转到会话',
       'panel.remove': '删除',
+      'panel.annotate': '添加批注',
+      'panel.annotateToast.title': '已添加批注',
+      'panel.annotateError.title': '批注添加失败',
       'panel.unknownSession': '未知会话',
       'panel.editedJustNow': '刚刚编辑',
       'panel.editedMinutesAgo': '{n} 分钟前编辑',
@@ -586,6 +592,13 @@
       html += '<div class="card" data-id="' + r.id + '">';
 
       html += '<div class="card-actions-overlay">';
+      // Composer annotations only make sense inside the right-side Panel
+      // App: `composer.addContexts()` writes into a Session/Home Composer
+      // draft, which the appView sidebar entry never has (no session, no
+      // draft to attach into) — so this button is Panel-only.
+      if (currentView !== 'appView') {
+        html += '<button class="btn-icon" data-annotate="' + r.id + '" title="' + t('panel.annotate') + '">✎</button>';
+      }
       // Session navigation belongs to the Finch host. A raw finch:// anchor
       // makes the guest webview navigate away (blank Panel) or escape through
       // the OS protocol handler (different window), so use the Bridge instead.
@@ -649,6 +662,35 @@
         if (!sessionId || !finchApi || !finchApi.navigation || !finchApi.navigation.openSession) return;
         finchApi.navigation.openSession(sessionId).catch(function(err) {
           console.error('[finch-delivery] navigation.openSession failed:', err);
+        });
+      });
+    });
+
+    // Annotate buttons — Panel-only (not rendered when currentView is
+    // 'appView'). Adds a "user annotation" chip pointing at the file into
+    // the Composer draft this Panel's scope owns (Session or Home).
+    var annotateBtns = contentEl.querySelectorAll('[data-annotate]');
+    annotateBtns.forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var id = btn.dataset.annotate;
+        var record = deliveries.find(function(r) { return r.id === id; });
+        if (!record || !finchApi || !finchApi.composer || !finchApi.composer.addContexts) return;
+
+        finchApi.composer.addContexts([{
+          type: 'annotation',
+          label: record.title,
+          path: record.filePath,
+          promptText: 'Referencing generated file: ' + record.title + ' (' + record.fileName + ')'
+        }]).then(function() {
+          if (finchApi.ui && finchApi.ui.toast) {
+            finchApi.ui.toast({ title: t('panel.annotateToast.title'), variant: 'success' }).catch(function() {});
+          }
+        }).catch(function(err) {
+          console.error('[finch-delivery] composer.addContexts failed:', err);
+          if (finchApi.ui && finchApi.ui.toast) {
+            finchApi.ui.toast({ title: t('panel.annotateError.title'), variant: 'error' }).catch(function() {});
+          }
         });
       });
     });

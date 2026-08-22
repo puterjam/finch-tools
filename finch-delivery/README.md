@@ -32,9 +32,12 @@
 卡片按时间从新到旧排列。Markdown 文件的卡片上会直接显示一段文字预览（标题+正文摘要），其他类型显示对应的格式图标。
 
 - **点击卡片** → 用 Finch 自带的文件预览直接打开，不用等下载
-- **悬浮时右上角会出现两个小按钮**：
+- **悬浮时右上角会出现几个小按钮**：
+  - ✎ 添加批注 — 把这份文件作为引用插入当前对话的输入框，方便接着跟 AI 讨论它（只在右侧面板里出现，见下）
   - ↗ 跳转到这份文件是在哪个会话里生成的
   - ✕ 从记录里删除这条——会先弹出一次确认，误点不会直接删掉
+
+「添加批注」只在右侧面板打开时才会出现——因为它要把文件插入*当前对话*的输入框，而左侧栏的独立页面不属于任何一个具体会话，没有输入框可以插。
 
 界面语言跟随 Finch 本身的中英文设置自动切换，深色/浅色皮肤也会自动适配，不需要额外设置。
 
@@ -97,9 +100,12 @@ At the top of the page/panel, there's a row of filter tabs:
 Cards are sorted newest first. Markdown files show a live text preview (heading + a snippet of the body) right on the card; other types show a plain type badge instead.
 
 - **Click a card** → opens it in Finch's native file preview, no extra download step
-- **Hover a card** to reveal two small buttons in the corner:
+- **Hover a card** to reveal a few small buttons in the corner:
+  - ✎ add an annotation — inserts a reference to this file into the current conversation's Composer, so you can keep discussing it with the AI (only shown in the right-side panel, see below)
   - ↗ jump to the session where it was created
   - ✕ remove it from the record — a confirmation dialog pops up first, so a stray click won't delete anything
+
+"Add annotation" only appears when opened as the right-side panel — it inserts into *that conversation's* Composer draft, and the standalone left-sidebar page isn't tied to any single session, so there's no draft to insert into.
 
 The UI language follows Finch's own language setting, and it adapts to light/dark skins automatically — nothing to configure.
 

@@ -1,6 +1,8 @@
 {
   "name": "产物库",
-  "appView.description": "浏览 AI 在所有会话中生成的全部产物。",
+  "appView": {
+    "description": "浏览 AI 在所有会话中生成的全部产物。"
+  },
   "delivery.title": "生成文件",
   "delivery.type.md": "MD",
   "delivery.type.word": "Word",
