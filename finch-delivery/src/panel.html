@@ -400,7 +400,11 @@
   .modal-checkbox input {
     width: 15px;
     height: 15px;
-    margin-top: 1px;
+    /* Vertically center the 15px box within the first line's 13px/1.5
+       line box ((19.5 - 15) / 2 ≈ 2.25px) — flex `align-items: flex-start`
+       is needed so the box stays pinned to line one when the label text
+       wraps, but that alone left it a hair too high vs. the glyph. */
+    margin-top: 2.25px;
     accent-color: #e0533d;
     cursor: pointer;
     flex-shrink: 0;
