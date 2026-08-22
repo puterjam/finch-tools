@@ -1,4 +1,5 @@
 {
+  "appView.description": "Browse every artifact produced by the AI across all sessions.",
   "delivery.title": "Generated Files",
   "delivery.type.md": "MD",
   "delivery.type.word": "Word",
