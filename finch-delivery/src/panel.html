@@ -7,10 +7,38 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
+  /* Finch 平台会在 webview dom-ready 时才异步 insertCSS 注入 --finch-* 变量，
+     在那之前页面用下面这套 fallback 自己先画一遍。之前这里的 fallback 是写
+     死的浅色（#f5f5f5 等），深色皮肤下 dom-ready 前的这一帧永远是浅色，
+     看起来就像一次白闪。改成跟随系统 prefers-color-scheme 的 fallback后，
+     深色系统下第一帧就已经是深色调，不再等平台注入才纠正颜色。 */
+  :root {
+    --df-bg-root: var(--df-bg-root);
+    --df-bg-elevated: var(--finch-bg-elevated, #ffffff);
+    --df-bg-hover: var(--df-bg-hover);
+    --df-text-primary: var(--df-text-primary);
+    --df-text-secondary: var(--finch-text-secondary, #666666);
+    --df-text-tertiary: var(--finch-text-tertiary, #999999);
+    --df-border: var(--df-border);
+    --df-accent: var(--df-accent);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --df-bg-root: var(--finch-bg-root, #17171a);
+      --df-bg-elevated: var(--finch-bg-elevated, #232328);
+      --df-bg-hover: var(--finch-bg-hover, #2c2c32);
+      --df-text-primary: var(--finch-text-primary, #ececec);
+      --df-text-secondary: var(--finch-text-secondary, #a3a3ab);
+      --df-text-tertiary: var(--finch-text-tertiary, #7d7d85);
+      --df-border: var(--finch-border, #34343b);
+      --df-accent: var(--finch-accent, #5b9bf5);
+    }
+  }
+
   body {
     font-family: var(--finch-font-body, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
-    background: var(--finch-bg-root, #f5f5f5);
-    color: var(--finch-text-primary, #1a1a1a);
+    background: var(--df-bg-root);
+    color: var(--df-text-primary);
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
   }
@@ -36,11 +64,11 @@
   }
   .header .count {
     font-size: 13px;
-    color: var(--finch-text-secondary, #666);
-    background: var(--finch-bg-elevated, #fff);
+    color: var(--df-text-secondary);
+    background: var(--df-bg-elevated);
     padding: 4px 10px;
     border-radius: 20px;
-    border: 1px solid var(--finch-border, #e0e0e0);
+    border: 1px solid var(--df-border);
   }
 
   /* ── Filter tabs ── */
@@ -48,10 +76,10 @@
     display: flex;
     gap: 4px;
     margin-bottom: 20px;
-    background: var(--finch-bg-elevated, #fff);
+    background: var(--df-bg-elevated);
     border-radius: 10px;
     padding: 3px;
-    border: 1px solid var(--finch-border, #e0e0e0);
+    border: 1px solid var(--df-border);
     width: fit-content;
   }
   .tab {
@@ -60,18 +88,18 @@
     font-weight: 500;
     border: none;
     background: transparent;
-    color: var(--finch-text-secondary, #666);
+    color: var(--df-text-secondary);
     border-radius: 7px;
     cursor: pointer;
     transition: all 0.15s;
     font-family: inherit;
   }
   .tab.active {
-    background: var(--finch-accent, #3b82f6);
+    background: var(--df-accent);
     color: #fff;
   }
   .tab:not(.active):hover {
-    background: var(--finch-bg-hover, #f0f0f0);
+    background: var(--df-bg-hover);
   }
 
   /* ── Card grid ── */
@@ -83,8 +111,8 @@
 
   /* ── Card ── */
   .card {
-    background: var(--finch-bg-elevated, #fff);
-    border: 1px solid var(--finch-border, #ececec);
+    background: var(--df-bg-elevated);
+    border: 1px solid var(--df-border);
     border-radius: var(--finch-radius-md, 14px);
     cursor: pointer;
     transition: box-shadow 0.2s, border-color 0.2s, transform 0.1s;
@@ -96,7 +124,7 @@
   }
   .card:hover {
     box-shadow: var(--finch-shadow-sm, 0 4px 16px rgba(0,0,0,0.08));
-    border-color: var(--finch-border, #ececec);
+    border-color: var(--df-border);
   }
   .card:active {
     transform: scale(0.99);
@@ -119,23 +147,23 @@
   .btn-icon {
     width: 26px;
     height: 26px;
-    border: 1px solid var(--finch-border, #e0e0e0);
-    background: var(--finch-bg-elevated, #fff);
+    border: 1px solid var(--df-border);
+    background: var(--df-bg-elevated);
     border-radius: 7px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 12px;
-    color: var(--finch-text-secondary, #666);
+    color: var(--df-text-secondary);
     transition: all 0.15s;
     text-decoration: none;
     font-family: inherit;
     box-shadow: 0 1px 4px rgba(0,0,0,0.08);
   }
   .btn-icon:hover {
-    border-color: var(--finch-accent, #3b82f6);
-    color: var(--finch-accent, #3b82f6);
+    border-color: var(--df-accent);
+    color: var(--df-accent);
   }
   .btn-icon.danger:hover {
     border-color: #e0533d;
@@ -151,7 +179,7 @@
     overflow: hidden;
     font-size: 12px;
     line-height: 1.6;
-    color: var(--finch-text-secondary, #666);
+    color: var(--df-text-secondary);
   }
   .card-preview::after {
     content: '';
@@ -160,13 +188,13 @@
     left: 0;
     right: 0;
     height: 44px;
-    background: linear-gradient(transparent, var(--finch-bg-elevated, #fff));
+    background: linear-gradient(transparent, var(--df-bg-elevated));
     pointer-events: none;
   }
   .preview-heading {
     font-size: 14px;
     font-weight: 700;
-    color: var(--finch-text-primary, #1a1a1a);
+    color: var(--df-text-primary);
     line-height: 1.4;
     margin-bottom: 6px;
     display: -webkit-box;
@@ -185,7 +213,7 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
-    color: var(--finch-text-tertiary, #b0b0b0);
+    color: var(--df-text-tertiary);
   }
   .preview-placeholder .glyph {
     font-size: 13px;
@@ -194,11 +222,11 @@
     text-transform: uppercase;
     padding: 5px 12px;
     border-radius: 8px;
-    background: var(--finch-bg-root, #f5f5f5);
+    background: var(--df-bg-root);
   }
   .preview-placeholder .hint {
     font-size: 11px;
-    color: var(--finch-text-tertiary, #b0b0b0);
+    color: var(--df-text-tertiary);
     text-align: center;
     padding: 0 16px;
   }
@@ -206,8 +234,8 @@
   /* ── Footer (title + meta) ── */
   .card-footer {
     padding: 12px 16px 14px;
-    border-top: 1px solid var(--finch-border, #f0f0f0);
-    background: var(--finch-bg-elevated, #fff);
+    border-top: 1px solid var(--df-border);
+    background: var(--df-bg-elevated);
     position: relative;
     z-index: 1;
   }
@@ -215,7 +243,7 @@
     font-size: 15px;
     font-weight: 700;
     line-height: 1.4;
-    color: var(--finch-text-primary, #1a1a1a);
+    color: var(--df-text-primary);
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -231,7 +259,7 @@
   }
   .card-time {
     font-size: 12px;
-    color: var(--finch-text-tertiary, #999);
+    color: var(--df-text-tertiary);
     white-space: nowrap;
   }
   .type-pill {
@@ -255,7 +283,7 @@
 
   .session-tag {
     font-size: 10px;
-    color: var(--finch-accent, #3b82f6);
+    color: var(--df-accent);
     font-weight: 600;
     max-width: 120px;
     overflow: hidden;
@@ -267,7 +295,7 @@
   .empty {
     text-align: center;
     padding: 80px 20px;
-    color: var(--finch-text-tertiary, #999);
+    color: var(--df-text-tertiary);
   }
   .empty-icon {
     font-size: 48px;
