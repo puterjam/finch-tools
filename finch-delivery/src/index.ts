@@ -257,8 +257,8 @@ export function activate(ctx: finch.MiniToolContext): void {
 
   // ── Agent tool ───────────────────────────────────────────────────────────
   const tool = ctx.tools.register({
-    name: 'delivery_manage',
-    title: 'Delivery Manager',
+    name: 'record_artifact',
+    title: 'Artifact Recorder',
     description:
       "Record and manage deliverables (finished document-type files: Markdown, Word, PPT, PDF, Excel, web pages, images) produced for the user.\n" +
       "Never call action 'record' for source code, config, or project files (.ts, .js, .py, .css, .json, etc) — those are not deliverables.\n" +

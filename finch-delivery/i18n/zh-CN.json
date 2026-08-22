@@ -1,7 +1,7 @@
 {
-  "name": "产物库",
+  "name": "成果库",
   "appView": {
-    "description": "浏览 AI 在所有会话中生成的全部产物。"
+    "description": "浏览 AI 在所有会话中生成的成果。"
   },
   "delivery.title": "生成文件",
   "delivery.type.md": "MD",
@@ -14,7 +14,7 @@
   "delivery.type.other": "文件",
   "delivery.detailSingle": "{count}个{type}",
   "delivery.detailMixed": "{count}个文件",
-  "panel.title": "产物库",
+  "panel.title": "成果库",
   "panel.tab.all": "全部",
   "panel.tab.current": "当前会话",
   "panel.tab.image": "图片",

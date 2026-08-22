@@ -35,7 +35,7 @@
     "manifestVersion": 1,
     "name": "Artifacts",
     "description": "Track and browse artifacts produced by the AI — Markdown, Word, PPT, PDF, Excel, web pages, and images.",
-    "systemPrompt": "When you produce a finished document-type deliverable for the user (Markdown, Word, PowerPoint, PDF, Excel, web page, or image file), call delivery_manage with action 'record' to log it. Never record source code, config, or project files (.ts, .js, .py, .go, .rs, .java, .c, .cpp, .sh, .css, .json, .yaml, package.json, etc) — this tracker is only for finished documents the user reads or shares, not implementation files. For Markdown files, include a textPreview of the first ~500 characters.",
+    "systemPrompt": "When you produce a finished document-type deliverable for the user (Markdown, Word, PowerPoint, PDF, Excel, web page, or image file), call record_artifact with action 'record' to log it. Never record source code, config, or project files (.ts, .js, .py, .go, .rs, .java, .c, .cpp, .sh, .css, .json, .yaml, package.json, etc) — this tracker is only for finished documents the user reads or shares, not implementation files. For Markdown files, include a textPreview of the first ~500 characters.",
     "main": "dist/index.js",
     "activationEvents": [
       "onStartup"
