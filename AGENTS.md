@@ -1,12 +1,12 @@
 # AGENTS.md · finch-tools 工作区规则
 
-本目录是 Finch 小工具（mini tools / extensions）的多包源码仓库，仓库地址 `github.com/puterjam/finch-tools`。本文件是本空间所有会话自动加载的项目规则。
+本目录是 Finch 小程序（mini tools / extensions）的多包源码仓库，仓库地址 `github.com/puterjam/finch-tools`。本文件是本空间所有会话自动加载的项目规则。
 
 ## 空间定位
 
-- 本空间**只处理 finch-tools 仓库内的事务**：小工具源码、构建、测试、发布。
+- 本空间**只处理 finch-tools 仓库内的事务**：小程序源码、构建、测试、发布。
 - 仓库之外的工作（其他项目、运维、日常事务）不在本空间处理，去对应 Space。
-- 每个子目录是一个独立 npm 包，一个子目录 = 一个小工具。新小工具在根目录新建子目录。
+- 每个子目录是一个独立 npm 包，一个子目录 = 一个小程序。新小程序在根目录新建子目录。
 
 ## 仓库结构约定
 
@@ -74,7 +74,7 @@ npx @finchtoys/minitools add /tmp/<package>-<version>.tgz
 
 | 包 | manifest id | 版本 | 说明 |
 |---|---|---|---|
-| finch-ego-lite | ego-browser | 0.1.0 | Ego Lite 网页浏览小工具，仅支持 macOS |
+| finch-ego-lite | ego-browser | 0.1.0 | Ego Lite 网页浏览小程序，仅支持 macOS |
 | finch-anydoc | anydoc | 0.1.0 | 办公文档转 Markdown 阅读工具，原生引擎首次使用时按需下载并缓存 |
 | finch-image-gen | image-gen | 0.5.1 | 对接 OpenAI 图像 API，支持文生图/图生图；API Key 与 API Base URL 都走同一个 Composer 工具栏齿轮按钮（composerActions + ctx.ui.showModalDialog 弹窗直接输入），存于 ctx.storage，读取时优先 exec.secrets.get('OPENAI_API_KEY')（如用户走了 permissions.secrets 官方通道）兜底 ctx.storage；支持单次调用 base_url 覆盖；生成期间用 setInterval 心跳每 4s 调 exec.progress.report 更新耗时文案，避免切出会话再回来进度卡死不动。注：finch.settings.fields 目前在 Toolcase 未渲染，勿用于必须暴露的配置项；ctx.secrets 只读、无 write 方法，需要用户手填的密钥只能靠 permissions.secrets 官方通道或自建 ctx.storage 弹窗 |
-| finch-delivery | finch-delivery | 0.1.0 | 交付物记录小工具，用 Panel 卡片画廊展示 AI 生成的文档类产物（md/word/ppt/pdf/excel/web/image），md 有文字缩略预览，支持当前 Session / 全部 Session 筛选、点击跳转原 Session；通过 ctx.ui.delivery.set() 维护侧边栏行，点击打开 panelEntry 声明的 Panel App；数据存 ctx.storage，零权限（不读文件系统） |
+| finch-delivery | finch-delivery | 0.1.0 | 交付物记录小程序，用 Panel 卡片画廊展示 AI 生成的文档类产物（md/word/ppt/pdf/excel/web/image），md 有文字缩略预览，支持当前 Session / 全部 Session 筛选、点击跳转原 Session；通过 ctx.ui.delivery.set() 维护侧边栏行，点击打开 panelEntry 声明的 Panel App；数据存 ctx.storage，零权限（不读文件系统） |
