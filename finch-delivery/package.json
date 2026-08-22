@@ -1,6 +1,6 @@
 {
   "name": "finch-delivery",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Track and browse deliverables (Markdown, Word, PPT, PDF, Excel, web pages, images) produced by the AI assistant across all sessions.",
   "author": {
     "name": "PuterJam",
