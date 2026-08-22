@@ -519,10 +519,10 @@
       'panel.tab.image': 'Images',
       'panel.tab.file': 'Files',
       'panel.count': '{count} files',
-      'panel.emptyCurrent': 'No files generated in this session yet.<br>Ask the AI to create a document — it will show up here.',
-      'panel.emptyAll': 'No files generated yet.<br>Ask the AI to create a document — it will show up here.',
-      'panel.emptyImage': 'No images yet.<br>Ask the AI to generate an image — it will show up here.',
-      'panel.emptyFile': 'No files yet.<br>Ask the AI to create a document — it will show up here.',
+      'panel.emptyCurrent': 'No files generated in this session yet.<br>Ask {finch} to create a document — it will show up here.',
+      'panel.emptyAll': 'No files generated yet.<br>Ask {finch} to create a document — it will show up here.',
+      'panel.emptyImage': 'No images yet.<br>Ask {finch} to generate an image — it will show up here.',
+      'panel.emptyFile': 'No files yet.<br>Ask {finch} to create a document — it will show up here.',
       'panel.noPreview': 'No preview available',
       'panel.jumpToSession': 'Jump to session',
       'panel.remove': 'Remove',
@@ -551,10 +551,10 @@
       'panel.tab.image': '图片',
       'panel.tab.file': '文件',
       'panel.count': '{count} 个文件',
-      'panel.emptyCurrent': '此会话还没有生成文件。<br>让 AI 生成一份文档，它就会出现在这里。',
-      'panel.emptyAll': '还没有生成文件。<br>让 AI 生成一份文档，它就会出现在这里。',
-      'panel.emptyImage': '还没有图片。<br>让 AI 生成一张图片，它就会出现在这里。',
-      'panel.emptyFile': '还没有文件。<br>让 AI 生成一份文档，它就会出现在这里。',
+      'panel.emptyCurrent': '此会话还没有生成文件。<br>让 {finch} 生成一份文档，它就会出现在这里。',
+      'panel.emptyAll': '还没有生成文件。<br>让 {finch} 生成一份文档，它就会出现在这里。',
+      'panel.emptyImage': '还没有图片。<br>让 {finch} 生成一张图片，它就会出现在这里。',
+      'panel.emptyFile': '还没有文件。<br>让 {finch} 生成一份文档，它就会出现在这里。',
       'panel.noPreview': '暂无预览',
       'panel.jumpToSession': '跳转到会话',
       'panel.remove': '删除',
@@ -609,6 +609,10 @@
   // right-side Panel App — the appView sidebar entry has no session concept.
   var filterMode = 'all';
   var userPickedTab = false;
+  // The user's assistant name ("帕亚", usually) — injected by the backend
+  // via env.assistantName, used in empty-state copy. Fallback before it
+  // arrives: 'AI'.
+  var finchName = 'AI';
 
   // ── Finch Bridge ───────────────────────────────────────────────────────
   var finchApi = (window).finch;
@@ -788,7 +792,7 @@
       contentEl.innerHTML =
         '<div class="empty">' +
         '<div class="empty-icon">📦</div>' +
-        '<div class="empty-text">' + t(emptyTextKey()) + '</div>' +
+        '<div class="empty-text">' + t(emptyTextKey(), { finch: finchName }) + '</div>' +
         '</div>';
       return;
     }
@@ -984,6 +988,7 @@
       if (message.type === 'finch:env') {
         currentView = message.view || '';
         if (message.locale) lang = resolveLang(message.locale);
+        if (message.assistantName) finchName = message.assistantName;
         onSessionIdKnown(message.sessionId || '');
         render();
         return;
@@ -995,6 +1000,7 @@
         if (message.env) {
           if (message.env.view) currentView = message.env.view;
           if (message.env.locale) lang = resolveLang(message.env.locale);
+          if (message.env.assistantName) finchName = message.env.assistantName;
           if (message.env.sessionId) onSessionIdKnown(message.env.sessionId);
         }
         render();

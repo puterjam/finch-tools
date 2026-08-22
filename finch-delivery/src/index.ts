@@ -121,6 +121,21 @@ async function saveDeliveries(ctx: finch.MiniToolContext, data: Deliveries): Pro
   await ctx.storage.set(STORAGE_KEY, data);
 }
 
+// The user's Finch assistant name ("帕亚", or the default "Finch"). Resolved
+// once and reused for every env payload; the webview needs it to render the
+// empty-state copy ("Ask {finch} to create a document…") without a round trip.
+let cachedAssistantName: string | null = null;
+async function getAssistantName(ctx: finch.MiniToolContext): Promise<string> {
+  if (cachedAssistantName) return cachedAssistantName;
+  try {
+    cachedAssistantName = (await ctx.app.getInfo()).assistantName || 'Finch';
+  } catch (err) {
+    ctx.logger.warn('Failed to resolve assistant name: ' + String(err));
+    cachedAssistantName = 'Finch';
+  }
+  return cachedAssistantName;
+}
+
 /** Update the Delivery sidebar row for the current session. */
 async function refreshDeliveryRow(
   ctx: finch.MiniToolContext,
@@ -190,6 +205,7 @@ async function handlePanelMessage(
         // — it works uniformly for both the right-side Panel App and the
         // appView sidebar entry.
         locale: ctx.i18n.locale,
+        assistantName: await getAssistantName(ctx),
       };
       await panel.postMessage({
         type: 'deliveries',
@@ -289,13 +305,14 @@ export function activate(ctx: finch.MiniToolContext): void {
         panel.onDidReceiveMessage((msg) => handlePanelMessage(ctx, panel, msg)),
       );
       // Proactively send current data on open
-      loadDeliveries(ctx).then((all) => {
+      loadDeliveries(ctx).then(async (all) => {
         const env: Record<string, unknown> = {
           sessionId: panel.sessionId ?? '',
           view: panel.view ?? '',
           spaceId: panel.spaceId ?? '',
           spaceName: panel.spaceName ?? '',
           locale: ctx.i18n.locale,
+          assistantName: await getAssistantName(ctx),
         };
         panel.postMessage({ type: 'deliveries', data: all, env });
       });
