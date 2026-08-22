@@ -282,6 +282,10 @@
     height: 100%;
     overflow: hidden;
     background: var(--df-bg-root);
+    /* The parent .card-preview applies padding for *text* previews
+       (16px top/sides); images should break out of that and fill the
+       whole area edge-to-edge, so cancel it here. */
+    margin: -16px -16px 0;
   }
   .preview-image img {
     /* Fill the card's preview area edge-to-edge (object-fit: cover crops
