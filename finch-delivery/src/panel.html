@@ -183,6 +183,11 @@
     border-color: #e0533d;
     color: #e0533d;
   }
+  .btn-icon svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
 
   /* ── Preview area (top, faded content) ── */
   .card-preview {
@@ -505,6 +510,18 @@
     return t('panel.editedYearsAgo', { n: y, s: y !== 1 ? 's' : '' });
   }
 
+  // Lucide "clipboard-pen-line" glyph for the annotate button — the other
+  // two card buttons (jump/remove) use plain unicode glyphs, but this one
+  // needs an unambiguous icon since "add annotation" has no obvious symbol.
+  var ANNOTATE_ICON =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<rect width="8" height="4" x="8" y="2" rx="1"/>' +
+    '<path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-.5"/>' +
+    '<path d="M16 4h2a2 2 0 0 1 1.73 1"/>' +
+    '<path d="M8 18h1"/>' +
+    '<path d="M21.378 12.626a1 1 0 0 0-3.004-3.004l-4.01 4.012a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506z"/>' +
+    '</svg>';
+
   function escapeHtml(str) {
     if (!str) return '';
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -597,7 +614,7 @@
       // draft, which the appView sidebar entry never has (no session, no
       // draft to attach into) — so this button is Panel-only.
       if (currentView !== 'appView') {
-        html += '<button class="btn-icon" data-annotate="' + r.id + '" title="' + t('panel.annotate') + '">✎</button>';
+        html += '<button class="btn-icon" data-annotate="' + r.id + '" title="' + t('panel.annotate') + '">' + ANNOTATE_ICON + '</button>';
       }
       // Session navigation belongs to the Finch host. A raw finch:// anchor
       // makes the guest webview navigate away (blank Panel) or escape through
