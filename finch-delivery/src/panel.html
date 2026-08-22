@@ -480,7 +480,10 @@
       html += '<div class="card" data-id="' + r.id + '">';
 
       html += '<div class="card-actions-overlay">';
-      html += '<a class="btn-icon" href="finch://open?id=' + encodeURIComponent(r.sessionId) + '" title="Jump to session" onclick="event.stopPropagation()">↗</a>';
+      // Session navigation belongs to the Finch host. A raw finch:// anchor
+      // makes the guest webview navigate away (blank Panel) or escape through
+      // the OS protocol handler (different window), so use the Bridge instead.
+      html += '<button class="btn-icon" data-open-session="' + escapeHtml(r.sessionId) + '" title="Jump to session">↗</button>';
       html += '<button class="btn-icon danger" data-remove="' + r.id + '" title="Remove">✕</button>';
       html += '</div>';
 
@@ -528,6 +531,19 @@
         } else if (finchApi) {
           finchApi.postMessage({ type: 'openPreview', filePath: record.filePath });
         }
+      });
+    });
+
+    // Session links — host-owned navigation in the current Finch window.
+    var sessionBtns = contentEl.querySelectorAll('[data-open-session]');
+    sessionBtns.forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var sessionId = btn.dataset.openSession;
+        if (!sessionId || !finchApi || !finchApi.navigation || !finchApi.navigation.openSession) return;
+        finchApi.navigation.openSession(sessionId).catch(function(err) {
+          console.error('[finch-delivery] navigation.openSession failed:', err);
+        });
       });
     });
 
