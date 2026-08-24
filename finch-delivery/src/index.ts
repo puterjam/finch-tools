@@ -154,7 +154,10 @@ async function refreshDeliveryRow(
     // and would crowd this narrow row; the type/count breakdown goes in detail.
     title: ctx.i18n.t('delivery.title'),
     detail: buildDeliveryDetail(ctx, sessionRecords),
-    icon: 'ext:library',
+    // Full pack-qualified form — the delivery row's auto pack resolution
+    // for the shorthand `ext:library` can fall back to the default puzzle
+    // icon, so reference the registered pack explicitly.
+    icon: 'ext:delivery-icons/library',
     payload: { sessionId, latestId: latest.id },
   });
 }
