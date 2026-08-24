@@ -239,8 +239,6 @@ Tables, headings, lists, footnotes and speaker notes are preserved. Scanned imag
 
         if (exec.signal?.aborted) return text('Cancelled.', true);
 
-        exec.progress.report({ stage: 'reading', message: t('progress.reading') });
-
         let markdown: string;
         try {
           markdown = await engine.toMarkdown(path);
@@ -302,5 +300,5 @@ function engineProgressKey(message: string): string {
   if (message.startsWith('Downloading')) return 'progress.downloading';
   if (message.startsWith('Verifying')) return 'progress.verifying';
   if (message.startsWith('Unpacking')) return 'progress.unpacking';
-  return 'progress.reading';
+  return message;
 }

@@ -6,7 +6,6 @@
     "locating": "正在定位文档引擎…",
     "downloading": "正在下载文档引擎（约 7 MB）…",
     "verifying": "正在校验文档引擎…",
-    "unpacking": "正在解包文档引擎…",
-    "reading": "正在读取文档…"
+    "unpacking": "正在解包文档引擎…"
   }
 }
