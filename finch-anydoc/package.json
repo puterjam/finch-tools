@@ -1,6 +1,6 @@
 {
   "name": "finch-anydoc",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Read Word, Excel, PowerPoint, OpenDocument, RTF, EPUB, CSV and PDF files as clean Markdown, right inside Finch.",
   "author": {
     "name": "PuterJam",

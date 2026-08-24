@@ -81,19 +81,47 @@ function text(message: string, isError = false): finch.ToolResult {
   return { content: [{ type: 'text', text: message }], isError };
 }
 
-/** Rewrites engine errors into something the model can act on. */
+/** Rewrites engine errors into something the model can act on.
+ *
+ * Since engine 0.2 the binding rejects with an Error carrying a structured
+ * `code`; the message-text matching below is only a fallback for older
+ * binaries and unexpected shapes.
+ */
+const ENGINE_ERROR_CODES = [
+  'unsupported',
+  'malformed',
+  'encrypted',
+  'resourceLimit',
+  'missingPart',
+  'io',
+] as const;
+
+type EngineErrorCode = (typeof ENGINE_ERROR_CODES)[number];
+
+function engineErrorCode(error: unknown): EngineErrorCode | undefined {
+  const code = (error as { code?: unknown } | null | undefined)?.code;
+  return ENGINE_ERROR_CODES.find((candidate) => candidate === code);
+}
+
 function explainFailure(error: unknown, path: string): string {
   const message = error instanceof Error ? error.message : String(error);
   const name = basename(path);
+  const code = engineErrorCode(error);
 
-  if (message.includes('OCR is required') || message.includes('no extractable text')) {
-    return (
-      `"${name}" is a scanned or image-only PDF, so it contains no extractable text. ` +
-      'AnyDoc cannot read it without OCR. Ask the user for a text-based copy, or use an OCR service.'
-    );
+  if (code === 'encrypted' || message.includes('password') || message.includes('encrypted')) {
+    return `"${name}" is password protected. Ask the user for an unprotected copy.`;
   }
 
-  if (message.includes('unrecognized file content')) {
+  if (code === 'unsupported' || message.includes('unrecognized file content')) {
+    // A .pdf that fails as unsupported was recognized as a PDF but has no
+    // extractable text, i.e. it is a scan; anything else was not understood.
+    if (code === 'unsupported' && extname(path).toLowerCase() === '.pdf') {
+      return (
+        `"${name}" is a scanned or image-only PDF, so it contains no extractable text. ` +
+        'AnyDoc cannot read it without OCR. Ask the user for a text-based copy, or use an OCR service.'
+      );
+    }
+
     return (
       `"${name}" is not a document format AnyDoc understands. ` +
       'If it is plain text, Markdown, JSON, code or a PDF with selectable text, use the built-in Read tool instead. ' +
@@ -101,8 +129,22 @@ function explainFailure(error: unknown, path: string): string {
     );
   }
 
-  if (message.includes('password') || message.includes('encrypted')) {
-    return `"${name}" appears to be password protected. Ask the user for an unprotected copy.`;
+  if (code === 'malformed' || code === 'missingPart') {
+    return (
+      `"${name}" is structurally unusable: no meaningful content could be extracted. ` +
+      'The file is likely damaged, truncated, or not really a document. Ask the user to verify the file.'
+    );
+  }
+
+  if (code === 'resourceLimit') {
+    return (
+      `"${name}" crossed the engine safety limit (decompression, nesting or node count). ` +
+      'Ask the user for a smaller export of the same content.'
+    );
+  }
+
+  if (code === 'io') {
+    return `AnyDoc could not read "${name}": ${message}. Check the file still exists and is readable.`;
   }
 
   return `Failed to read "${name}": ${message}`;

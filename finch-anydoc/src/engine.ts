@@ -8,13 +8,13 @@
  */
 
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 
 /** Pinned upstream version. Bump deliberately, never resolve "latest" at runtime. */
-export const ENGINE_VERSION = '0.1.2';
+export const ENGINE_VERSION = '0.2.3';
 
 const REGISTRY = 'https://registry.npmjs.org';
 const SCOPE = '@firecrawl';
@@ -214,6 +214,24 @@ let cached: DocumentEngine | null = null;
 let pending: Promise<DocumentEngine> | null = null;
 
 /**
+ * Removes engine binaries from versions other than the pinned one, so a
+ * version bump does not leave a stale ~7 MB download behind per upgrade.
+ * Best effort: a leftover directory only costs disk space.
+ */
+function pruneOldEngines(storagePath: string): void {
+  const engineRoot = join(storagePath, 'engine');
+  try {
+    for (const entry of readdirSync(engineRoot)) {
+      if (entry !== ENGINE_VERSION) {
+        rmSync(join(engineRoot, entry), { recursive: true, force: true });
+      }
+    }
+  } catch {
+    // Ignore: pruning must never break a successful load.
+  }
+}
+
+/**
  * Returns the document engine, installing it on first use.
  * Concurrent callers share a single install.
  */
@@ -270,6 +288,7 @@ export function loadEngine(storagePath: string, onProgress?: ProgressReporter): 
     }
 
     cached = engine;
+    pruneOldEngines(storagePath);
     return engine;
   })();
 
