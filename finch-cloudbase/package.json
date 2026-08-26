@@ -1,0 +1,83 @@
+{
+  "name": "finch-cloudbase",
+  "version": "0.1.0",
+  "description": "Connect Tencent CloudBase (腾讯云开发) to Finch — configure credentials once and get on-demand access to CloudBase's full MCP toolset: document/relational database, cloud functions, static hosting, storage and authentication.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-cloudbase"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-cloudbase#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "name": "CloudBase",
+    "description": "Connect Tencent CloudBase (腾讯云开发) and load its full MCP toolset on demand — database, cloud functions, static hosting, storage, auth.",
+    "systemPrompt": "Use cloudbase_setup to connect a Tencent CloudBase (腾讯云开发) environment before doing any CloudBase work. action=login mounts the official @cloudbase/cloudbase-mcp MCP server if needed and starts its built-in device-code login (shows a link + code to the user) — prefer this for a quick one-click connect. action=connect opens a form for an env-scoped API Key (recommended) or legacy SecretId/SecretKey plus an optional EnvId. action=status reports the current connection; action=disconnect clears credentials and unmounts the server. Once connected, dozens of mcp__cloudbase__* tools become available for document database, relational database (PostgreSQL/MySQL), cloud functions, static hosting, cloud storage, authentication and WeChat mini program integration — call cloudbase_setup with action=status first if those tools are missing or return auth errors.",
+    "main": "dist/index.js",
+    "activationEvents": [
+      "onStartup"
+    ],
+    "miniToolType": "local",
+    "categories": [
+      "development"
+    ],
+    "requires": {
+      "capabilities": [
+        "mcp.client"
+      ]
+    },
+    "contributes": {
+      "tools": true,
+      "settingsMenu": {
+        "icon": "cloud",
+        "tooltip": "CloudBase connection settings"
+      },
+      "iconPacks": [
+        { "id": "cloudbase-icons", "label": "CloudBase Icons" }
+      ],
+      "mcpServers": [
+        {
+          "name": "cloudbase",
+          "description": "Tencent CloudBase (腾讯云开发) backend platform: document/relational database, cloud functions, static hosting, storage, authentication. Call cloudbase_setup to configure."
+        }
+      ]
+    },
+    "permissions": {
+      "filesystem": "none",
+      "network": true,
+      "shell": false,
+      "secrets": [
+        "cloudbase.apiKey",
+        "cloudbase.secretId",
+        "cloudbase.secretKey"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.2.9",
+    "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "i18n/",
+    "icon.png",
+    "README.md"
+  ]
+}
