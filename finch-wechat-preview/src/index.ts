@@ -21,6 +21,7 @@ interface PanelMessage {
   requestId?: number;
   itemId?: string;
   patch?: { label?: string; icon?: string; tooltip?: string };
+  message?: string;
 }
 
 function result(message: string, isError = false): finch.ToolResult {
@@ -99,6 +100,12 @@ function watchSource(ctx: finch.MiniToolContext, panel: finch.AppPanel, sourcePa
 async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, raw: unknown): Promise<void> {
   const message = raw as PanelMessage;
   switch (message.type) {
+    case 'clientLog': {
+      // Temporary diagnostic bridge: surfaces panel.html-side events (e.g. a
+      // toolbar click actually reaching the panel) in the mini tool console.
+      ctx.logger.info(`[panel] ${String(message.message ?? '')}`);
+      return;
+    }
     case 'requestOpen': {
       // Some Finch releases advertise `ctx.api.supports('ui.pickFile')` before the
       // dialog is actually wired up end-to-end (e.g. main-process/renderer version
@@ -112,17 +119,20 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       // instead of waiting for this timeout at all.
       const NATIVE_PICKER_TIMEOUT_MS = 60_000;
       let handle: finch.FilePickerHandle | undefined;
+      ctx.logger.info('requestOpen received; calling ctx.ui.pickFile()');
       try {
         handle = ctx.ui.pickFile({
           title: 'Open article',
           filter: { extensions: ['.md', '.markdown'] },
         });
+        ctx.logger.info('ctx.ui.pickFile() call returned a handle, awaiting resolution…');
         const timedOut = Symbol('timeout');
         const result = await Promise.race([
           handle,
           new Promise<typeof timedOut>((resolve) => setTimeout(() => resolve(timedOut), NATIVE_PICKER_TIMEOUT_MS)),
         ]);
         if (result === timedOut) {
+          ctx.logger.warn(`pickFile() did not resolve within ${NATIVE_PICKER_TIMEOUT_MS}ms; closing and falling back`);
           await handle.close();
           await panel.postMessage({
             type: 'error',
@@ -132,12 +142,14 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
           return;
         }
         const picked = result as finch.FilePickerResult;
+        ctx.logger.info(`pickFile() resolved: action=${picked.action}, files=${picked.files.length}`);
         if (picked.action !== 'select' || picked.files.length === 0) return;
         const sourcePath = picked.files[0].path;
         const markdown = await readFile(sourcePath, 'utf8');
         watchSource(ctx, panel, sourcePath);
         await sendDocument(panel, { path: sourcePath, markdown, title: documentTitle(markdown, sourcePath) });
       } catch (error) {
+        ctx.logger.error(`pickFile() threw: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
         await panel.postMessage({
           type: 'error',
           fallback: true,
@@ -229,10 +241,12 @@ export function activate(ctx: finch.MiniToolContext): void {
       stopWatching(panel.id);
       if (lastPanel === panel) lastPanel = undefined;
     }));
+    const pickFileSupported = ctx.api.supports('ui.pickFile');
+    ctx.logger.info(`panel opened; ctx.api.supports('ui.pickFile') = ${pickFileSupported}`);
     panel.postMessage({
       type: 'ready',
       locale: ctx.i18n.locale,
-      pickFileSupported: ctx.api.supports('ui.pickFile'),
+      pickFileSupported,
     }).catch((error) => ctx.logger.warn(String(error)));
   }));
 

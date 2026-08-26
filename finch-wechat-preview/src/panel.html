@@ -544,6 +544,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   }
 
   function handleMenu(itemId) {
+    if (api && api.postMessage) api.postMessage({ type: 'clientLog', message: 'finch:menu received, itemId=' + itemId });
     if (itemId === 'open') { openFile(); return; }
     if (itemId === 'mode') { setMode(mode === 'edit' ? 'preview' : 'edit'); return; }
     if (itemId === 'copy') { copyHtml(); return; }
