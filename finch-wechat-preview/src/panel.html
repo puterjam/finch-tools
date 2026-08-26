@@ -592,6 +592,14 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         return;
       }
       if (m.type === 'watchStarted') { return; }
+      if (m.type === 'pickCancelled') {
+        // User closed the native picker without choosing a file — clear the
+        // pending guard so the next click opens a fresh picker normally
+        // instead of assuming this request is still hanging.
+        nativePickPending = false;
+        setStatus('');
+        return;
+      }
       if (m.type === 'error') {
         // A `fallback` error means the native picker timed out or errored on the
         // backend. We cannot silently re-trigger the OS file dialog here — Chromium

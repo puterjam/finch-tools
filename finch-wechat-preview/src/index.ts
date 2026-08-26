@@ -158,7 +158,16 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
         }
         const picked = result as finch.FilePickerResult;
         ctx.logger.info(`pickFile() resolved: action=${picked.action}, files=${picked.files.length}`);
-        if (picked.action !== 'select' || picked.files.length === 0) return;
+        if (picked.action !== 'select' || picked.files.length === 0) {
+          // The user cancelled — not an error, but the panel is still waiting
+          // on *some* reply to clear its "a native request is pending" guard
+          // (see `nativePickPending` in panel.html). Without this ack, the
+          // very next click would wrongly think a request is still hanging
+          // and jump straight to the (unreliable, no real user gesture)
+          // browser fallback instead of opening the native picker again.
+          await panel.postMessage({ type: 'pickCancelled' });
+          return;
+        }
         const sourcePath = picked.files[0].path;
         const markdown = await readFile(sourcePath, 'utf8');
         watchSource(ctx, panel, sourcePath);
