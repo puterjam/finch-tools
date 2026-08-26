@@ -122,41 +122,22 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       return;
     }
     case 'requestOpen': {
-      // Some Finch releases advertise `ctx.api.supports('ui.pickFile')` before the
-      // dialog is actually wired up end-to-end (e.g. main-process/renderer version
-      // skew during a rolling update), which would otherwise leave the awaited
-      // `ctx.ui.pickFile()` Promise pending forever with no feedback for the user.
-      // This is a generous *safety-valve* timeout only — a real dialog can
-      // legitimately stay open for minutes while the user browses the tree, so we
-      // must not cut that off. The actual "feels unresponsive" fix lives on the
-      // panel side: it shows a status line right away, and a second click while a
-      // request is still pending immediately switches to the in-page picker
-      // instead of waiting for this timeout at all.
-      const NATIVE_PICKER_TIMEOUT_MS = 60_000;
-      let handle: finch.FilePickerHandle | undefined;
+      // No client-side timeout here on purpose: a real native picker dialog can
+      // legitimately stay open for minutes while the user browses the tree, and
+      // racing it against a timer only means we might `close()` a dialog the
+      // user is still actively using — plus every fallback path taken this way
+      // permanently disables the native picker for the rest of the panel's
+      // session (see `pickFileSupported` in panel.html), which is worse than
+      // just waiting. The host itself already has its own multi-minute safety
+      // net for a truly stuck dialog, so we simply await the result here.
       ctx.logger.info('requestOpen received; calling ctx.ui.pickFile()');
       try {
-        handle = ctx.ui.pickFile({
+        const handle = ctx.ui.pickFile({
           title: 'Open article',
           filter: { extensions: ['.md', '.markdown'] },
         });
         ctx.logger.info('ctx.ui.pickFile() call returned a handle, awaiting resolution…');
-        const timedOut = Symbol('timeout');
-        const result = await Promise.race([
-          handle,
-          new Promise<typeof timedOut>((resolve) => setTimeout(() => resolve(timedOut), NATIVE_PICKER_TIMEOUT_MS)),
-        ]);
-        if (result === timedOut) {
-          ctx.logger.warn(`pickFile() did not resolve within ${NATIVE_PICKER_TIMEOUT_MS}ms; closing and falling back`);
-          await handle.close();
-          await panel.postMessage({
-            type: 'error',
-            fallback: true,
-            message: 'Native file picker did not respond in time. Falling back to the browser file dialog — click "Open article" again.',
-          });
-          return;
-        }
-        const picked = result as finch.FilePickerResult;
+        const picked = await handle;
         ctx.logger.info(`pickFile() resolved: action=${picked.action}, files=${picked.files.length}`);
         if (picked.action !== 'select' || picked.files.length === 0) {
           // The user cancelled — not an error, but the panel is still waiting
