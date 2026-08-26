@@ -1,0 +1,8 @@
+{
+  "name": "公众号预览",
+  "description": "在 Finch 中编辑 Markdown 并预览为微信公众号文章样式，支持框选文字请求 AI 修改，或让 AI 设计自定义排版风格。",
+  "systemPrompt": "当用户要编辑或预览本地 Markdown 文件为微信公众号文章时，调用 wechat_preview_document，action 使用 open，并提供绝对路径。当用户要修改预览中框选的文字时，给出精确的替换 Markdown，确认后调用 action=apply 并提供完整更新后的 Markdown。当用户要求自定义/AI 设计排版风格时，编写限定在 #bm-md 下的普通 CSS（标签/id 选择器，不用 class，必要时用 !important 覆盖基础风格），可参考 bm.md 内置风格（kami、bauhaus、blueprint、botanical、newsprint、retro、sketch、terminal），然后调用 action=set_style 并提供 css 与简短 label，会立即应用到当前打开的预览。",
+  "appPanel": {
+    "title": "公众号预览"
+  }
+}
