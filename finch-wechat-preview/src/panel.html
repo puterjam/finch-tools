@@ -443,11 +443,25 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     }, 800);
   }
 
+  var nativePickPending = false;
+
   async function openFile() {
     stopWatching();
     if (pickFileSupported && api && api.postMessage) {
+      if (nativePickPending) {
+        // A previous native request is still hanging (host round-trip stuck).
+        // Don't stack another one silently — this click is a fresh, real user
+        // gesture, so use it to open the reliable in-page/browser picker
+        // immediately instead of leaving the button looking unresponsive.
+        pickFileSupported = false;
+        nativePickPending = false;
+        await openFileBrowserFallback();
+        return;
+      }
       // Native Finch file picker: browses the current Space/workspace directory
       // tree with real absolute paths, no Electron `File.path` shim needed.
+      nativePickPending = true;
+      setStatus('正在打开文件选择器…');
       api.postMessage({ type: 'requestOpen' });
       return;
     }
@@ -548,6 +562,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       if (m.type === 'ready') { pickFileSupported = !!m.pickFileSupported; return; }
       if (m.type === 'finch:menu') { handleMenu(m.itemId); return; }
       if (m.type === 'document') {
+        nativePickPending = false;
         var incoming = m.markdown || '';
         if (incoming === savedMarkdown) return; // echo of our own save
         var isFirst = savedMarkdown === null;
@@ -584,6 +599,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         // that started it. So just stop trusting the native path for the rest of this
         // session; the next "Open article" click (a fresh gesture) uses the reliable
         // in-page picker directly instead of hanging again.
+        nativePickPending = false;
         if (m.fallback) pickFileSupported = false;
         setStatus(m.message, true);
         return;

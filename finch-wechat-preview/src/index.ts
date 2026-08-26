@@ -104,9 +104,13 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       // dialog is actually wired up end-to-end (e.g. main-process/renderer version
       // skew during a rolling update), which would otherwise leave the awaited
       // `ctx.ui.pickFile()` Promise pending forever with no feedback for the user.
-      // Race it against a timeout, close the dialog on our side, and tell the panel
-      // to fall back to the in-page picker instead of hanging silently.
-      const NATIVE_PICKER_TIMEOUT_MS = 8000;
+      // This is a generous *safety-valve* timeout only — a real dialog can
+      // legitimately stay open for minutes while the user browses the tree, so we
+      // must not cut that off. The actual "feels unresponsive" fix lives on the
+      // panel side: it shows a status line right away, and a second click while a
+      // request is still pending immediately switches to the in-page picker
+      // instead of waiting for this timeout at all.
+      const NATIVE_PICKER_TIMEOUT_MS = 60_000;
       let handle: finch.FilePickerHandle | undefined;
       try {
         handle = ctx.ui.pickFile({
