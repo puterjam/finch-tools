@@ -451,6 +451,10 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       api.postMessage({ type: 'requestOpen' });
       return;
     }
+    await openFileBrowserFallback();
+  }
+
+  async function openFileBrowserFallback() {
     if ('showOpenFilePicker' in window) {
       try {
         var handles = await window.showOpenFilePicker({
@@ -572,7 +576,18 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         return;
       }
       if (m.type === 'watchStarted') { return; }
-      if (m.type === 'error') { setStatus(m.message, true); return; }
+      if (m.type === 'error') {
+        // A `fallback` error means the native picker timed out or errored on the
+        // backend. We cannot silently re-trigger the OS file dialog here — Chromium
+        // only allows showOpenFilePicker()/<input>.click() inside a real, still-fresh
+        // user gesture, and this message arrives asynchronously well after the click
+        // that started it. So just stop trusting the native path for the rest of this
+        // session; the next "Open article" click (a fresh gesture) uses the reliable
+        // in-page picker directly instead of hanging again.
+        if (m.fallback) pickFileSupported = false;
+        setStatus(m.message, true);
+        return;
+      }
     });
   }
 

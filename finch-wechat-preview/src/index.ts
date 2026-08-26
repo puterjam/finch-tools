@@ -100,18 +100,45 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
   const message = raw as PanelMessage;
   switch (message.type) {
     case 'requestOpen': {
+      // Some Finch releases advertise `ctx.api.supports('ui.pickFile')` before the
+      // dialog is actually wired up end-to-end (e.g. main-process/renderer version
+      // skew during a rolling update), which would otherwise leave the awaited
+      // `ctx.ui.pickFile()` Promise pending forever with no feedback for the user.
+      // Race it against a timeout, close the dialog on our side, and tell the panel
+      // to fall back to the in-page picker instead of hanging silently.
+      const NATIVE_PICKER_TIMEOUT_MS = 8000;
+      let handle: finch.FilePickerHandle | undefined;
       try {
-        const picked = await ctx.ui.pickFile({
+        handle = ctx.ui.pickFile({
           title: 'Open article',
           filter: { extensions: ['.md', '.markdown'] },
         });
+        const timedOut = Symbol('timeout');
+        const result = await Promise.race([
+          handle,
+          new Promise<typeof timedOut>((resolve) => setTimeout(() => resolve(timedOut), NATIVE_PICKER_TIMEOUT_MS)),
+        ]);
+        if (result === timedOut) {
+          await handle.close();
+          await panel.postMessage({
+            type: 'error',
+            fallback: true,
+            message: 'Native file picker did not respond in time. Falling back to the browser file dialog — click "Open article" again.',
+          });
+          return;
+        }
+        const picked = result as finch.FilePickerResult;
         if (picked.action !== 'select' || picked.files.length === 0) return;
         const sourcePath = picked.files[0].path;
         const markdown = await readFile(sourcePath, 'utf8');
         watchSource(ctx, panel, sourcePath);
         await sendDocument(panel, { path: sourcePath, markdown, title: documentTitle(markdown, sourcePath) });
       } catch (error) {
-        await panel.postMessage({ type: 'error', message: `Cannot read file: ${error instanceof Error ? error.message : String(error)}` });
+        await panel.postMessage({
+          type: 'error',
+          fallback: true,
+          message: `Native file picker failed, falling back to the browser dialog: ${error instanceof Error ? error.message : String(error)}`,
+        });
       }
       return;
     }
