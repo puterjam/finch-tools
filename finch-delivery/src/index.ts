@@ -162,6 +162,59 @@ async function refreshDeliveryRow(
   });
 }
 
+// ── Open panel registry ────────────────────────────────────────────────────
+
+/**
+ * Every live panel instance — right-side Panel Apps across sessions plus the
+ * appView sidebar page. `ctx.storage` has no change event, so mutations that
+ * happen outside a panel's own message flow (the record_artifact tool running
+ * in any session, or remove/clearSession issued from a *different* panel) would
+ * otherwise leave already-open views stale until reopen. Every mutation fans
+ * out from {@link broadcastDeliveries} to all panels in this set; panels leave
+ * it on dispose, so it only ever holds instances Finch considers alive.
+ */
+const livePanels = new Set<finch.AppPanel>();
+
+/**
+ * Guards against double-binding listeners: re-opening a still-alive
+ * single-instance panel re-emits it from `onDidOpenPanel` (with updated
+ * payload), and we must not register a second `onDidReceiveMessage` for it.
+ */
+const boundPanels = new WeakSet<finch.AppPanel>();
+
+/** Env payload shared by the initial push, `requestDeliveries` and broadcasts. */
+async function buildPanelEnv(
+  ctx: finch.MiniToolContext,
+  panel: finch.AppPanel,
+): Promise<Record<string, unknown>> {
+  return {
+    sessionId: panel.sessionId ?? '',
+    view: panel.view ?? '',
+    spaceId: panel.spaceId ?? '',
+    spaceName: panel.spaceName ?? '',
+    // `finch:env.locale` is only delivered for the appView scope today, so
+    // thread the resolved locale through our own env payload instead — it
+    // works uniformly for both the right-side Panel App and the appView
+    // sidebar entry.
+    locale: ctx.i18n.locale,
+    assistantName: await getAssistantName(ctx),
+  };
+}
+
+/** Push the latest deliveries to every live panel so open views stay current. */
+async function broadcastDeliveries(ctx: finch.MiniToolContext): Promise<void> {
+  if (livePanels.size === 0) return;
+  const all = await loadDeliveries(ctx);
+  for (const panel of livePanels) {
+    try {
+      await panel.postMessage({ type: 'deliveries', data: all, env: await buildPanelEnv(ctx, panel) });
+    } catch (err) {
+      // A dying panel must never break the mutation that triggered the push.
+      ctx.logger.warn(`Failed to push deliveries to panel ${panel.id}: ${String(err)}`);
+    }
+  }
+}
+
 // ── Panel message handling ──────────────────────────────────────────────────
 
 interface PanelMessage {
@@ -198,22 +251,10 @@ async function handlePanelMessage(
   switch (msg.type) {
     case 'requestDeliveries': {
       // Send all deliveries + current env info
-      const env: Record<string, unknown> = {
-        sessionId: panel.sessionId ?? '',
-        view: panel.view ?? '',
-        spaceId: panel.spaceId ?? '',
-        spaceName: panel.spaceName ?? '',
-        // `finch:env.locale` is only delivered for the appView scope today,
-        // so thread the resolved locale through our own env payload instead
-        // — it works uniformly for both the right-side Panel App and the
-        // appView sidebar entry.
-        locale: ctx.i18n.locale,
-        assistantName: await getAssistantName(ctx),
-      };
       await panel.postMessage({
         type: 'deliveries',
         data: all,
-        env,
+        env: await buildPanelEnv(ctx, panel),
       });
       break;
     }
@@ -222,7 +263,10 @@ async function handlePanelMessage(
       const removed = all.find((r) => r.id === msg.id);
       const filtered = all.filter((r) => r.id !== msg.id);
       await saveDeliveries(ctx, filtered);
-      await panel.postMessage({ type: 'deliveries', data: filtered });
+      // Broadcast instead of replying only to the requester — the same
+      // removal must also update any other open panel (e.g. the appView
+      // sidebar page) watching this data.
+      await broadcastDeliveries(ctx);
       // Refresh delivery row for the affected session
       if (removed) await refreshDeliveryRow(ctx, removed.sessionId);
 
@@ -249,7 +293,7 @@ async function handlePanelMessage(
       if (!msg.sessionId) break;
       const filtered = all.filter((r) => r.sessionId !== msg.sessionId);
       await saveDeliveries(ctx, filtered);
-      await panel.postMessage({ type: 'deliveries', data: filtered });
+      await broadcastDeliveries(ctx);
       await refreshDeliveryRow(ctx, msg.sessionId);
       break;
     }
@@ -304,20 +348,20 @@ export function activate(ctx: finch.MiniToolContext): void {
   // ── Panel open listener ──────────────────────────────────────────────────
   ctx.subscriptions.push(
     ctx.ui.onDidOpenPanel((panel) => {
-      ctx.subscriptions.push(
-        panel.onDidReceiveMessage((msg) => handlePanelMessage(ctx, panel, msg)),
-      );
+      // Track the instance for broadcasts. Re-opening a still-alive
+      // single-instance panel re-emits it here, so guard the one-time
+      // listener binding with `boundPanels`.
+      livePanels.add(panel);
+      if (!boundPanels.has(panel)) {
+        boundPanels.add(panel);
+        ctx.subscriptions.push(
+          panel.onDidDispose(() => livePanels.delete(panel)),
+          panel.onDidReceiveMessage((msg) => handlePanelMessage(ctx, panel, msg)),
+        );
+      }
       // Proactively send current data on open
       loadDeliveries(ctx).then(async (all) => {
-        const env: Record<string, unknown> = {
-          sessionId: panel.sessionId ?? '',
-          view: panel.view ?? '',
-          spaceId: panel.spaceId ?? '',
-          spaceName: panel.spaceName ?? '',
-          locale: ctx.i18n.locale,
-          assistantName: await getAssistantName(ctx),
-        };
-        panel.postMessage({ type: 'deliveries', data: all, env });
+        panel.postMessage({ type: 'deliveries', data: all, env: await buildPanelEnv(ctx, panel) });
       });
     }),
   );
@@ -406,6 +450,10 @@ export function activate(ctx: finch.MiniToolContext): void {
           all.push(record);
           await saveDeliveries(ctx, all);
           await refreshDeliveryRow(ctx, sessionId || undefined);
+          // Keep every already-open panel (right-side Panel App / appView
+          // sidebar) in sync — the user's bug report: a panel opened before
+          // this push never saw the new record until manually reopened.
+          await broadcastDeliveries(ctx);
 
           return text(
             `Deliverable recorded: ${title} (${fileType})\nID: ${record.id}\nFile: ${record.fileName}`,
@@ -447,6 +495,7 @@ export function activate(ctx: finch.MiniToolContext): void {
           const filtered = all.filter((r) => r.id !== id);
           await saveDeliveries(ctx, filtered);
           await refreshDeliveryRow(ctx, found.sessionId);
+          await broadcastDeliveries(ctx);
 
           return text(`Removed: ${found.title} (${found.fileName})`);
         }
