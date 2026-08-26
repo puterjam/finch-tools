@@ -97,6 +97,12 @@ function watchSource(ctx: finch.MiniToolContext, panel: finch.AppPanel, sourcePa
   }
 }
 
+function sendReady(ctx: finch.MiniToolContext, panel: finch.AppPanel): void {
+  const pickFileSupported = ctx.api.supports('ui.pickFile');
+  ctx.logger.info(`sending ready to panel; pickFileSupported = ${pickFileSupported}`);
+  panel.postMessage({ type: 'ready', locale: ctx.i18n.locale, pickFileSupported }).catch((error) => ctx.logger.warn(String(error)));
+}
+
 async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, raw: unknown): Promise<void> {
   const message = raw as PanelMessage;
   switch (message.type) {
@@ -104,6 +110,15 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       // Temporary diagnostic bridge: surfaces panel.html-side events (e.g. a
       // toolbar click actually reaching the panel) in the mini tool console.
       ctx.logger.info(`[panel] ${String(message.message ?? '')}`);
+      return;
+    }
+    case 'panelReady': {
+      // Authoritative handshake: the host's own immediate `ready` push (fired
+      // from `onDidOpenPanel`, see activate()) races against this guest page
+      // loading and can be silently lost. The panel asks for it again once its
+      // own message listener is guaranteed to be attached, so this reply can't
+      // be lost the same way.
+      sendReady(ctx, panel);
       return;
     }
     case 'requestOpen': {
@@ -241,13 +256,11 @@ export function activate(ctx: finch.MiniToolContext): void {
       stopWatching(panel.id);
       if (lastPanel === panel) lastPanel = undefined;
     }));
-    const pickFileSupported = ctx.api.supports('ui.pickFile');
-    ctx.logger.info(`panel opened; ctx.api.supports('ui.pickFile') = ${pickFileSupported}`);
-    panel.postMessage({
-      type: 'ready',
-      locale: ctx.i18n.locale,
-      pickFileSupported,
-    }).catch((error) => ctx.logger.warn(String(error)));
+    // Best-effort immediate push: usually fine, but the panel's own
+    // `panelReady` handshake (handled above in handleMessage) is what actually
+    // guarantees delivery — see the comment there for why this alone isn't
+    // reliable.
+    sendReady(ctx, panel);
   }));
 
   ctx.subscriptions.push(ctx.tools.register({

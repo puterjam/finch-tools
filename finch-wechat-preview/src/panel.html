@@ -608,6 +608,15 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     });
   }
 
+  // The host's own initial `ready` push (sent right when the panel is created,
+  // from `onDidOpenPanel`) races against this guest page loading and attaching
+  // the `api.onMessage` listener above — it can be sent before we're listening
+  // and silently lost, permanently leaving `pickFileSupported` at its default
+  // `false`. So instead of only relying on that push, we ask for it ourselves
+  // once we're actually ready to receive the answer; by construction that
+  // request can't be sent before our own listener exists.
+  if (api && api.postMessage) api.postMessage({ type: 'panelReady' });
+
   updateEmptyState();
   showPane();
 })();
