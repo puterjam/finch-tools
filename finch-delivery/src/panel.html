@@ -144,6 +144,27 @@
     transform: scale(0.99);
   }
 
+  /* ── Card motion ──
+     New cards fade-rise in (`card-in`); cards that move or change width
+     when the grid reflows (panel resize, a live-update broadcast inserting
+     a card, tab switch) are eased from their previous rect by the JS FLIP
+     in the script below — CSS grid reflows snap instantly by default. */
+  @keyframes card-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .card {
+      animation: none !important;
+    }
+  }
+
   /* ── Hover action overlay ── */
   .card-actions-overlay {
     position: absolute;
@@ -780,8 +801,76 @@
     return 'panel.emptyAll';
   }
 
+  // ── Card motion (FLIP) ────────────────────────────────────────────────
+  // First-Last-Invert-Play: cards are measured before and after a render or
+  // panel resize, then eased from their old rect (position + width) to the
+  // new one via transform. Covers the three reflow triggers: sidebar drag,
+  // live-update broadcasts inserting/removing cards, and tab switches.
+  // Brand-new cards get a fade-rise entry (with a small stagger) instead.
+  var FLIP_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
+  var FLIP_MS = 300;
+  var reducedMotion = false;
+  try {
+    reducedMotion = !!window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch (e) { /* ignore */ }
+
+  // data-id → offset rect. Deliberately offsetLeft/Top/Width/Height, not
+  // getBoundingClientRect: offset* ignores transforms, so an in-flight FLIP
+  // or hover scale never pollutes the cache between renders.
+  var cardRects = {};
+
+  function captureCardRects() {
+    cardRects = {};
+    contentEl.querySelectorAll('.card').forEach(function(card) {
+      if (!card.dataset.id) return;
+      cardRects[card.dataset.id] = {
+        left: card.offsetLeft, top: card.offsetTop,
+        width: card.offsetWidth, height: card.offsetHeight,
+      };
+    });
+  }
+
+  function applyFlip(prevRects) {
+    if (reducedMotion) return;
+    var entryIndex = 0;
+    contentEl.querySelectorAll('.card').forEach(function(card) {
+      var prev = card.dataset.id ? prevRects[card.dataset.id] : null;
+      if (!prev) {
+        // Brand-new card — fade-rise entry, staggered a touch so a full
+        // first paint / tab switch cascades instead of flashing at once.
+        var delay = Math.min(entryIndex++, 8) * 40;
+        card.style.animation = 'card-in 0.32s ' + FLIP_EASE + ' ' + delay + 'ms both';
+        card.addEventListener('animationend', function onEnd() {
+          card.removeEventListener('animationend', onEnd);
+          card.style.animation = '';
+        });
+        return;
+      }
+      var dx = prev.left - card.offsetLeft;
+      var dy = prev.top - card.offsetTop;
+      var sx = card.offsetWidth ? prev.width / card.offsetWidth : 1;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(sx - 1) < 0.01) return;
+      // Invert: jump to the old rect with no transition…
+      card.style.transformOrigin = '0 0';
+      card.style.transition = 'none';
+      card.style.transform = 'translate(' + dx + 'px, ' + dy + 'px)' +
+        (Math.abs(sx - 1) >= 0.01 ? ' scale(' + sx + ', 1)' : '');
+      // …flush, then play back to the natural rect with easing.
+      void card.offsetWidth;
+      card.style.transition = 'transform ' + FLIP_MS + 'ms ' + FLIP_EASE;
+      card.style.transform = '';
+      card.addEventListener('transitionend', function onEnd(e) {
+        if (e.propertyName !== 'transform') return;
+        card.removeEventListener('transitionend', onEnd);
+        card.style.transition = '';
+        card.style.transformOrigin = '';
+      });
+    });
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────
   function render() {
+    var prevCardRects = cardRects;
     titleEl.textContent = t('panel.title');
     renderTabs();
 
@@ -794,6 +883,9 @@
         '<div class="empty-icon">📦</div>' +
         '<div class="empty-text">' + t(emptyTextKey(), { finch: finchName }) + '</div>' +
         '</div>';
+      // No cards to animate, but keep the rect cache consistent so the
+      // next render FLIPs from where the cards actually were.
+      captureCardRects();
       return;
     }
 
@@ -937,6 +1029,11 @@
         finchApi.postMessage({ type: 'requestImage', filePath: filePath });
       }
     });
+
+    // Reflow motion: ease surviving cards from their previous rects and
+    // cache the new layout for the next render / resize FLIP.
+    applyFlip(prevCardRects);
+    captureCardRects();
   }
 
   // ── Delete confirmation modal ─────────────────────────────────────────
@@ -1039,6 +1136,20 @@
 
   // ── Initial render ─────────────────────────────────────────────────────
   render();
+
+  // Panel resize → the auto-fill grid reflows instantly; ease cards from
+  // the cached rects to their new width/position instead of snapping.
+  var resizeRafPending = false;
+  window.addEventListener('resize', function() {
+    if (resizeRafPending) return;
+    resizeRafPending = true;
+    requestAnimationFrame(function() {
+      resizeRafPending = false;
+      var prevCardRects = cardRects;
+      captureCardRects();
+      applyFlip(prevCardRects);
+    });
+  });
 
   // Request data from backend
   if (finchApi && finchApi.postMessage) {
