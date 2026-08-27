@@ -1,0 +1,210 @@
+{
+  "name": "finch-markdown-editor",
+  "version": "0.7.0",
+  "description": "A Markdown editor and WeChat Official Account style preview, with selection-based AI edits and AI-generated custom styles.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-markdown-editor"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-markdown-editor#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "keywords": [
+    "finch",
+    "finch-minitool",
+    "markdown",
+    "wechat",
+    "preview",
+    "annotation"
+  ],
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js && esbuild src/codemirror.ts --bundle --platform=browser --format=iife --target=chrome120 --minify --outfile=dist/codemirror.js && cp src/panel.html dist/panel.html",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "minVersion": "1.6.0",
+    "name": "MD Editor",
+    "description": "Edit Markdown and preview it as a WeChat Official Account article. Select text for AI edits, or ask AI to design a custom style.",
+    "systemPrompt": "When the user wants to edit or preview a local Markdown file, call markdown_editor_document with action 'open' and its absolute path. When the user asks to create/draft a brand-new Markdown document, write the full Markdown yourself and call action 'create' with an absolute path that does not exist yet plus the markdown content — this writes the file and opens it in Markdown Editor in one step (Markdown Editor's own UI intentionally has no 'new file' button). When the user asks to revise a passage selected in Markdown Editor, propose precise replacement Markdown and, once approved, call action 'apply' with the full updated Markdown. When the user asks for a custom/AI-designed WeChat layout style, write plain CSS scoped under #bm-md (tag/id selectors only, use !important where needed to override the base style) inspired by bm.md's built-in styles (kami, bauhaus, blueprint, botanical, newsprint, retro, sketch, terminal), then call action 'set_style' with that css and a short label — it applies immediately in the open preview.",
+    "main": "dist/index.js",
+    "activationEvents": [
+      "onStartup"
+    ],
+    "miniToolType": "local",
+    "categories": [
+      "productivity"
+    ],
+    "contributes": {
+      "tools": true,
+      "iconPacks": [
+        {
+          "id": "markdown-editor-icons",
+          "label": "Markdown Editor Icons"
+        }
+      ],
+      "appPanel": {
+        "icon": "newspaper",
+        "viewType": "markdown-editor.document",
+        "instanceMode": "single",
+        "showInLauncher": true,
+        "source": {
+          "type": "local",
+          "path": "dist/panel.html"
+        },
+        "toolbar": [
+          {
+            "id": "open",
+            "icon": "ext:markdown-editor-icons/folder-open",
+            "label": "Open",
+            "tooltip": "Open Markdown file"
+          },
+          {
+            "type": "separator"
+          },
+          {
+            "id": "annotate",
+            "icon": "ext:markdown-editor-icons/file-pen-line",
+            "tooltip": "Enable annotation"
+          },
+          {
+            "id": "mode",
+            "icon": "toggle-left",
+            "label": "Preview",
+            "tooltip": "Switch to preview"
+          },
+          {
+            "type": "menu",
+            "id": "style",
+            "icon": "palette",
+            "tooltip": "Layout style",
+            "items": [
+              {
+                "id": "style:kami",
+                "label": "Kami"
+              },
+              {
+                "id": "style:bauhaus",
+                "label": "Bauhaus"
+              },
+              {
+                "id": "style:blueprint",
+                "label": "Blueprint"
+              },
+              {
+                "id": "style:botanical",
+                "label": "Botanical"
+              },
+              {
+                "id": "style:newsprint",
+                "label": "Newsprint"
+              },
+              {
+                "id": "style:retro",
+                "label": "Retro"
+              },
+              {
+                "id": "style:sketch",
+                "label": "Sketch"
+              },
+              {
+                "id": "style:terminal",
+                "label": "Terminal"
+              },
+              {
+                "id": "style-sep",
+                "label": "",
+                "separator": true
+              },
+              {
+                "id": "style:custom",
+                "label": "Custom (AI-designed)",
+                "icon": "wand-sparkles"
+              }
+            ]
+          },
+          {
+            "id": "ai-style",
+            "icon": "wand-sparkles",
+            "tooltip": "Ask AI to design a style"
+          },
+          {
+            "type": "spacer"
+          },
+          {
+            "id": "save",
+            "icon": "ext:markdown-editor-icons/save",
+            "label": "Save",
+            "tooltip": "Save (Cmd/Ctrl+S)"
+          },
+          {
+            "type": "menu",
+            "id": "copy",
+            "icon": "clipboard",
+            "tooltip": "Copy",
+            "items": [
+              {
+                "id": "copy:weixin",
+                "label": "Copy for WeChat",
+                "icon": "clipboard-check"
+              }
+            ]
+          },
+          {
+            "type": "menu",
+            "id": "more",
+            "icon": "settings",
+            "items": [
+              {
+                "id": "reload",
+                "label": "Re-render"
+              },
+              {
+                "id": "more-sep",
+                "label": "",
+                "separator": true
+              },
+              {
+                "id": "about",
+                "label": "About rendering"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "permissions": {
+      "filesystem": "readwrite",
+      "network": false,
+      "shell": true
+    }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.3.5",
+    "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "i18n/",
+    "icon.png",
+    "README.md"
+  ],
+  "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.12.4",
+    "@lezer/highlight": "^1.2.3",
+    "codemirror": "^6.0.2"
+  }
+}

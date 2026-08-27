@@ -1,0 +1,949 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>公众号文章预览</title>
+<style>
+:root{
+  --bg:var(--finch-bg-root,#f7f7f8);
+  --card:var(--finch-bg-elevated,#fff);
+  --text:var(--finch-text-primary,#1d1d20);
+  --muted:var(--finch-text-secondary,#777);
+  --border:var(--finch-border,#ddd);
+  --accent:var(--finch-accent,#3f6b56);
+}
+@media (prefers-color-scheme: dark) {
+  :root{
+    --bg:var(--finch-bg-root,#17171a);
+    --card:var(--finch-bg-elevated,#242429);
+    --text:var(--finch-text-primary,#eee);
+    --muted:var(--finch-text-secondary,#aaa);
+    --border:var(--finch-border,#3c3c43);
+    --accent:var(--finch-accent,#70a889);
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-body,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif)}
+.app{width:100%;height:100vh;display:flex;flex-direction:column}
+.stage{position:relative;flex:1;min-height:0}
+.pane{position:absolute;inset:0;display:none}
+.pane.active{display:block}
+.editor-wrap{position:relative;width:100%;height:100%;overflow:hidden;background:var(--card)}
+#editor{width:100%;height:100%;overflow:hidden}
+.fake-sel{position:fixed;z-index:15;border-radius:2px;background:rgba(63,107,86,.35);background:color-mix(in srgb,var(--accent) 34%,transparent);pointer-events:none}
+.preview-shell{position:absolute;inset:0;padding:32px 20px 20px;background:var(--bg);overflow:hidden}
+#article{display:block;width:100%;height:100%;border:0;border-radius:10px;background:var(--card)}
+.empty{position:absolute;z-index:5;inset:0;background:var(--card);color:var(--muted);display:flex;align-items:center;justify-content:center;text-align:center;padding:40px;font-size:14px;line-height:1.7}
+.empty[hidden]{display:none}
+.status{font-size:12px;color:var(--muted);padding:5px 10px;text-align:center;border-top:1px solid var(--border);background:var(--bg)}
+.status.error{color:#c54232}
+.status:empty{padding:0;border-top:0}
+.popup{position:fixed;z-index:20;display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);border-radius:9px;box-shadow:0 8px 22px rgba(0,0,0,.22);padding:5px;transform-origin:center bottom;animation:popup-in .18s cubic-bezier(.2,.8,.2,1)}
+.popup.hidden{display:none}
+@keyframes popup-in{from{opacity:0;transform:translateY(5px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media (prefers-reduced-motion:reduce){.popup{animation:none}}
+.popup input{width:220px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:4px 6px}
+.popup button{font:inherit;border:0;background:var(--accent);color:#fff;border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+.popup button:hover{opacity:.9}
+</style>
+</head>
+<body>
+<main class="app">
+  <div class="stage">
+    <div id="empty" class="empty">点击工具栏「打开文章」，选择一个 Markdown 文件开始编辑与预览。</div>
+    <div id="editPane" class="pane">
+      <div class="editor-wrap">
+        <div id="editor" aria-label="Markdown 编辑器"></div>
+      </div>
+    </div>
+    <div id="previewPane" class="pane">
+      <div class="preview-shell">
+        <iframe id="article" sandbox="allow-same-origin" title="公众号文章预览"></iframe>
+      </div>
+    </div>
+  </div>
+  <div id="status" class="status"></div>
+</main>
+<section id="popup" class="popup hidden">
+  <input id="popupInput" type="text" placeholder="让 AI 怎么改这段？">
+  <button id="popupSend">发送</button>
+</section>
+<script src="codemirror.js"></script>
+<script>
+(function () {
+  'use strict';
+  var api = window.finch;
+
+  var empty = document.getElementById('empty');
+  var editPane = document.getElementById('editPane');
+  var previewPane = document.getElementById('previewPane');
+  var editor = document.getElementById('editor');
+  var frame = document.getElementById('article');
+  var statusEl = document.getElementById('status');
+  var popup = document.getElementById('popup');
+  var popupInput = document.getElementById('popupInput');
+  var popupSend = document.getElementById('popupSend');
+
+  var pickFileSupported = false; // set from the backend 'ready' message
+  var annotationsEnabled = false; // off by default; toggled from the toolbar "annotate" button
+  var mode = 'edit';          // 'edit' | 'preview'
+  var style = 'kami';
+  var customCss = '';
+  var markdown = '';
+  var name = '';
+  var fileName = '';
+  var sourcePath = '';
+  var savedMarkdown = null;   // last markdown value confirmed written to disk
+  var html = '';
+  var frameReady = false;
+  var renderId = 0;
+  var saveId = 0;
+  var pendingSaveContents = {};
+  var savedFlashTimer = 0;
+  var fileHandle = null;
+  var lastModified = 0;
+  var watchTimer = 0;
+  var watchBusy = false;
+  var selection = { text: '' };
+
+  function setStatus(text, isError) {
+    statusEl.textContent = text || '';
+    statusEl.className = 'status' + (isError ? ' error' : '');
+  }
+
+  function hasDocument() { return !!markdown || !!sourcePath; }
+
+  function updateEmptyState() {
+    empty.hidden = hasDocument();
+  }
+
+  function showPane() {
+    editPane.classList.toggle('active', mode === 'edit');
+    previewPane.classList.toggle('active', mode === 'preview');
+    if (mode === 'edit' && cm) requestAnimationFrame(function () { cm.layout(); });
+  }
+
+  function setPanelTitle(title) {
+    if (!api || !api.panel || !api.panel.setTitle) return;
+    api.panel.setTitle(title || 'MD 编辑器').catch(function () {});
+  }
+
+  // The whole toolbar is rebuilt and pushed as one array (rather than patching
+  // single items) so icon/label/disabled/checked states never drift out of
+  // sync with each other, and so `ext:` icon ids are always resolved fresh
+  // against the already-registered icon pack instead of racing it.
+  function buildToolbar() {
+    var saveIcon = 'ext:markdown-editor-icons/save';
+    var saveLabel = '保存', saveTooltip = '保存（⌘/Ctrl+S）';
+    if (dirty) {
+      saveLabel = '保存 •';
+      saveTooltip = '有未保存的改动（⌘/Ctrl+S）';
+    } else if (savedFlash) {
+      saveIcon = 'ext:markdown-editor-icons/save-check';
+      saveLabel = '已保存';
+      saveTooltip = '已保存';
+    }
+    return [
+      {
+        id: 'open', icon: 'ext:markdown-editor-icons/folder-open', label: '打开',
+        tooltip: sourcePath || fileName || '打开 Markdown 文件', disabled: nativePickPending,
+      },
+      { type: 'separator' },
+      {
+        id: 'annotate', icon: 'ext:markdown-editor-icons/file-pen-line', tooltip: annotationsEnabled ? '批注已开启：选中文字可发起 AI 修改' : '开启批注：选中文字后可发起 AI 修改',
+        checked: annotationsEnabled,
+      },
+      {
+        id: 'mode', icon: mode === 'edit' ? 'toggle-left' : 'toggle-right',
+        label: mode === 'edit' ? '预览' : '编辑', tooltip: mode === 'edit' ? '切换到预览' : '切换到编辑',
+        checked: mode === 'preview',
+      },
+      {
+        type: 'menu', id: 'style', icon: 'palette', tooltip: '排版风格',
+        items: [
+          { id: 'style:kami', label: 'Kami' },
+          { id: 'style:bauhaus', label: 'Bauhaus' },
+          { id: 'style:blueprint', label: 'Blueprint' },
+          { id: 'style:botanical', label: 'Botanical' },
+          { id: 'style:newsprint', label: 'Newsprint' },
+          { id: 'style:retro', label: 'Retro' },
+          { id: 'style:sketch', label: 'Sketch' },
+          { id: 'style:terminal', label: 'Terminal' },
+          { id: 'style-sep', label: '', separator: true },
+          { id: 'style:custom', label: '自定义（AI 设计）', icon: 'wand-sparkles' },
+        ],
+      },
+      { id: 'ai-style', icon: 'wand-sparkles', tooltip: '让 AI 设计排版' },
+      { type: 'spacer' },
+      { id: 'save', icon: saveIcon, label: saveLabel, tooltip: saveTooltip, disabled: !dirty },
+      {
+        type: 'menu', id: 'copy', icon: 'clipboard', tooltip: '复制', disabled: !html,
+        items: [
+          { id: 'copy:weixin', label: '复制到公众号', icon: 'clipboard-check' },
+        ],
+      },
+      {
+        type: 'menu', id: 'more', icon: 'settings',
+        items: [
+          { id: 'reload', label: '重新渲染' },
+          { id: 'more-sep', label: '', separator: true },
+          { id: 'about', label: '关于渲染' },
+        ],
+      },
+    ];
+  }
+
+  function syncToolbar() {
+    if (api) api.postMessage({ type: 'setToolbar', toolbar: buildToolbar() });
+  }
+
+  function setMode(next) {
+    closePopup();
+    mode = next;
+    showPane();
+    syncToolbar();
+    if (mode === 'preview') render();
+  }
+
+  // ---- CodeMirror 6 Markdown editor ----
+
+  var cm = window.MarkdownCodeMirror.create({
+    parent: editor,
+    value: markdown,
+    onChange: function (value) {
+      markdown = value;
+      closePopup();
+      updateEmptyState();
+      setDirty(true);
+    },
+  });
+  cm.scrollDOM.addEventListener('scroll', closePopup);
+
+  // ---- Markdown <-> bm.md rendering ----
+
+  function activeCustomCss() { return style === 'custom' ? customCss : ''; }
+
+  function render() {
+    if (!markdown || !api) return;
+    var id = ++renderId;
+    setStatus('正在渲染…');
+    api.postMessage({
+      type: 'renderBm',
+      markdown: markdown,
+      markdownStyle: style === 'custom' ? 'kami' : style,
+      customCss: activeCustomCss(),
+      requestId: id,
+    });
+  }
+
+  function captureScroll() {
+    var d = frame.contentDocument, e = d && d.scrollingElement;
+    if (!e) return null;
+    return { top: e.scrollTop };
+  }
+
+  function restoreScroll(saved) {
+    var d = frame.contentDocument, e = d && d.scrollingElement;
+    if (!saved || !e) return;
+    e.scrollTop = Math.min(saved.top, Math.max(0, e.scrollHeight - e.clientHeight));
+  }
+
+  function showHtml(next) {
+    var previous = captureScroll();
+    var d = frame.contentDocument;
+    html = next;
+    if (frameReady && d && d.body) {
+      d.body.innerHTML = html;
+      restoreScroll(previous);
+      bindPreviewSelection();
+      return;
+    }
+    frame.srcdoc = '<!doctype html><meta charset="utf-8"><base target="_blank">' +
+      '<style>html,body{margin:0!important;padding:0!important}' +
+      '#bm-md{margin-top:0!important;padding-top:0!important}' +
+      '#bm-md>*:first-child{margin-top:0!important}</style>' +
+      '<body>' + html;
+  }
+
+  function lineRangeForOffsets(text, start, end) {
+    return { start: text.slice(0, start).split('\n').length, end: text.slice(0, end).split('\n').length };
+  }
+
+  function normalizeMappedText(text, sourceMap) {
+    var normalized = '', map = [];
+    for (var i = 0; i < text.length; i++) {
+      if (/\s/.test(text[i])) {
+        if (normalized && normalized[normalized.length - 1] !== ' ') {
+          normalized += ' ';
+          map.push(sourceMap[i]);
+        }
+      } else {
+        normalized += text[i];
+        map.push(sourceMap[i]);
+      }
+    }
+    if (normalized.endsWith(' ')) { normalized = normalized.slice(0, -1); map.pop(); }
+    return { text: normalized, map: map };
+  }
+
+  // Build an approximation of bm.md's visible text while retaining a map
+  // back to source offsets. Markdown markers and link destinations disappear
+  // in preview, which is why a direct substring search alone misses lines.
+  function projectRenderedMarkdown(source) {
+    var text = '', map = [];
+    function append(char, offset) { text += char; map.push(offset); }
+    for (var i = 0; i < source.length;) {
+      var lineStart = i === 0 || source[i - 1] === '\n';
+      if (lineStart) {
+        var fence = /^[ \t]*(?:```|~~~)[^\n]*/.exec(source.slice(i));
+        if (fence) { i += fence[0].length; continue; }
+        var prefix = /^[ \t]*(?:#{1,6}|>+|[-+*]|\d+[.)])[ \t]+/.exec(source.slice(i));
+        if (prefix) { i += prefix[0].length; continue; }
+      }
+      var link = /^!?\[([^\]]*)\]\((?:\\.|[^)])*\)/.exec(source.slice(i));
+      if (link) {
+        var labelOffset = i + link[0].indexOf('[') + 1;
+        for (var j = 0; j < link[1].length; j++) {
+          if (!/[*_~`]/.test(link[1][j])) append(link[1][j], labelOffset + j);
+        }
+        i += link[0].length;
+        continue;
+      }
+      var htmlTag = /^<[^>]+>/.exec(source.slice(i));
+      if (htmlTag) { i += htmlTag[0].length; continue; }
+      if (source[i] === '\\' && i + 1 < source.length) {
+        append(source[i + 1], i + 1);
+        i += 2;
+        continue;
+      }
+      if (/[*_~`]/.test(source[i])) { i++; continue; }
+      append(source[i], i);
+      i++;
+    }
+    return normalizeMappedText(text, map);
+  }
+
+  function findRenderedSourceRange(source, renderedText) {
+    var direct = source.indexOf(renderedText);
+    if (direct >= 0) return { start: direct, end: direct + renderedText.length };
+    var projected = projectRenderedMarkdown(source);
+    var needle = renderedText.replace(/\s+/g, ' ').trim();
+    var index = projected.text.indexOf(needle);
+    if (index >= 0) {
+      return { start: projected.map[index], end: projected.map[index + needle.length - 1] + 1 };
+    }
+    if (needle.length >= 12) {
+      var first = needle.slice(0, 6);
+      var last = needle.slice(-6);
+      var firstIndex = projected.text.indexOf(first);
+      var lastIndex = projected.text.indexOf(last, Math.max(0, firstIndex + first.length));
+      if (firstIndex >= 0 && lastIndex >= firstIndex) {
+        return { start: projected.map[firstIndex], end: projected.map[lastIndex + last.length - 1] + 1 };
+      }
+    }
+    return null;
+  }
+
+  function pathFileName(value) {
+    return String(value || '').split(/[\\/]/).pop() || '';
+  }
+
+  function bindPreviewSelection() {
+    var d = frame.contentDocument;
+    if (!d || d.__bound) return;
+    d.__bound = true;
+    function picked() {
+      if (!annotationsEnabled) return;
+      var w = frame.contentWindow;
+      var s = w.getSelection();
+      var text = s.toString().trim();
+      if (!text || !s.rangeCount) return;
+      var range = s.getRangeAt(0);
+      var rects = Array.from(range.getClientRects());
+      var frameRect = frame.getBoundingClientRect();
+      var boxes = rects.map(function (r) {
+        return { top: frameRect.top + r.top, left: frameRect.left + r.left, width: r.width, height: r.height };
+      });
+      var rect = range.getBoundingClientRect();
+      var sourceRange = findRenderedSourceRange(markdown, text);
+      var lines = sourceRange ? lineRangeForOffsets(markdown, sourceRange.start, sourceRange.end) : null;
+      scheduleOpenPopup(text, frameRect.top + rect.top, frameRect.top + rect.bottom,
+        frameRect.left + rect.left + rect.width / 2, boxes, lines, 'preview');
+    }
+    d.addEventListener('mouseup', picked);
+    d.addEventListener('mousedown', function () { cancelScheduledPopup(); closePopup(); });
+    d.addEventListener('keyup', picked);
+    d.addEventListener('scroll', function () { cancelScheduledPopup(); closePopup(); }, true);
+    frame.contentWindow.addEventListener('scroll', function () { cancelScheduledPopup(); closePopup(); });
+  }
+
+  frame.onload = function () { frameReady = true; bindPreviewSelection(); };
+
+  // ---- Selection popup (editor + preview share this) ----
+  // top/bottom describe the selection's bounding box in viewport coordinates;
+  // the popup prefers sitting above the selection, and drops below it when
+  // there isn't enough room above (near the top of the panel).
+
+  var popupDelayTimer = 0;
+  var fakeSelBoxes = [];
+
+  // Selection popups appear after a short delay so a still-in-progress drag
+  // selection doesn't flash the popup at every intermediate position.
+  function scheduleOpenPopup(text, top, bottom, centerX, boxes, lines, origin) {
+    cancelScheduledPopup();
+    popupDelayTimer = setTimeout(function () {
+      openPopup(text, top, bottom, centerX, boxes, lines, origin);
+    }, 300);
+  }
+
+  function cancelScheduledPopup() {
+    if (popupDelayTimer) { clearTimeout(popupDelayTimer); popupDelayTimer = 0; }
+  }
+
+  function openPopup(text, top, bottom, centerX, boxes, lines, origin) {
+    selection.text = text;
+    selection.lines = lines || null;
+    selection.origin = origin || '';
+    popup.classList.remove('hidden');
+    popupInput.value = '';
+    showFakeSelection(boxes);
+    requestAnimationFrame(function () {
+      positionPopup(top, bottom, centerX);
+      popupInput.focus();
+    });
+  }
+
+  function positionPopup(top, bottom, centerX) {
+    var margin = 8;
+    var w = popup.offsetWidth || 300;
+    var h = popup.offsetHeight || 44;
+    var left = Math.max(margin, Math.min(centerX - w / 2, window.innerWidth - w - margin));
+    var y = (top - margin >= h + 10) ? (top - h - 10) : (bottom + 10);
+    y = Math.max(margin, Math.min(y, window.innerHeight - h - margin));
+    popup.style.left = left + 'px';
+    popup.style.top = y + 'px';
+  }
+
+  // iframe selection highlighting disappears when focus moves to the popup.
+  // Preview selections therefore use temporary fixed boxes. CodeMirror draws
+  // its own persistent selection layer and does not use this fallback.
+  function showFakeSelection(boxes) {
+    clearFakeSelection();
+    (boxes || []).forEach(function (b) {
+      var el = document.createElement('div');
+      el.className = 'fake-sel';
+      el.style.top = b.top + 'px';
+      el.style.left = b.left + 'px';
+      el.style.width = b.width + 'px';
+      el.style.height = b.height + 'px';
+      document.body.appendChild(el);
+      fakeSelBoxes.push(el);
+    });
+  }
+
+  function clearFakeSelection() {
+    fakeSelBoxes.forEach(function (el) { el.remove(); });
+    fakeSelBoxes = [];
+  }
+
+  function closePopup(restoreEditorFocus) {
+    var shouldRestore = restoreEditorFocus === true && selection.origin === 'editor' && mode === 'edit';
+    cancelScheduledPopup();
+    popup.classList.add('hidden');
+    selection.text = '';
+    selection.lines = null;
+    selection.origin = '';
+    clearFakeSelection();
+    if (shouldRestore) requestAnimationFrame(function () { cm.focus(); });
+  }
+
+  popupSend.onclick = submitAnnotation;
+  popupInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') submitAnnotation();
+    if (e.key === 'Escape') closePopup(true);
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !popup.classList.contains('hidden')) closePopup(true);
+  });
+  // Clicking anywhere outside the popup cancels the pending/open popup and
+  // drops the fake selection highlight. The editor and toolbar are part of
+  // this same top document so a single listener covers them; the preview
+  // iframe is a separate browsing context and gets its own mousedown
+  // listener in bindPreviewSelection().
+  document.addEventListener('mousedown', function (e) {
+    if (popup.contains(e.target)) return;
+    cancelScheduledPopup();
+    closePopup();
+  });
+  window.addEventListener('resize', closePopup);
+
+  function lineLabel() {
+    if (!selection.lines) return '（未能精确定位对应行号，请以下方引用文本为准）';
+    var a = selection.lines.start, b = selection.lines.end;
+    return a === b ? ('第 ' + a + ' 行') : ('第 ' + a + '–' + b + ' 行');
+  }
+
+  function lineLabelCompact() {
+    if (!selection.lines) return '未定位';
+    return selection.lines.start + '-' + selection.lines.end;
+  }
+
+  async function submitAnnotation() {
+    var comment = popupInput.value.trim();
+    if (!selection.text || !api || !api.composer) return;
+    try {
+      await api.composer.addContexts([{
+        type: 'annotation',
+        label: (fileName || 'Markdown') + ':' + lineLabelCompact(),
+        note: comment || undefined,
+        promptText: '请改写这段公众号文章内容（Markdown 原文，位置：' + lineLabel() + '），' + (comment ? '要求：' + comment : '让它更好') +
+          '：\n\n' + selection.text + '\n\n请给出精确、可直接替换的 Markdown 片段。若我确认使用，请调用 markdown_editor_document 工具的 apply 动作，' +
+          '用替换后的完整文章更新源文件（path=' + (sourcePath || '（未关联本地文件，请让我先粘贴/保存全文）') + '）。',
+        reminder: '仅给出改写建议，不要在未确认前直接写入源文件。',
+      }]);
+      closePopup(true);
+      setStatus('批注已加入输入框。');
+    } catch (e) {
+      setStatus(String(e), true);
+    }
+  }
+
+  // ---- Editor selection ----
+
+  function offerEditorSelection() {
+    if (!annotationsEnabled) return;
+    var picked = cm.getSelection();
+    if (!picked) return;
+    var text = picked.text.trim();
+    if (!text) return;
+    var lines = lineRangeForOffsets(cm.getValue(), picked.start, picked.end);
+    scheduleOpenPopup(text, picked.rect.top, picked.rect.bottom,
+      (picked.rect.left + picked.rect.right) / 2, null, lines, 'editor');
+  }
+
+  editor.addEventListener('mouseup', offerEditorSelection);
+  editor.addEventListener('keyup', function (e) {
+    if (e.shiftKey) offerEditorSelection();
+  });
+
+  // ---- Save to disk: prefer the File System Access handle (works even when the
+  // host process can't expose an absolute path), fall back to the backend write
+  // when we have a real sourcePath, otherwise tell the user how to connect one.
+  // Saving is explicit (Save button / Cmd|Ctrl+S) rather than automatic, so the
+  // user is always in control of what's actually on disk. ----
+
+  var dirty = false;
+  var savedFlash = false; // true for ~3s right after a successful save, drives the save-check icon
+
+  function setDirty(next, justSaved) {
+    dirty = next;
+    if (savedFlashTimer) { clearTimeout(savedFlashTimer); savedFlashTimer = 0; }
+    savedFlash = !dirty && !!justSaved;
+    syncToolbar();
+    if (!dirty && justSaved) {
+      savedFlashTimer = setTimeout(function () {
+        savedFlashTimer = 0;
+        if (!dirty) { savedFlash = false; syncToolbar(); }
+      }, 3000);
+    }
+  }
+
+  async function writeToDisk(content) {
+    if (fileHandle && fileHandle.createWritable) {
+      try {
+        var writable = await fileHandle.createWritable();
+        await writable.write(content);
+        await writable.close();
+        lastModified = (await fileHandle.getFile()).lastModified;
+        savedMarkdown = content;
+        setDirty(markdown !== content, markdown === content);
+        setStatus(markdown === content ? '已保存。' : '已保存，编辑器中仍有新改动。');
+        return true;
+      } catch (e) {
+        setStatus('保存失败：' + String(e), true);
+        return false;
+      }
+    }
+    if (sourcePath) {
+      var id = ++saveId;
+      setStatus('正在保存…');
+      pendingSaveContents[id] = content;
+      api.postMessage({ type: 'saveMarkdown', path: sourcePath, markdown: content, requestId: id });
+      return true;
+    }
+    setStatus('未关联本地文件：点击工具栏「打开」重新选择一次即可关联并启用保存。', true);
+    return false;
+  }
+
+  document.addEventListener('keydown', function (e) {
+    var mod = e.metaKey || e.ctrlKey;
+    if (mod && (e.key === 's' || e.key === 'S')) {
+      e.preventDefault();
+      saveNow();
+    }
+  });
+
+  // ---- Open / watch source file ----
+
+  function stopWatching() {
+    if (watchTimer) { clearInterval(watchTimer); watchTimer = 0; }
+    fileHandle = null;
+  }
+
+  function applyDocument(nextMarkdown, nextName, nextPath, force) {
+    if (!force && dirty && cm.hasFocus() && savedMarkdown !== null && nextMarkdown !== savedMarkdown) {
+      setStatus('检测到文件外部更新；为避免覆盖未保存内容，暂未载入。', true);
+      return false;
+    }
+    markdown = nextMarkdown;
+    name = nextName;
+    if (nextPath) sourcePath = nextPath;
+    fileName = pathFileName(nextPath || sourcePath) || nextName || 'Markdown';
+    savedMarkdown = markdown;
+    cm.setValue(markdown);
+    setDirty(false); // also rebuilds+syncs the whole toolbar, picking up the new sourcePath/fileName below
+    setPanelTitle(fileName);
+    updateEmptyState();
+    if (mode === 'preview') render();
+    return true;
+  }
+
+  async function loadFile(f) {
+    name = f.name;
+    lastModified = f.lastModified;
+    if (typeof f.path === 'string' && f.path) {
+      sourcePath = f.path;
+      if (api) api.postMessage({ type: 'watchPath', path: sourcePath });
+    } else {
+      sourcePath = '';
+    }
+    // Land in the editor, not the rendered preview — opening a file is about
+    // reading/editing it, the user switches to preview explicitly when ready.
+    applyDocument(await f.text(), name, sourcePath, true);
+  }
+
+  function watchFile() {
+    if (!fileHandle) return;
+    if (watchTimer) clearInterval(watchTimer);
+    watchTimer = setInterval(async function () {
+      if (watchBusy || !fileHandle) return;
+      watchBusy = true;
+      try {
+        var next = await fileHandle.getFile();
+        if (next.lastModified !== lastModified) {
+          lastModified = next.lastModified;
+          var text = await next.text();
+          if (text !== savedMarkdown && applyDocument(text, name, sourcePath)) {
+            setStatus('检测到文件更新，已刷新。');
+          }
+        }
+      } catch (e) { /* ignore */ }
+      watchBusy = false;
+    }, 800);
+  }
+
+  var nativePickPending = false;
+  var nativePickTimer = 0;
+
+  function clearNativePickTimer() {
+    if (nativePickTimer) { clearTimeout(nativePickTimer); nativePickTimer = 0; }
+  }
+
+  // The Open button is disabled for as long as `nativePickPending` is true
+  // (see buildToolbar), so the user cannot click their way out of a hung
+  // native request the way they normally could — the click itself is what's
+  // blocked. If the backend's reply is ever lost (observed after repeatedly
+  // switching Sessions while this panel is open, which can make a postMessage
+  // back to this panel fail silently mid-transition), the button would
+  // otherwise stay disabled forever with no way to recover. This timer is a
+  // pure safety net: it does not touch any real native dialog (the backend
+  // itself deliberately has no timeout on ctx.ui.pickFile(), see 'requestOpen'
+  // in index.ts) — it only un-sticks *this panel's own UI state* so the next
+  // click can try again.
+  function armNativePickTimer() {
+    clearNativePickTimer();
+    nativePickTimer = setTimeout(function () {
+      nativePickTimer = 0;
+      if (!nativePickPending) return;
+      nativePickPending = false;
+      pickFileSupported = false; // stop trusting a bridge that just went silent this session
+      syncToolbar();
+      setStatus('文件选择器长时间无响应，已切换为浏览器内选择器：请重新点击"打开"。', true);
+    }, 20000);
+  }
+
+  async function openFile() {
+    stopWatching();
+    if (pickFileSupported && api && api.postMessage) {
+      if (nativePickPending) {
+        // A previous native request is still hanging (host round-trip stuck).
+        // Don't stack another one silently — this click is a fresh, real user
+        // gesture, so use it to open the reliable in-page/browser picker
+        // immediately instead of leaving the button looking unresponsive.
+        clearNativePickTimer();
+        pickFileSupported = false;
+        nativePickPending = false;
+        syncToolbar();
+        await openFileBrowserFallback();
+        return;
+      }
+      // Native Finch file picker: browses the current Space/workspace directory
+      // tree with real absolute paths, no Electron `File.path` shim needed.
+      nativePickPending = true;
+      armNativePickTimer();
+      syncToolbar();
+      setStatus('正在打开文件选择器…');
+      api.postMessage({ type: 'requestOpen' });
+      return;
+    }
+    await openFileBrowserFallback();
+  }
+
+  async function openFileBrowserFallback() {
+    if ('showOpenFilePicker' in window) {
+      try {
+        var handles = await window.showOpenFilePicker({
+          types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown'] } }],
+          multiple: false,
+        });
+        fileHandle = handles[0];
+        await loadFile(await fileHandle.getFile());
+        watchFile();
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return;
+      }
+    }
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.md,.markdown,text/markdown';
+    input.onchange = function () {
+      var f = input.files && input.files[0];
+      if (f) loadFile(f).catch(function (e) { setStatus(String(e), true); });
+    };
+    input.click();
+  }
+
+  // ---- Copy HTML / manual save ----
+
+  // Toolbar buttons are host-chrome UI: the click reaches this panel only
+  // through a postMessage round-trip, and by the time it does the panel's own
+  // document has often lost focus. The async Clipboard API refuses to write
+  // ("Document is not focused") in that state. Reclaim focus first, and if the
+  // async API still won't cooperate, fall back to the older selection-based
+  // execCommand('copy').
+  //
+  // Both paths deliberately stay in the TOP document, never the preview
+  // <iframe>: the iframe is `sandbox="allow-same-origin"` with no
+  // `allow-scripts`, and some hosts silently refuse focus()/execCommand
+  // targeted at a sandboxed same-origin document even when called from the
+  // (unsandboxed) parent — which was the actual cause of "复制到公众号"
+  // failing intermittently. Copying an equivalent holder element in the top
+  // document sidesteps that entirely.
+  function focusCopySurface() {
+    window.focus();
+    document.body.tabIndex = -1;
+    try { document.body.focus({ preventScroll: true }); } catch (e) { document.body.focus(); }
+  }
+
+  async function copyRichText(htmlStr, plainStr) {
+    focusCopySurface();
+    await new Promise(function (resolve) {
+      requestAnimationFrame(function () { requestAnimationFrame(resolve); });
+    });
+    if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write && document.hasFocus()) {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/html': new Blob([htmlStr], { type: 'text/html' }),
+          'text/plain': new Blob([plainStr], { type: 'text/plain' }),
+        })]);
+        return;
+      } catch (e) { /* fall through to the legacy path below */ }
+    }
+    copyRichTextLegacy(htmlStr);
+  }
+
+  function copyRichTextLegacy(htmlStr) {
+    var holder = document.createElement('div');
+    holder.contentEditable = 'true';
+    holder.style.position = 'fixed';
+    holder.style.left = '-9999px';
+    holder.style.top = '0';
+    holder.innerHTML = htmlStr;
+    document.body.appendChild(holder);
+    var range = document.createRange();
+    range.selectNodeContents(holder);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    sel.removeAllRanges();
+    holder.remove();
+    if (!ok) throw new Error('当前窗口无法写入富文本剪贴板。');
+  }
+
+  async function copyHtml() {
+    if (!html) { setStatus('请先打开文章。', true); return; }
+    try {
+      var plain = frame.contentDocument ? frame.contentDocument.body.innerText : html.replace(/<[^>]+>/g, '');
+      await copyRichText(html, plain);
+      setStatus('公众号富文本 HTML 已复制。');
+    } catch (e) {
+      setStatus('富文本复制失败：' + String(e), true);
+    } finally {
+      if (mode === 'edit') requestAnimationFrame(function () { cm.focus(); });
+    }
+  }
+
+  function saveNow() {
+    writeToDisk(markdown);
+  }
+
+  async function askAiStyle() {
+    if (!markdown || !api || !api.composer) { setStatus('请先打开文章。', true); return; }
+    var baseNote = style === 'custom' ? '当前基础风格是 kami（自定义 CSS 叠加其上）' : ('当前基础风格是 ' + style);
+    try {
+      await api.composer.addContexts([{
+        type: 'annotation',
+        label: fileName || 'Markdown 排版',
+        note: 'AI 一键排版',
+        promptText: '请为这篇公众号文章设计一套自定义排版 CSS。' + baseNote + '，你的 CSS 会叠加在基础风格之上。' +
+          '要求：只写普通 CSS 规则，选择器限定在 #bm-md 下的标签/结构（如 #bm-md h1、#bm-md p、#bm-md blockquote、#bm-md pre code、#bm-md a、#bm-md strong、#bm-md table 等），' +
+          '不要使用 class（bm.md 输出没有 class，只有内联样式），必要时用 !important 覆盖基础风格。' +
+          '可参考 bm.md 内置风格的设计语言：kami（暖色纸感）、bauhaus（几何撞色）、blueprint（技术蓝图网格）、botanical（清新绿意）、newsprint（报刊衬线）、retro（复古怀旧）、sketch（手绘风）、terminal（等宽暗色终端风）。' +
+          '文章路径：' + (sourcePath || '（未关联本地文件）') + '。' +
+          '设计完成后，调用 markdown_editor_document 工具的 set_style 动作，传入 css 与简短 label，我会在预览里立即看到效果。',
+        reminder: '直接调用 set_style 应用即可，无需用户先确认，因为效果可在预览中随时撤销重来。',
+      }]);
+      setStatus('已请求 AI 设计自定义排版。');
+    } catch (e) {
+      setStatus(String(e), true);
+    }
+  }
+
+  // ---- Toolbar (finch:menu) ----
+
+  function setStyle(next) {
+    style = next;
+    if (mode === 'preview') render();
+  }
+
+  function toggleAnnotations() {
+    annotationsEnabled = !annotationsEnabled;
+    if (!annotationsEnabled) closePopup();
+    syncToolbar();
+    setStatus(annotationsEnabled ? '批注已开启：选中文字可发起 AI 修改。' : '批注已关闭。');
+  }
+
+  function handleMenu(itemId) {
+    if (api && api.postMessage) api.postMessage({ type: 'clientLog', message: 'finch:menu received, itemId=' + itemId });
+    if (itemId === 'open') { openFile(); return; }
+    if (itemId === 'annotate') { toggleAnnotations(); return; }
+    if (itemId === 'mode') { setMode(mode === 'edit' ? 'preview' : 'edit'); return; }
+    if (itemId === 'copy:weixin') { copyHtml(); return; }
+    if (itemId === 'ai-style') { askAiStyle(); return; }
+    if (itemId === 'save') { saveNow(); return; }
+    if (itemId === 'reload') { render(); return; }
+    if (itemId === 'about') { setStatus('渲染器：本机 bmmd CLI（bm.md，AGPL-3.0）。'); return; }
+    if (itemId && itemId.indexOf('style:') === 0) { setStyle(itemId.slice(6)); return; }
+  }
+
+  // ---- Backend messages ----
+
+  if (api && api.onMessage) {
+    api.onMessage(function (m) {
+      if (!m || typeof m !== 'object') return;
+      if (m.type === 'ready') { pickFileSupported = !!m.pickFileSupported; syncToolbar(); return; }
+      if (m.type === 'status') { setStatus(m.message); return; }
+      if (m.type === 'lastFileUnavailable') { return; }
+      if (m.type === 'finch:menu') { handleMenu(m.itemId); return; }
+      if (m.type === 'document') {
+        var openedFromPicker = nativePickPending;
+        nativePickPending = false;
+        clearNativePickTimer();
+        var incoming = m.markdown || '';
+        if (incoming === savedMarkdown) { syncToolbar(); return; } // echo of our own save
+        var isFirst = savedMarkdown === null;
+        var applied = applyDocument(incoming, m.title || 'Markdown 文档', m.path || sourcePath, openedFromPicker || isFirst);
+        if (!applied) syncToolbar(); // still clear the "open" button's pending/disabled state
+        if (applied && !isFirst) setStatus('内容已更新。');
+        return;
+      }
+      if (m.type === 'bmRendered') {
+        if (m.requestId !== renderId) return;
+        showHtml(m.html || '');
+        updateEmptyState();
+        syncToolbar(); // `html` just became available (or changed) — refresh the copy menu's disabled state
+        setStatus('');
+        return;
+      }
+      if (m.type === 'savedMarkdown') {
+        var savedContent = pendingSaveContents[m.requestId];
+        delete pendingSaveContents[m.requestId];
+        if (m.requestId !== saveId || typeof savedContent !== 'string') return;
+        savedMarkdown = savedContent;
+        setDirty(markdown !== savedContent, markdown === savedContent);
+        setStatus(markdown === savedContent ? '已保存。' : '已保存，编辑器中仍有新改动。');
+        return;
+      }
+      if (m.type === 'customStyleSet') {
+        customCss = m.css || '';
+        style = 'custom';
+        setStatus((m.label ? m.label + ' · ' : '') + '自定义风格已应用。');
+        if (mode === 'preview') render(); else setMode('preview');
+        return;
+      }
+      if (m.type === 'watchStarted') { return; }
+      if (m.type === 'pickCancelled') {
+        // User closed the native picker without choosing a file — clear the
+        // pending guard so the next click opens a fresh picker normally
+        // instead of assuming this request is still hanging.
+        nativePickPending = false;
+        clearNativePickTimer();
+        syncToolbar();
+        setStatus('');
+        return;
+      }
+      if (m.type === 'error') {
+        // A `fallback` error means the native picker timed out or errored on the
+        // backend. We cannot silently re-trigger the OS file dialog here — Chromium
+        // only allows showOpenFilePicker()/<input>.click() inside a real, still-fresh
+        // user gesture, and this message arrives asynchronously well after the click
+        // that started it. So just stop trusting the native path for the rest of this
+        // session; the next "Open article" click (a fresh gesture) uses the reliable
+        // in-page picker directly instead of hanging again.
+        nativePickPending = false;
+        clearNativePickTimer();
+        if (m.fallback) pickFileSupported = false;
+        syncToolbar();
+        setStatus(m.message, true);
+        return;
+      }
+    });
+  }
+
+  // The host's own initial `ready` push (sent right when the panel is created,
+  // from `onDidOpenPanel`) races against this guest page loading and attaching
+  // the `api.onMessage` listener above — it can be sent before we're listening
+  // and silently lost, permanently leaving `pickFileSupported` at its default
+  // `false`. So instead of only relying on that push, we ask for it ourselves
+  // once we're actually ready to receive the answer; by construction that
+  // request can't be sent before our own listener exists.
+  if (api && api.postMessage) api.postMessage({ type: 'panelReady' });
+
+  // Remember-last-file: if nothing has loaded shortly after opening (no tool
+  // call, no restored payload), ask the backend for the last successfully
+  // opened path so the user doesn't have to reopen it by hand every time.
+  setTimeout(function () {
+    if (!hasDocument() && api && api.postMessage) api.postMessage({ type: 'requestLastFile' });
+  }, 400);
+
+  updateEmptyState();
+  showPane();
+})();
+</script>
+</body>
+</html>
