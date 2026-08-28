@@ -1,9 +1,10 @@
 import type * as finch from 'finch';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import os from 'node:os';
 
 interface DocumentState {
   path?: string;
@@ -23,7 +24,68 @@ interface PanelMessage {
   patch?: { label?: string; icon?: string; tooltip?: string; disabled?: boolean; checked?: boolean };
   toolbar?: finch.AppPanelToolbarItem[];
   message?: string;
+  data?: string;
+  ext?: string;
+  fileName?: string;
+  slot?: number;
+  css?: string;
+  label?: string;
+  mimeType?: string;
+  urls?: string[];
 }
+
+// Pasted-image extension → file extension. Kept tiny and explicit rather
+// than a generic mime-type library dependency.
+const PASTE_IMAGE_EXT: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/svg+xml': 'svg',
+  'image/bmp': 'bmp',
+};
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+  '.bmp': 'image/bmp',
+};
+const MAX_CLIPBOARD_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
+
+// Convert only this mini tool's own pasted-image assets to data URLs for a
+// clipboard payload. This deliberately validates real (symlink-resolved)
+// paths, so Markdown cannot use a `finch-file:` URL as an arbitrary local
+// file read primitive.
+async function readClipboardImageDataUrls(ctx: finch.MiniToolContext, urls: string[]): Promise<Record<string, string>> {
+  const result: Record<string, string> = {};
+  const assetsRoot = await realpath(path.join(ctx.storagePath, 'assets'));
+  for (const originalUrl of urls.slice(0, 30)) {
+    try {
+      const parsed = new URL(originalUrl);
+      const requested = parsed.protocol === 'finch-file:' && parsed.hostname === 'local'
+        ? parsed.searchParams.get('path') : null;
+      if (!requested) continue;
+      const target = await realpath(requested);
+      const relative = path.relative(assetsRoot, target);
+      const mimeType = IMAGE_MIME_BY_EXT[path.extname(target).toLowerCase()];
+      if ((!relative || (!relative.startsWith('..' + path.sep) && relative !== '..')) && mimeType) {
+        const info = await stat(target);
+        if (info.size > MAX_CLIPBOARD_INLINE_IMAGE_BYTES) continue;
+        result[originalUrl] = `data:${mimeType};base64,${(await readFile(target)).toString('base64')}`;
+      }
+    } catch {
+      // Missing/unreadable assets are simply left as their original src.
+    }
+  }
+  return result;
+}
+
+interface StyleSlot {
+  css: string;
+  label: string;
+}
+
+const STYLE_SLOT_COUNT = 3;
 
 function result(message: string, isError = false): finch.ToolResult {
   return { content: [{ type: 'text', text: message }], isError };
@@ -55,6 +117,47 @@ interface LastPathState {
 
 function stateFile(ctx: finch.MiniToolContext): string {
   return path.join(ctx.storagePath, 'state.json');
+}
+
+// Deliberately GLOBAL to the whole mini tool (one file in ctx.storagePath),
+// not scoped per Panel/Session — an AI-designed style is meant to be
+// reusable across different articles and different editor windows, not
+// thrown away the moment this particular panel reloads (which is what
+// happened before: the CSS only ever lived in an in-memory `customCss`
+// variable inside panel.html).
+function styleSlotsFile(ctx: finch.MiniToolContext): string {
+  return path.join(ctx.storagePath, 'style-slots.json');
+}
+
+function normalizeStyleSlots(raw: unknown): (StyleSlot | null)[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  const slots: (StyleSlot | null)[] = [];
+  for (let i = 0; i < STYLE_SLOT_COUNT; i++) {
+    const item = arr[i];
+    if (item && typeof item === 'object' && typeof (item as StyleSlot).css === 'string') {
+      slots.push({ css: (item as StyleSlot).css, label: String((item as StyleSlot).label ?? '自定义风格') });
+    } else {
+      slots.push(null);
+    }
+  }
+  return slots;
+}
+
+async function readStyleSlots(ctx: finch.MiniToolContext): Promise<(StyleSlot | null)[]> {
+  try {
+    const raw = await readFile(styleSlotsFile(ctx), 'utf8');
+    return normalizeStyleSlots(JSON.parse(raw));
+  } catch {
+    return normalizeStyleSlots([]);
+  }
+}
+
+async function writeStyleSlot(ctx: finch.MiniToolContext, slot: number, value: StyleSlot): Promise<(StyleSlot | null)[]> {
+  const slots = await readStyleSlots(ctx);
+  slots[slot] = value;
+  await mkdir(ctx.storagePath, { recursive: true });
+  await writeFile(styleSlotsFile(ctx), JSON.stringify(slots), 'utf8');
+  return slots;
 }
 
 function sessionBucketKey(panel: finch.AppPanel): string {
@@ -190,10 +293,38 @@ async function runBmmd(ctx: finch.MiniToolContext, args: string[], input: string
   });
 }
 
+// bmmd sanitizes `img[src]` and deliberately removes both unknown protocols
+// (including Finch's `finch-file:`) and data: URLs. Preserve the Markdown
+// source URL unchanged, but temporarily turn each local image into a unique
+// harmless HTTPS placeholder. HTTPS survives bmmd's sanitizer; after bmmd
+// has finished its layout/inlining work we restore the original URL in the
+// generated HTML. The panel webview can then resolve it through Finch's
+// already-allowlisted `finch-file://local` protocol.
+const FINCH_FILE_IMAGE_RE = /finch-file:\/\/local\?path=[^\s)"']+/g;
+const FINCH_IMAGE_PLACEHOLDER_ORIGIN = 'https://finch-local.invalid/markdown-image/';
+
+function substituteFinchFileImagesForBm(markdown: string): { markdown: string; urls: Map<string, string> } {
+  const urls = new Map<string, string>();
+  let sequence = 0;
+  const substituted = markdown.replace(FINCH_FILE_IMAGE_RE, (originalUrl) => {
+    // The random-ish digest plus monotonically increasing suffix makes a
+    // collision within one render practically impossible, including when
+    // the same source URL is deliberately pasted more than once.
+    const placeholder = `${FINCH_IMAGE_PLACEHOLDER_ORIGIN}${createHash('sha256')
+      .update(`${originalUrl}:${sequence++}`).digest('hex')}`;
+    urls.set(placeholder, originalUrl);
+    return placeholder;
+  });
+  return { markdown: substituted, urls };
+}
+
 async function renderWithBm(ctx: finch.MiniToolContext, markdown: string, markdownStyle: string, customCss: string | undefined, onInstalling?: () => void): Promise<string> {
   const args = ['render', '--platform', 'wechat', '--markdown-style', markdownStyle || 'kami'];
   if (customCss && customCss.trim()) args.push('--custom-css', customCss);
-  return runBmmd(ctx, args, markdown, onInstalling);
+  const prepared = substituteFinchFileImagesForBm(markdown);
+  let html = await runBmmd(ctx, args, prepared.markdown, onInstalling);
+  for (const [placeholder, originalUrl] of prepared.urls) html = html.split(placeholder).join(originalUrl);
+  return html;
 }
 
 const panelWatchers = new Map<string, FSWatcher>();
@@ -227,8 +358,9 @@ function watchSource(ctx: finch.MiniToolContext, panel: finch.AppPanel, sourcePa
 
 async function sendReady(ctx: finch.MiniToolContext, panel: finch.AppPanel): Promise<void> {
   const pickFileSupported = ctx.api.supports('ui.pickFile');
+  const styleSlots = await readStyleSlots(ctx);
   ctx.logger.info(`sending ready to panel; pickFileSupported = ${pickFileSupported}`);
-  await panel.postMessage({ type: 'ready', locale: ctx.i18n.locale, pickFileSupported });
+  await panel.postMessage({ type: 'ready', locale: ctx.i18n.locale, pickFileSupported, styleSlots });
 }
 
 async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, raw: unknown): Promise<void> {
@@ -384,6 +516,90 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       }
       return;
     }
+    case 'readClipboardImages': {
+      try {
+        const images = await readClipboardImageDataUrls(ctx, Array.isArray(message.urls) ? message.urls.filter((url): url is string => typeof url === 'string') : []);
+        await panel.postMessage({ type: 'clipboardImages', requestId: message.requestId, images });
+      } catch (error) {
+        await panel.postMessage({ type: 'clipboardImagesError', requestId: message.requestId, message: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+    case 'pasteImage': {
+      const dataBase64 = String(message.data ?? '');
+      if (!dataBase64) {
+        await panel.postMessage({ type: 'pasteImageError', requestId: message.requestId, message: 'Empty image data.' });
+        return;
+      }
+      try {
+        const ext = PASTE_IMAGE_EXT[String(message.mimeType ?? '').toLowerCase()] ?? 'png';
+        const buffer = Buffer.from(dataBase64, 'base64');
+        // Content-addressed filename: pasting the same clipboard image twice
+        // (common while iterating on a screenshot) reuses the same file
+        // instead of accumulating duplicates.
+        const digest = createHash('sha256').update(buffer).digest('hex').slice(0, 20);
+        // Lives under this mini tool's own storage dir (already on the
+        // `finch-file://` host's allowlist for extension-owned data) rather
+        // than next to the source .md file — the document may have no path
+        // at all (pasted/unsaved draft), and this keeps every pasted asset
+        // in one predictable, always-writable place regardless.
+        const dir = path.join(ctx.storagePath, 'assets');
+        await mkdir(dir, { recursive: true });
+        const targetPath = path.join(dir, `${digest}.${ext}`);
+        const alreadyExists = await stat(targetPath).then(() => true).catch(() => false);
+        if (!alreadyExists) await writeFile(targetPath, buffer);
+        const url = `finch-file://local?path=${encodeURIComponent(targetPath)}`;
+        await panel.postMessage({ type: 'pastedImage', requestId: message.requestId, url, path: targetPath });
+      } catch (error) {
+        await panel.postMessage({ type: 'pasteImageError', requestId: message.requestId, message: error instanceof Error ? error.message : String(error) });
+      }
+      return;
+    }
+    case 'saveStyleSlot': {
+      const slot = Number(message.slot);
+      if (!Number.isInteger(slot) || slot < 0 || slot >= STYLE_SLOT_COUNT) return;
+      const css = String(message.css ?? '').trim();
+      if (!css) {
+        await panel.postMessage({ type: 'error', message: 'Nothing to save: the active style has no custom CSS.' });
+        return;
+      }
+      try {
+        const slots = await writeStyleSlot(ctx, slot, { css, label: String(message.label ?? '').trim() || '自定义风格' });
+        await panel.postMessage({ type: 'styleSlots', styleSlots: slots, savedSlot: slot });
+      } catch (error) {
+        await panel.postMessage({ type: 'error', message: `Could not save style slot: ${error instanceof Error ? error.message : String(error)}` });
+      }
+      return;
+    }
+    case 'exportFile': {
+      const dataBase64 = String(message.data ?? '');
+      const ext = String(message.ext ?? 'bin').replace(/[^a-z0-9]/gi, '') || 'bin';
+      if (!dataBase64) {
+        await panel.postMessage({ type: 'error', message: 'Nothing to export.' });
+        return;
+      }
+      try {
+        const sourcePath = String(message.path ?? '').trim();
+        // Save next to the open Markdown file when there is one — that's the
+        // most predictable place for the user to look — otherwise fall back
+        // to Downloads (and finally the mini tool's own storage dir, which
+        // always exists) so this never fails just because the document was
+        // opened via paste and has no path on disk.
+        let dir = path.isAbsolute(sourcePath) ? path.dirname(sourcePath) : '';
+        if (!dir) {
+          const downloads = path.join(os.homedir(), 'Downloads');
+          dir = await stat(downloads).then((s) => s.isDirectory()).catch(() => false) ? downloads : ctx.storagePath;
+        }
+        const rawName = String(message.fileName ?? '').trim() || documentTitle(String(message.markdown ?? ''), sourcePath || undefined);
+        const safeName = rawName.replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 120) || 'article';
+        const targetPath = path.join(dir, `${safeName}.${ext}`);
+        await writeFile(targetPath, Buffer.from(dataBase64, 'base64'));
+        await panel.postMessage({ type: 'exported', path: targetPath, requestId: message.requestId });
+      } catch (error) {
+        await panel.postMessage({ type: 'error', message: `Could not export file: ${error instanceof Error ? error.message : String(error)}` });
+      }
+      return;
+    }
   }
 }
 
@@ -400,6 +616,12 @@ export function activate(ctx: finch.MiniToolContext): void {
     },
     'file-pen-line': {
       svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.364 13.634a2 2 0 0 0-.506.854l-.837 2.87a.5.5 0 0 0 .62.62l2.87-.837a2 2 0 0 0 .854-.506l4.013-4.009a1 1 0 0 0-3.004-3.004z"/><path d="M14.487 7.858A1 1 0 0 1 14 7V2"/><path d="M20 19.645V20a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l2.516 2.516"/><path d="M8 18h1"/></svg>',
+    },
+    type: {
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-type-icon lucide-type"><path d="M12 4v16"/><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2"/><path d="M9 20h6"/></svg>',
+    },
+    'wechat-copy': {
+      svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path stroke-linecap="round" stroke-width="2" d="M7 7h.009m5.982 0H13m4.991 7.5H18m-4 0h.009"></path><path stroke-width="2" d="M10 16c0 2.761 2.686 5 6 5c.907 0 1.767-.168 2.538-.468c.189-.073.393-.1.592-.063L22 21l-.652-2.03a1.13 1.13 0 0 1 .11-.89A4.3 4.3 0 0 0 22 16c0-2.761-2.686-5-6-5s-6 2.239-6 5Z"></path><path stroke-width="2" d="M17.873 11.249Q18 10.639 18 10c0-3.866-3.582-7-8-7s-8 3.134-8 7c0 1.112.297 2.164.824 3.098c.147.26.196.567.108.853L2 17l3.914-.76c.208-.041.422-.013.617.07a9 9 0 0 0 3.589.69"></path></svg>',
     },
   }));
 
@@ -432,7 +654,7 @@ export function activate(ctx: finch.MiniToolContext): void {
 
   ctx.subscriptions.push(ctx.tools.register({
     name: 'markdown_editor_document',
-    title: 'Markdown Editor Document',
+    title: 'Markdown 编辑',
     description: `Open, create, revise, or restyle a Markdown document in Markdown Editor.
 action:
   open — read an absolute local Markdown path and open it as an editable WeChat article preview
@@ -447,6 +669,7 @@ action:
         markdown: { type: 'string', description: 'Full Markdown content, required for create and apply.' },
         css: { type: 'string', description: 'Custom CSS to layer on top of the current base style, required for set_style.' },
         label: { type: 'string', description: 'Short label describing the custom style, optional for set_style.' },
+        slot: { type: 'number', enum: [1, 2, 3], description: 'Required for AI-designed styles: user-selected reusable custom style slot to overwrite.' },
       },
       required: ['action'],
     },
@@ -505,8 +728,14 @@ action:
         if (!css) return result('`set_style` requires non-empty `css`.', true);
         if (!lastPanel) return result('No Markdown Editor panel is open. Ask the user to open a document first.', true);
         try {
-          await lastPanel.postMessage({ type: 'customStyleSet', css, label: String(input.label ?? '') || 'AI style' });
-          return result('Custom style applied to the open Markdown Editor panel.');
+          const label = String(input.label ?? '') || 'AI style';
+          const slot = Number(input.slot);
+          if (!Number.isInteger(slot) || slot < 1 || slot > STYLE_SLOT_COUNT) {
+            return result('Ask the user which reusable custom style slot (1, 2, or 3) to overwrite, then call `set_style` again with that `slot`.', true);
+          }
+          const slots = await writeStyleSlot(ctx, slot - 1, { css, label });
+          await lastPanel.postMessage({ type: 'customStyleSet', css, label, styleSlots: slots, savedSlot: slot - 1 });
+          return result(`Custom style saved to slot ${slot} and applied to the open Markdown Editor panel.`);
         } catch (error) {
           return result(`Could not apply custom style: ${error instanceof Error ? error.message : String(error)}`, true);
         }

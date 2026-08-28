@@ -1,6 +1,6 @@
 {
   "name": "finch-markdown-editor",
-  "version": "0.7.0",
+  "version": "0.1.0",
   "description": "A Markdown editor and WeChat Official Account style preview, with selection-based AI edits and AI-generated custom styles.",
   "author": {
     "name": "PuterJam",
@@ -66,7 +66,6 @@
           {
             "id": "open",
             "icon": "ext:markdown-editor-icons/folder-open",
-            "label": "Open",
             "tooltip": "Open Markdown file"
           },
           {
@@ -75,6 +74,7 @@
           {
             "id": "annotate",
             "icon": "ext:markdown-editor-icons/file-pen-line",
+            "label": "Annotate",
             "tooltip": "Enable annotation"
           },
           {
@@ -134,11 +134,6 @@
             ]
           },
           {
-            "id": "ai-style",
-            "icon": "wand-sparkles",
-            "tooltip": "Ask AI to design a style"
-          },
-          {
             "type": "spacer"
           },
           {
@@ -146,19 +141,6 @@
             "icon": "ext:markdown-editor-icons/save",
             "label": "Save",
             "tooltip": "Save (Cmd/Ctrl+S)"
-          },
-          {
-            "type": "menu",
-            "id": "copy",
-            "icon": "clipboard",
-            "tooltip": "Copy",
-            "items": [
-              {
-                "id": "copy:weixin",
-                "label": "Copy for WeChat",
-                "icon": "clipboard-check"
-              }
-            ]
           },
           {
             "type": "menu",

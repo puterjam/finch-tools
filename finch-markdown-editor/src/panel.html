@@ -47,6 +47,31 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .popup input{width:220px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:4px 6px}
 .popup button{font:inherit;border:0;background:var(--accent);color:#fff;border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap}
 .popup button:hover{opacity:.9}
+/* Floating copy/export bar, deliberately living INSIDE this page rather than
+   in the host toolbar: a host toolbar click arrives here as a postMessage,
+   which is not a user activation for this document, so the async Clipboard
+   API and execCommand('copy') both refuse to run until the user happens to
+   click the page first. A real in-page click is a genuine user gesture, so
+   every copy/export below works on the first try. */
+.actions{position:absolute;right:32px;bottom:32px;z-index:8;display:flex;align-items:center;gap:3px;padding:5px;border-radius:11px;background:var(--card);border:1px solid var(--border);box-shadow:0 6px 20px rgba(0,0,0,.18);transition:gap .15s ease}
+.actions[hidden]{display:none}
+.actions button{position:relative;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--text);font:inherit;cursor:pointer;white-space:nowrap}
+.actions button:hover:not(:disabled){background:var(--bg)}
+.actions button[title]::after{content:attr(title);position:absolute;right:0;bottom:calc(100% + 8px);z-index:20;padding:6px 8px;border:1px solid var(--border);border-radius:7px;background:linear-gradient(135deg,color-mix(in srgb,var(--card) 96%,#fff),var(--bg));box-shadow:0 5px 16px rgba(0,0,0,.2);color:var(--text);font-size:12px;line-height:1;white-space:nowrap;pointer-events:none;opacity:0;transform:translateY(3px);transition:opacity .16s ease,transform .16s ease}
+.actions button[title]:hover::after{opacity:1;transform:translateY(0)}
+.actions button:disabled{opacity:.45;cursor:default}
+.actions .sep{width:1px;height:18px;background:var(--border);margin:0 3px}
+.actions svg{width:16px;height:16px;flex:none}
+.actions .act-toggle{padding:0 6px;color:var(--muted)}
+.actions .act-toggle svg{transition:transform .15s ease;transform:rotate(180deg)}
+/* Collapsed = only the WeChat-copy action (icon only, label hidden) plus the
+   toggle remain visible; every other button/separator is a one-off export
+   action that most sessions never touch, so hiding them by default keeps
+   the floating bar from covering preview content. */
+.actions.collapsed [data-collapsible]{display:none}
+.actions.collapsed #actCopyWx{padding:0 7px}
+.actions.collapsed #actCopyWx .act-label{display:none}
+.actions.collapsed .act-toggle svg{transform:rotate(0deg)}
 </style>
 </head>
 <body>
@@ -61,6 +86,28 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     <div id="previewPane" class="pane">
       <div class="preview-shell">
         <iframe id="article" sandbox="allow-same-origin" title="公众号文章预览"></iframe>
+        <div id="actions" class="actions" hidden>
+          <button id="actCopyWx" type="button" title="复制到公众号">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path stroke-linecap="round" d="M7 7h.009m5.982 0H13m4.991 7.5H18m-4 0h.009"/><path d="M10 16c0 2.761 2.686 5 6 5c.907 0 1.767-.168 2.538-.468c.189-.073.393-.1.592-.063L22 21l-.652-2.03a1.13 1.13 0 0 1 .11-.89A4.3 4.3 0 0 0 22 16c0-2.761-2.686-5-6-5s-6 2.239-6 5Z"/><path d="M17.873 11.249Q18 10.639 18 10c0-3.866-3.582-7-8-7s-8 3.134-8 7c0 1.112.297 2.164.824 3.098c.147.26.196.567.108.853L2 17l3.914-.76c.208-.041.422-.013.617.07a9 9 0 0 0 3.589.69"/></svg>
+          </button>
+          <span class="sep" data-collapsible></span>
+          <button id="actCopyImg" type="button" title="复制图片" data-collapsible>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+          </button>
+          <button id="actSaveImg" type="button" title="导出图片（下载）" data-collapsible>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6.3"/><path d="m2 16 5-5c.928-.893 2.072-.893 3 0l3 3"/><path d="m14 14 1-1c.928-.893 2.072-.893 3 0"/><path d="M19 16v6"/><path d="m22 19-3 3-3-3"/><circle cx="9" cy="9" r="2"/></svg>
+          </button>
+          <button id="actSavePdf" type="button" title="导出 PDF" data-collapsible>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="m9 15 3 3 3-3"/></svg>
+          </button>
+          <span class="sep" data-collapsible></span>
+          <button id="actAiStyle" type="button" title="让 AI 设计排版" data-collapsible>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></svg>
+          </button>
+          <button id="actToggle" type="button" class="act-toggle" title="展开/收起">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -85,12 +132,39 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   var popup = document.getElementById('popup');
   var popupInput = document.getElementById('popupInput');
   var popupSend = document.getElementById('popupSend');
+  var actions = document.getElementById('actions');
+  var actCopyWx = document.getElementById('actCopyWx');
+  var actCopyImg = document.getElementById('actCopyImg');
+  var actSaveImg = document.getElementById('actSaveImg');
+  var actSavePdf = document.getElementById('actSavePdf');
+  var actAiStyle = document.getElementById('actAiStyle');
+  var actToggle = document.getElementById('actToggle');
 
   var pickFileSupported = false; // set from the backend 'ready' message
   var annotationsEnabled = false; // off by default; toggled from the toolbar "annotate" button
   var mode = 'edit';          // 'edit' | 'preview'
   var style = 'kami';
   var customCss = '';
+  var customStyleLabel = ''; // label of the currently-applied AI/custom CSS, if any
+  // 3 reusable custom-style slots, persisted host-side (global — shared by
+  // every document/panel, not per-session) so a style designed for one
+  // article can be reapplied to the next without asking AI to redesign it.
+  // Populated from the 'ready' message; kept in sync via 'styleSlots'.
+  var styleSlots = [null, null, null];
+  // Editor-only preferences. The font stacks are system-first: no webfont
+  // downloads, while macOS/Windows/Linux each get a native matching face.
+  var EDITOR_FONTS = {
+    mono: 'ui-monospace, SFMono-Regular, Menlo, Cascadia Mono, Consolas, monospace',
+    kaiti: 'Kaiti SC, STKaiti, KaiTi, KaiTi_GB2312, serif',
+    songti: 'Songti SC, STSong, SimSun, Noto Serif CJK SC, serif',
+    rounded: 'PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif'
+  };
+  var editorFontSize = 16;
+  var editorFont = 'mono';
+  try {
+    editorFontSize = Number(localStorage.getItem('md-editor-font-size')) || 16;
+    if (EDITOR_FONTS[localStorage.getItem('md-editor-font-family')]) editorFont = localStorage.getItem('md-editor-font-family');
+  } catch (e) {}
   var markdown = '';
   var name = '';
   var fileName = '';
@@ -101,6 +175,10 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   var renderId = 0;
   var saveId = 0;
   var pendingSaveContents = {};
+  var pasteImageId = 0;
+  var pendingPasteImages = {};
+  var clipboardImageId = 0;
+  var pendingClipboardImages = {};
   var savedFlashTimer = 0;
   var fileHandle = null;
   var lastModified = 0;
@@ -117,6 +195,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 
   function updateEmptyState() {
     empty.hidden = hasDocument();
+    if (actions) actions.hidden = !html;
   }
 
   function showPane() {
@@ -127,7 +206,32 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 
   function setPanelTitle(title) {
     if (!api || !api.panel || !api.panel.setTitle) return;
-    api.panel.setTitle(title || 'MD 编辑器').catch(function () {});
+    api.panel.setTitle(title || 'Markdown 编辑').catch(function () {});
+  }
+
+  // 8 built-in presets, then a separator, then the 3 reusable AI-managed
+  // slots. The AI-custom entry itself was removed from this menu — AI now
+  // asks which slot to overwrite before calling set_style, so users only
+  // need this menu to pick a preset or reapply a saved slot.
+  function buildStyleMenuItems() {
+    var items = [
+      { id: 'style:kami', label: 'Kami' },
+      { id: 'style:bauhaus', label: 'Bauhaus' },
+      { id: 'style:blueprint', label: 'Blueprint' },
+      { id: 'style:botanical', label: 'Botanical' },
+      { id: 'style:newsprint', label: 'Newsprint' },
+      { id: 'style:retro', label: 'Retro' },
+      { id: 'style:sketch', label: 'Sketch' },
+      { id: 'style:terminal', label: 'Terminal' },
+      { id: 'style-sep', label: '', separator: true },
+    ];
+    for (var i = 0; i < 3; i++) {
+      var slot = styleSlots[i];
+      items.push(slot
+        ? { id: 'style:slot-use:' + i, label: '自定义风格 ' + (i + 1) + ' · ' + slot.label }
+        : { id: 'style:slot-use:' + i, label: '自定义风格 ' + (i + 1) + '（空）', disabled: true });
+    }
+    return items;
   }
 
   // The whole toolbar is rebuilt and pushed as one array (rather than patching
@@ -147,43 +251,57 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     }
     return [
       {
-        id: 'open', icon: 'ext:markdown-editor-icons/folder-open', label: '打开',
+        // Icon-only: the open action is unambiguous from the folder icon,
+        // and dropping the label keeps this crowded toolbar's left edge compact.
+        id: 'open', icon: 'ext:markdown-editor-icons/folder-open',
         tooltip: sourcePath || fileName || '打开 Markdown 文件', disabled: nativePickPending,
       },
       { type: 'separator' },
       {
-        id: 'annotate', icon: 'ext:markdown-editor-icons/file-pen-line', tooltip: annotationsEnabled ? '批注已开启：选中文字可发起 AI 修改' : '开启批注：选中文字后可发起 AI 修改',
+        // Labeled, unlike 'open': annotate is a mode toggle (checked state)
+        // rather than a one-shot action, so a visible "批注" makes the
+        // on/off state legible at a glance instead of relying on hover.
+        id: 'annotate', icon: 'ext:markdown-editor-icons/file-pen-line', label: '批注',
+        tooltip: annotationsEnabled ? '批注已开启：选中文字可发起 AI 修改' : '开启批注：选中文字后可发起 AI 修改',
         checked: annotationsEnabled,
       },
       {
+        // Label stays "预览" no matter which mode is active — the icon
+        // (toggle-left/right) plus `checked` already communicate on/off;
+        // flipping the word itself between "预览"/"编辑" read as ambiguous
+        // ("is this the mode I'm in, or the one I'm switching to?").
         id: 'mode', icon: mode === 'edit' ? 'toggle-left' : 'toggle-right',
-        label: mode === 'edit' ? '预览' : '编辑', tooltip: mode === 'edit' ? '切换到预览' : '切换到编辑',
+        label: '预览', tooltip: mode === 'edit' ? '切换到预览' : '切换到编辑',
         checked: mode === 'preview',
       },
       {
-        type: 'menu', id: 'style', icon: 'palette', tooltip: '排版风格',
-        items: [
-          { id: 'style:kami', label: 'Kami' },
-          { id: 'style:bauhaus', label: 'Bauhaus' },
-          { id: 'style:blueprint', label: 'Blueprint' },
-          { id: 'style:botanical', label: 'Botanical' },
-          { id: 'style:newsprint', label: 'Newsprint' },
-          { id: 'style:retro', label: 'Retro' },
-          { id: 'style:sketch', label: 'Sketch' },
-          { id: 'style:terminal', label: 'Terminal' },
-          { id: 'style-sep', label: '', separator: true },
-          { id: 'style:custom', label: '自定义（AI 设计）', icon: 'wand-sparkles' },
-        ],
+        type: 'menu', id: 'style', icon: 'palette', tooltip: mode === 'preview' ? '排版风格' : '请先打开预览',
+        disabled: mode !== 'preview',
+        items: buildStyleMenuItems(),
       },
-      { id: 'ai-style', icon: 'wand-sparkles', tooltip: '让 AI 设计排版' },
       { type: 'spacer' },
-      { id: 'save', icon: saveIcon, label: saveLabel, tooltip: saveTooltip, disabled: !dirty },
+      // NOTE: copy/export/AI 排版 deliberately do NOT live here. A host
+      // toolbar click reaches this page as a postMessage, which carries no
+      // user activation, so clipboard writes and composer.addContexts() were
+      // both being rejected ("This action requires a user gesture") until
+      // the user first clicked somewhere in the page. Those actions now sit
+      // in the in-page floating bar over the preview (see `.actions` above),
+      // where a click is a real user gesture and they succeed on first try.
       {
-        type: 'menu', id: 'copy', icon: 'clipboard', tooltip: '复制', disabled: !html,
+        type: 'menu', id: 'font-size', icon: 'ext:markdown-editor-icons/type', tooltip: mode === 'preview' ? '预览时不可更改字体' : '编辑器字体大小',
+        disabled: mode === 'preview',
         items: [
-          { id: 'copy:weixin', label: '复制到公众号', icon: 'clipboard-check' },
+          { id: 'font-size:14', label: '小', checked: editorFontSize === 14 },
+          { id: 'font-size:16', label: '中', checked: editorFontSize === 16 },
+          { id: 'font-size:18', label: '大', checked: editorFontSize === 18 },
+          { id: 'font-sep', label: '', separator: true },
+          { id: 'font-family:rounded', label: '默认（无衬线）', checked: editorFont === 'rounded' },
+          { id: 'font-family:songti', label: '衬线体', checked: editorFont === 'songti' },
+          { id: 'font-family:kaiti', label: '楷体书写', checked: editorFont === 'kaiti' },
+          { id: 'font-family:mono', label: '等宽', checked: editorFont === 'mono' },
         ],
       },
+      { id: 'save', icon: saveIcon, label: saveLabel, tooltip: saveTooltip, disabled: !dirty },
       {
         type: 'menu', id: 'more', icon: 'settings',
         items: [
@@ -209,6 +327,31 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 
   // ---- CodeMirror 6 Markdown editor ----
 
+  // Bridges a pasted image File to the host, which writes it under this
+  // mini tool's own storage dir and replies with a `finch-file://` URL to
+  // insert. Round-trips through the same requestId/pending-map pattern as
+  // saveMarkdown above, since postMessage has no built-in request/response.
+  function pasteImageToHost(file) {
+    if (!api || !api.postMessage) return Promise.reject(new Error('No host bridge.'));
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        var dataUrl = typeof reader.result === 'string' ? reader.result : '';
+        var comma = dataUrl.indexOf(',');
+        var base64 = comma >= 0 ? dataUrl.slice(comma + 1) : '';
+        if (!base64) { reject(new Error('Could not read pasted image.')); return; }
+        var id = ++pasteImageId;
+        pendingPasteImages[id] = { resolve: resolve, reject: reject };
+        setTimeout(function () {
+          if (pendingPasteImages[id]) { delete pendingPasteImages[id]; reject(new Error('粘贴图片超时')); }
+        }, 15000);
+        api.postMessage({ type: 'pasteImage', data: base64, mimeType: file.type, requestId: id });
+      };
+      reader.onerror = function () { reject(new Error('Could not read pasted image.')); };
+      reader.readAsDataURL(file);
+    });
+  }
+
   var cm = window.MarkdownCodeMirror.create({
     parent: editor,
     value: markdown,
@@ -218,7 +361,10 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       updateEmptyState();
       setDirty(true);
     },
+    onPasteImage: pasteImageToHost,
   });
+  cm.setFontSize(editorFontSize);
+  cm.setFontFamily(EDITOR_FONTS[editorFont]);
   cm.scrollDOM.addEventListener('scroll', closePopup);
 
   // ---- Markdown <-> bm.md rendering ----
@@ -250,20 +396,47 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     e.scrollTop = Math.min(saved.top, Math.max(0, e.scrollHeight - e.clientHeight));
   }
 
+  // The <iframe id="article"> box itself already carries the correct
+  // theme-matched background (var(--card) in the CSS above, resolved for
+  // whatever skin/light/dark mode Finch is currently in). Read that back
+  // with getComputedStyle so the iframe's OWN document — which is what
+  // actually paints once its content loads — uses the identical color
+  // instead of the browser's default opaque-white canvas. This keeps short
+  // articles from showing a plain white strip below the themed content.
+  function articleBg() {
+    try { return getComputedStyle(frame).backgroundColor || ''; } catch (e) { return ''; }
+  }
+
   function showHtml(next) {
     var previous = captureScroll();
     var d = frame.contentDocument;
     html = next;
+    var bg = articleBg();
     if (frameReady && d && d.body) {
       d.body.innerHTML = html;
+      if (bg) d.body.style.background = bg;
       restoreScroll(previous);
       bindPreviewSelection();
       return;
     }
+    // Only reset the iframe's own html/body box model here. bm.md already
+    // inlines its own spacing (e.g. "padding: 2em 1.75em") and background
+    // directly onto the #bm-md section — do NOT override those, or the
+    // article loses its official top padding/background and looks flush
+    // against the frame edge.
     frame.srcdoc = '<!doctype html><meta charset="utf-8"><base target="_blank">' +
-      '<style>html,body{margin:0!important;padding:0!important}' +
-      '#bm-md{margin-top:0!important;padding-top:0!important}' +
-      '#bm-md>*:first-child{margin-top:0!important}</style>' +
+      '<style>html,body{margin:0!important;padding:0!important;min-height:100%}' +
+      'body{background:' + (bg || 'transparent') + '}' +
+      // bm.md's own inline style on #bm-md never sets a height, so a short
+      // article's background only covers its own content and the rest of
+      // the frame falls back to the body background set above. That's fine
+      // inside this iframe (body already carries the matching color), but
+      // it means the "所见即所得" canvas/PDF export and the raw #bm-md
+      // outerHTML used for copy would both crop right at the last line —
+      // no full-bleed backdrop the way the actual WeChat article does once
+      // published. Forcing #bm-md to at least fill the viewport keeps its
+      // own background (not just the iframe's) reaching all the way down.
+      '#bm-md{min-height:100dvh}</style>' +
       '<body>' + html;
   }
 
@@ -375,6 +548,15 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     d.addEventListener('mouseup', picked);
     d.addEventListener('mousedown', function () { cancelScheduledPopup(); closePopup(); });
     d.addEventListener('keyup', picked);
+    // The preview lives in an iframe, so its keyboard events do not bubble to
+    // the panel document. Capture Cmd+P / Ctrl+P here too, preventing the
+    // browser's print dialog and returning to the editor from preview.
+    d.addEventListener('keydown', function (e) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        setMode('edit');
+      }
+    });
     d.addEventListener('scroll', function () { cancelScheduledPopup(); closePopup(); }, true);
     frame.contentWindow.addEventListener('scroll', function () { cancelScheduledPopup(); closePopup(); });
   }
@@ -582,6 +764,12 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     if (mod && (e.key === 's' || e.key === 'S')) {
       e.preventDefault();
       saveNow();
+      return;
+    }
+    // Reserve Cmd+P / Ctrl+P for Markdown preview rather than browser print.
+    if (mod && (e.key === 'p' || e.key === 'P')) {
+      e.preventDefault();
+      setMode(mode === 'edit' ? 'preview' : 'edit');
     }
   });
 
@@ -748,21 +936,91 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     try { document.body.focus({ preventScroll: true }); } catch (e) { document.body.focus(); }
   }
 
-  async function copyRichText(htmlStr, plainStr) {
-    focusCopySurface();
-    await new Promise(function (resolve) {
-      requestAnimationFrame(function () { requestAnimationFrame(resolve); });
+  // Poll for document focus for a short while instead of a single
+  // best-effort attempt: the 'finch:menu' click reaches us via a postMessage
+  // round-trip from the host toolbar, and on some platforms the webview
+  // hasn't actually regained input focus yet by the time that message
+  // arrives — a single focus() + two rAFs isn't always enough. Re-attempt a
+  // few times with short waits; this costs at most ~250ms and is invisible
+  // to the user, but meaningfully reduces spurious "剪贴板不可用" failures.
+  async function waitForCopyFocus(maxAttempts) {
+    for (var i = 0; i < maxAttempts; i++) {
+      focusCopySurface();
+      await new Promise(function (resolve) {
+        requestAnimationFrame(function () { requestAnimationFrame(resolve); });
+      });
+      if (document.hasFocus()) return true;
+      await new Promise(function (resolve) { setTimeout(resolve, 40); });
+    }
+    return document.hasFocus();
+  }
+
+  // Ask the host to turn only its own finch-file image assets into data:
+  // URLs. The saved Markdown and preview HTML retain finch-file URLs; this
+  // expanded representation exists solely in the outbound clipboard payload,
+  // where WeChat has no way to resolve Finch's private local protocol.
+  function prepareClipboardHtml(sourceHtml) {
+    var urls = Array.from(new Set(sourceHtml.match(/finch-file:\/\/local\?path=[^\s)"']+/g) || []));
+    if (!urls.length || !api || !api.postMessage) return Promise.resolve(sourceHtml);
+    return new Promise(function (resolve, reject) {
+      var id = ++clipboardImageId;
+      pendingClipboardImages[id] = { resolve: resolve, reject: reject, sourceHtml: sourceHtml };
+      setTimeout(function () {
+        if (pendingClipboardImages[id]) { delete pendingClipboardImages[id]; reject(new Error('准备公众号图片超时')); }
+      }, 15000);
+      api.postMessage({ type: 'readClipboardImages', urls: urls, requestId: id });
     });
-    if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write && document.hasFocus()) {
+  }
+
+  // bmmd can leave an empty <p> directly before/after an image <figure>.
+  // The WeChat editor normalizes it to
+  // `<p><span leaf><br class="ProseMirror-trailingBreak"></span></p>`, which
+  // becomes a visible blank line above/below the pasted image. Remove ONLY
+  // those adjacent empty paragraphs from the clipboard copy. Do not touch
+  // the figure's own margins or its figcaption — both are intentional article
+  // formatting, including the automatic "Pasted image" caption.
+  function compactClipboardImageLayout(clipboardHtml) {
+    var doc = new DOMParser().parseFromString(clipboardHtml, 'text/html');
+    function isEmptyParagraph(node) {
+      return node && node.tagName === 'P' && !node.textContent.trim() && !node.querySelector('img,video,iframe,table');
+    }
+    Array.from(doc.querySelectorAll('figure.figure-image')).forEach(function (figure) {
+      var before = figure.previousElementSibling;
+      var after = figure.nextElementSibling;
+      if (isEmptyParagraph(before)) before.remove();
+      if (isEmptyParagraph(after)) after.remove();
+    });
+    return doc.body.innerHTML;
+  }
+
+  async function copyRichText(htmlValue, plainStr) {
+    // Fast path for the in-page action bar: the click already happened in
+    // this document, so focus is real and the write can go straight out.
+    // Burning ~250ms in the focus poll below would only risk the transient
+    // user-activation window for no benefit.
+    if (!document.hasFocus()) await waitForCopyFocus(5);
+    // `text/html` deliberately receives a Promise<Blob>: clipboard.write()
+    // itself starts immediately while the in-page click's user activation is
+    // fresh, while its promise concurrently waits for the host to read and
+    // embed local image assets. Awaiting that host round-trip *before* write
+    // would make Chromium reject the clipboard request as no longer gestural.
+    if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
       try {
         await navigator.clipboard.write([new ClipboardItem({
-          'text/html': new Blob([htmlStr], { type: 'text/html' }),
+          'text/html': Promise.resolve(htmlValue).then(function (value) { return new Blob([value], { type: 'text/html' }); }),
           'text/plain': new Blob([plainStr], { type: 'text/plain' }),
         })]);
-        return;
+        return 'rich';
       } catch (e) { /* fall through to the legacy path below */ }
     }
-    copyRichTextLegacy(htmlStr);
+    var htmlStr = await Promise.resolve(htmlValue);
+    if (copyRichTextLegacy(htmlStr)) return 'rich';
+    // Both rich-text paths failed (most likely: the webview never actually
+    // regained real input focus, which both APIs require). Rather than
+    // surfacing a hard failure, degrade to a plain-text copy so the user
+    // still gets *something* usable on the clipboard.
+    if (copyPlainTextLegacy(plainStr)) return 'plain';
+    return 'none';
   }
 
   function copyRichTextLegacy(htmlStr) {
@@ -782,20 +1040,331 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
     sel.removeAllRanges();
     holder.remove();
-    if (!ok) throw new Error('当前窗口无法写入富文本剪贴板。');
+    return ok;
   }
 
+  function copyPlainTextLegacy(plainStr) {
+    var ta = document.createElement('textarea');
+    ta.value = plainStr;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+
+  // A previous attempt here walked the live iframe DOM and rewrote every
+  // element's font-family/color/background-color from computed values,
+  // plus converted top-level children's vertical margins into padding to
+  // avoid perceived "gaps" — all based on a theory that WeChat's paste
+  // cleaner drops the #bm-md root's own style attribute. Actual DevTools
+  // inspection of the pasted result proved that theory wrong: the pasted
+  // <section id="bm-md" style="...background-color...padding...font-
+  // family..."> keeps its full inline style completely intact. The
+  // flattening pass was therefore not just unnecessary but actively
+  // harmful — e.g. it force-added the container's vertical margin as
+  // *padding* onto every direct child including <hr>, which already had
+  // its own explicit background-color; padding on an <hr> paints INSIDE
+  // that background, so a 1px divider line turned into a tall solid
+  // block, which read as "the divider disappeared". Match bm.md's own
+  // "复制到公众号" behavior exactly for all ordinary content. The only
+  // intentional exception is local pasted images: Finch's private
+  // `finch-file:` protocol cannot exist outside Finch, so their `src` is
+  // converted into a data URL in the clipboard-only copy (see
+  // prepareClipboardHtml); preview/source remain untouched.
   async function copyHtml() {
     if (!html) { setStatus('请先打开文章。', true); return; }
     try {
-      var plain = frame.contentDocument ? frame.contentDocument.body.innerText : html.replace(/<[^>]+>/g, '');
-      await copyRichText(html, plain);
-      setStatus('公众号富文本 HTML 已复制。');
+      var plain = frame.contentDocument && frame.contentDocument.body
+        ? frame.contentDocument.body.innerText
+        : html.replace(/<[^>]+>/g, '');
+      var result = await copyRichText(prepareClipboardHtml(html), plain);
+      if (result === 'none') {
+        // One more attempt after a longer settle: covers the case where
+        // the webview genuinely hadn't regained input focus yet on the
+        // first try (e.g. right after switching sessions/tabs).
+        await new Promise(function (resolve) { setTimeout(resolve, 200); });
+        result = await copyRichText(prepareClipboardHtml(html), plain);
+      }
+      if (result === 'rich') setStatus('公众号富文本 HTML 已复制，可直接粘贴到公众号编辑器。');
+      else if (result === 'plain') setStatus('仅复制到纯文本，格式未能带上，请重试一次。', true);
+      else setStatus('复制失败，请重试一次。', true);
     } catch (e) {
       setStatus('富文本复制失败：' + String(e), true);
     } finally {
       if (mode === 'edit') requestAnimationFrame(function () { cm.focus(); });
     }
+  }
+
+  // ---- Export (copy/download image, download PDF) ----
+  //
+  // There's no headless-render or html2canvas-style library bundled here, so
+  // this hand-rolls the same trick browsers themselves use for that purpose:
+  // serialize the *live rendered* #bm-md node (already fully styled — same
+  // DOM `copyHtml()` no longer needs to touch) into an SVG <foreignObject>,
+  // rasterize that through an <img>, then draw it onto a <canvas>. Because
+  // the source is the live iframe DOM rather than the static `html` string,
+  // this captures it pixel-for-pixel identical to what's on screen —
+  // genuinely "所见即所得" — with no separate style-flattening pass to get
+  // subtly wrong.
+  function articleSize() {
+    if (!frameReady || !frame.contentDocument) return null;
+    var root = frame.contentDocument.querySelector('#bm-md');
+    if (!root) return null;
+    var rect = root.getBoundingClientRect();
+    return {
+      root: root,
+      width: Math.ceil(rect.width || root.scrollWidth),
+      height: Math.ceil(rect.height || root.scrollHeight),
+    };
+  }
+
+  function renderArticleCanvas() {
+    var info = articleSize();
+    if (!info || !info.width || !info.height) return Promise.resolve(null);
+    var scale = 2; // fixed 2x for crisp copy/export regardless of display DPR
+
+    // An <img> pointed at an SVG data URL parses that SVG as XML, so the
+    // markup inside <foreignObject> has to be well-formed XHTML. The HTML
+    // serializer behind `.outerHTML` happily emits void elements as `<br>`
+    // or `<img …>` with no self-closing slash, which is valid HTML but
+    // fatal XML — the parse aborts and the <img> fires `error`, which is
+    // exactly why copying/downloading the image silently failed. Serialize
+    // through XMLSerializer instead so every tag is properly closed.
+    var clone = info.root.cloneNode(true);
+    // The live node gets `min-height:100dvh` from the preview stylesheet,
+    // which does not travel with the clone (no stylesheet inside the SVG)
+    // — restore the measured height inline so the exported image keeps the
+    // same full-bleed background the preview shows.
+    clone.style.minHeight = info.height + 'px';
+    clone.style.margin = '0';
+    clone.style.boxSizing = 'border-box';
+    var serialized;
+    try {
+      serialized = new XMLSerializer().serializeToString(clone);
+    } catch (e) {
+      return Promise.reject(new Error('无法序列化预览内容：' + String(e)));
+    }
+    var svgMarkup = '<svg xmlns="http://www.w3.org/2000/svg" width="' + info.width + '" height="' + info.height + '">' +
+      '<foreignObject x="0" y="0" width="' + info.width + '" height="' + info.height + '">' +
+      serialized +
+      '</foreignObject></svg>';
+    var svgUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgMarkup);
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.decoding = 'sync';
+      img.onload = function () {
+        try {
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.round(info.width * scale);
+          canvas.height = Math.round(info.height * scale);
+          var ctx2d = canvas.getContext('2d');
+          ctx2d.scale(scale, scale);
+          // foreignObject content is transparent where the article doesn't
+          // paint; fill with the article's own background first so JPEG
+          // (which has no alpha) never turns those pixels black.
+          var bg = '';
+          try { bg = frame.contentWindow.getComputedStyle(info.root).backgroundColor; } catch (e2) { bg = ''; }
+          if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+            ctx2d.fillStyle = bg;
+            ctx2d.fillRect(0, 0, info.width, info.height);
+          }
+          ctx2d.drawImage(img, 0, 0, info.width, info.height);
+          resolve({ canvas: canvas, cssWidth: info.width, cssHeight: info.height });
+        } catch (e) { reject(e); }
+      };
+      img.onerror = function () {
+        reject(new Error('预览内容无法转成图片（可能含有无法跨域读取的外部图片）'));
+      };
+      img.src = svgUrl;
+    });
+  }
+
+  function canvasToBlob(canvas, type, quality) {
+    return new Promise(function (resolve, reject) {
+      canvas.toBlob(function (blob) {
+        if (blob) resolve(blob); else reject(new Error('生成图片数据失败'));
+      }, type, quality);
+    });
+  }
+
+  function bytesToBase64(bytes) {
+    var binary = '';
+    var chunk = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+
+  async function copyImage() {
+    if (!html) { setStatus('请先打开文章。', true); return; }
+    if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write) {
+      setStatus('当前环境不支持复制图片，请改用「导出图片」。', true);
+      return;
+    }
+    setStatus('正在生成图片…');
+    // Hand ClipboardItem a *pending promise* rather than a finished Blob, so
+    // clipboard.write() is invoked immediately while the click's transient
+    // user activation is still fresh; the rasterization then resolves into
+    // it. Awaiting the blob first would spend that activation on rendering
+    // and can get the write rejected on slower/longer articles.
+    var blobPromise = renderArticleCanvas().then(function (made) {
+      if (!made) throw new Error('预览尚未就绪');
+      return canvasToBlob(made.canvas, 'image/png');
+    });
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blobPromise })]);
+      setStatus('图片已复制到剪贴板。');
+      return;
+    } catch (e) {
+      // Some builds reject a promise-valued ClipboardItem — retry once with
+      // the resolved Blob before giving up.
+      try {
+        var blob = await blobPromise;
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        setStatus('图片已复制到剪贴板。');
+        return;
+      } catch (e2) {
+        setStatus('复制图片失败：' + (e2 && e2.message ? e2.message : String(e2)) + '（可改用「导出图片」）', true);
+      }
+    }
+  }
+
+  async function exportImage() {
+    if (!html) { setStatus('请先打开文章。', true); return; }
+    try {
+      setStatus('正在生成图片…');
+      var made = await renderArticleCanvas();
+      if (!made) { setStatus('导出图片失败：预览尚未就绪。', true); return; }
+      var blob = await canvasToBlob(made.canvas, 'image/png');
+      var buf = await blob.arrayBuffer();
+      var base64 = bytesToBase64(new Uint8Array(buf));
+      if (api && api.postMessage) {
+        api.postMessage({ type: 'exportFile', data: base64, ext: 'png', path: sourcePath, fileName: fileName, markdown: markdown });
+      }
+    } catch (e) {
+      setStatus('导出图片失败：' + String(e), true);
+    }
+  }
+
+  // Minimal single-page, single-image PDF, hand-built without any PDF
+  // library: a JPEG can be embedded byte-for-byte as a /DCTDecode image
+  // XObject stream, so no re-encoding is needed beyond what canvas.toBlob
+  // already produced. Page size is the article's CSS pixel size converted
+  // to points (1px = 0.75pt @ 96dpi); the image itself keeps its full
+  // (2x-scaled) pixel resolution for sharpness.
+  function pad10(n) {
+    var s = String(n);
+    while (s.length < 10) s = '0' + s;
+    return s;
+  }
+
+  function strToBytes(str) {
+    var bytes = new Uint8Array(str.length);
+    for (var i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i) & 0xff;
+    return bytes;
+  }
+
+  function concatBytes(parts) {
+    var total = 0;
+    for (var i = 0; i < parts.length; i++) total += parts[i].length;
+    var out = new Uint8Array(total);
+    var offset = 0;
+    for (var i = 0; i < parts.length; i++) { out.set(parts[i], offset); offset += parts[i].length; }
+    return out;
+  }
+
+  function buildSingleImagePdf(jpegBytes, imgW, imgH, pageW, pageH) {
+    var header = strToBytes('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+    var parts = [header];
+    var offsets = [0];
+    var pos = header.length;
+    function addObj(bytesArr) {
+      offsets.push(pos);
+      parts.push(bytesArr);
+      pos += bytesArr.length;
+    }
+    addObj(strToBytes('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n'));
+    addObj(strToBytes('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n'));
+    addObj(strToBytes('3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ' + pageW.toFixed(2) + ' ' + pageH.toFixed(2) + '] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n'));
+    var imgHeader = strToBytes('4 0 obj\n<< /Type /XObject /Subtype /Image /Width ' + imgW + ' /Height ' + imgH + ' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ' + jpegBytes.length + ' >>\nstream\n');
+    var imgFooter = strToBytes('\nendstream\nendobj\n');
+    addObj(concatBytes([imgHeader, jpegBytes, imgFooter]));
+    var contentStream = 'q ' + pageW.toFixed(2) + ' 0 0 ' + pageH.toFixed(2) + ' 0 0 cm /Im0 Do Q';
+    var csBytes = strToBytes(contentStream);
+    addObj(concatBytes([strToBytes('5 0 obj\n<< /Length ' + csBytes.length + ' >>\nstream\n'), csBytes, strToBytes('\nendstream\nendobj\n')]));
+    var xrefStart = pos;
+    var xrefLines = ['xref\n0 6\n0000000000 65535 f \n'];
+    for (var i = 1; i <= 5; i++) xrefLines.push(pad10(offsets[i]) + ' 00000 n \n');
+    var trailer = 'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n' + xrefStart + '\n%%EOF';
+    parts.push(strToBytes(xrefLines.join('') + trailer));
+    return concatBytes(parts);
+  }
+
+  async function exportPdf() {
+    if (!html) { setStatus('请先打开文章。', true); return; }
+    try {
+      setStatus('正在生成 PDF…');
+      var made = await renderArticleCanvas();
+      if (!made) { setStatus('导出 PDF 失败：预览尚未就绪。', true); return; }
+      var blob = await canvasToBlob(made.canvas, 'image/jpeg', 0.92);
+      var buf = await blob.arrayBuffer();
+      var jpegBytes = new Uint8Array(buf);
+      var pageW = made.cssWidth * 0.75;
+      var pageH = made.cssHeight * 0.75;
+      var pdfBytes = buildSingleImagePdf(jpegBytes, made.canvas.width, made.canvas.height, pageW, pageH);
+      var base64 = bytesToBase64(pdfBytes);
+      if (api && api.postMessage) {
+        api.postMessage({ type: 'exportFile', data: base64, ext: 'pdf', path: sourcePath, fileName: fileName, markdown: markdown });
+      }
+    } catch (e) {
+      setStatus('导出 PDF 失败：' + String(e), true);
+    }
+  }
+
+  // Bound directly to real clicks in this document — the whole point of
+  // moving these out of the host toolbar. `preventDefault` keeps the button
+  // from stealing the selection/focus the clipboard path relies on.
+  function bindAction(el, fn) {
+    if (!el) return;
+    el.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      if (el.disabled) return;
+      el.disabled = true;
+      Promise.resolve()
+        .then(fn)
+        .catch(function (e) { setStatus(String(e), true); })
+        .then(function () { el.disabled = false; });
+    });
+  }
+
+  bindAction(actCopyWx, copyHtml);
+  bindAction(actCopyImg, copyImage);
+  bindAction(actSaveImg, exportImage);
+  bindAction(actSavePdf, exportPdf);
+  bindAction(actAiStyle, askAiStyle);
+
+  // Collapse state persists across reopens (per browser profile, not per
+  // document) via localStorage — a purely cosmetic preference, so falling
+  // back to "expanded" on any storage error is fine.
+  var ACTIONS_COLLAPSE_KEY = 'md-editor-actions-collapsed';
+  (function initActionsCollapse() {
+    var collapsed = false;
+    try { collapsed = localStorage.getItem(ACTIONS_COLLAPSE_KEY) === '1'; } catch (e) { /* ignore */ }
+    if (actions) actions.classList.toggle('collapsed', collapsed);
+  })();
+  if (actToggle) {
+    actToggle.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      var collapsed = actions.classList.toggle('collapsed');
+      try { localStorage.setItem(ACTIONS_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch (e) { /* ignore */ }
+    });
   }
 
   function saveNow() {
@@ -815,8 +1384,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
           '不要使用 class（bm.md 输出没有 class，只有内联样式），必要时用 !important 覆盖基础风格。' +
           '可参考 bm.md 内置风格的设计语言：kami（暖色纸感）、bauhaus（几何撞色）、blueprint（技术蓝图网格）、botanical（清新绿意）、newsprint（报刊衬线）、retro（复古怀旧）、sketch（手绘风）、terminal（等宽暗色终端风）。' +
           '文章路径：' + (sourcePath || '（未关联本地文件）') + '。' +
-          '设计完成后，调用 markdown_editor_document 工具的 set_style 动作，传入 css 与简短 label，我会在预览里立即看到效果。',
-        reminder: '直接调用 set_style 应用即可，无需用户先确认，因为效果可在预览中随时撤销重来。',
+          '动手生成 CSS 前，先询问用户要覆盖「自定义风格 1、2、3」中的哪一个槽位；用户选择后，再调用 markdown_editor_document 的 set_style，必须传入 css、简短 label 和 slot（1/2/3）。该调用会覆盖并持久化那个槽位，同时立即应用预览。',
+        reminder: '必须先询问槽位，不能自行猜测或覆盖；用户明确选定 1/2/3 后才调用 set_style。',
       }]);
       setStatus('已请求 AI 设计自定义排版。');
     } catch (e) {
@@ -831,6 +1400,22 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     if (mode === 'preview') render();
   }
 
+  function setEditorFontSize(size) {
+    if (size !== 14 && size !== 16 && size !== 18) return;
+    editorFontSize = size;
+    cm.setFontSize(size);
+    try { localStorage.setItem('md-editor-font-size', String(size)); } catch (e) {}
+    syncToolbar();
+  }
+
+  function setEditorFont(font) {
+    if (!EDITOR_FONTS[font]) return;
+    editorFont = font;
+    cm.setFontFamily(EDITOR_FONTS[font]);
+    try { localStorage.setItem('md-editor-font-family', font); } catch (e) {}
+    syncToolbar();
+  }
+
   function toggleAnnotations() {
     annotationsEnabled = !annotationsEnabled;
     if (!annotationsEnabled) closePopup();
@@ -843,12 +1428,38 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     if (itemId === 'open') { openFile(); return; }
     if (itemId === 'annotate') { toggleAnnotations(); return; }
     if (itemId === 'mode') { setMode(mode === 'edit' ? 'preview' : 'edit'); return; }
-    if (itemId === 'copy:weixin') { copyHtml(); return; }
-    if (itemId === 'ai-style') { askAiStyle(); return; }
     if (itemId === 'save') { saveNow(); return; }
     if (itemId === 'reload') { render(); return; }
+    if (itemId && itemId.indexOf('font-size:') === 0) { setEditorFontSize(Number(itemId.slice('font-size:'.length))); return; }
+    if (itemId && itemId.indexOf('font-family:') === 0) { setEditorFont(itemId.slice('font-family:'.length)); return; }
     if (itemId === 'about') { setStatus('渲染器：本机 bmmd CLI（bm.md，AGPL-3.0）。'); return; }
+    // These two must be checked before the generic 'style:' fallback below,
+    // since both also start with the literal prefix "style:".
+    if (itemId && itemId.indexOf('style:slot-use:') === 0) { applyStyleSlot(+itemId.slice('style:slot-use:'.length)); return; }
+    if (itemId && itemId.indexOf('style:slot-save:') === 0) { saveStyleSlot(+itemId.slice('style:slot-save:'.length)); return; }
     if (itemId && itemId.indexOf('style:') === 0) { setStyle(itemId.slice(6)); return; }
+  }
+
+  function applyStyleSlot(index) {
+    var slot = styleSlots[index];
+    if (!slot) return;
+    customCss = slot.css;
+    customStyleLabel = slot.label;
+    style = 'custom';
+    setStatus('已应用「' + slot.label + '」。');
+    if (mode === 'preview') render(); else setMode('preview');
+    syncToolbar();
+  }
+
+  function saveStyleSlot(index) {
+    if (style !== 'custom' || !customCss) {
+      setStatus('请先应用一个自定义/AI 设计的风格，再保存到槽位。', true);
+      return;
+    }
+    var label = customStyleLabel || '自定义风格';
+    if (api && api.postMessage) {
+      api.postMessage({ type: 'saveStyleSlot', slot: index, css: customCss, label: label });
+    }
   }
 
   // ---- Backend messages ----
@@ -856,7 +1467,49 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   if (api && api.onMessage) {
     api.onMessage(function (m) {
       if (!m || typeof m !== 'object') return;
-      if (m.type === 'ready') { pickFileSupported = !!m.pickFileSupported; syncToolbar(); return; }
+      if (m.type === 'ready') {
+        pickFileSupported = !!m.pickFileSupported;
+        styleSlots = Array.isArray(m.styleSlots) ? m.styleSlots : [null, null, null];
+        syncToolbar();
+        return;
+      }
+      if (m.type === 'styleSlots') {
+        styleSlots = Array.isArray(m.styleSlots) ? m.styleSlots : [null, null, null];
+        if (typeof m.savedSlot === 'number' && styleSlots[m.savedSlot]) {
+          setStatus('已保存到槽位 ' + (m.savedSlot + 1) + '：' + styleSlots[m.savedSlot].label);
+        }
+        syncToolbar();
+        return;
+      }
+      if (m.type === 'clipboardImages') {
+        var pendingClipboard = pendingClipboardImages[m.requestId];
+        if (pendingClipboard) {
+          delete pendingClipboardImages[m.requestId];
+          var clipboardHtml = pendingClipboard.sourceHtml;
+          var imageUrls = m.images && typeof m.images === 'object' ? m.images : {};
+          Object.keys(imageUrls).forEach(function (originalUrl) {
+            if (typeof imageUrls[originalUrl] === 'string') clipboardHtml = clipboardHtml.split(originalUrl).join(imageUrls[originalUrl]);
+          });
+          pendingClipboard.resolve(compactClipboardImageLayout(clipboardHtml));
+        }
+        return;
+      }
+      if (m.type === 'clipboardImagesError') {
+        var pendingClipboardErr = pendingClipboardImages[m.requestId];
+        if (pendingClipboardErr) { delete pendingClipboardImages[m.requestId]; pendingClipboardErr.reject(new Error(m.message || '准备公众号图片失败')); }
+        return;
+      }
+      if (m.type === 'pastedImage') {
+        var pendingPaste = pendingPasteImages[m.requestId];
+        if (pendingPaste) { delete pendingPasteImages[m.requestId]; pendingPaste.resolve(m.url); }
+        return;
+      }
+      if (m.type === 'pasteImageError') {
+        var pendingPasteErr = pendingPasteImages[m.requestId];
+        if (pendingPasteErr) { delete pendingPasteImages[m.requestId]; pendingPasteErr.reject(new Error(m.message || '粘贴图片失败')); }
+        setStatus('粘贴图片失败：' + (m.message || ''));
+        return;
+      }
       if (m.type === 'status') { setStatus(m.message); return; }
       if (m.type === 'lastFileUnavailable') { return; }
       if (m.type === 'finch:menu') { handleMenu(m.itemId); return; }
@@ -891,11 +1544,15 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       }
       if (m.type === 'customStyleSet') {
         customCss = m.css || '';
+        customStyleLabel = m.label || '自定义风格';
         style = 'custom';
-        setStatus((m.label ? m.label + ' · ' : '') + '自定义风格已应用。');
+        styleSlots = Array.isArray(m.styleSlots) ? m.styleSlots : styleSlots;
+        setStatus((m.label ? m.label + ' · ' : '') + '已保存并应用到自定义风格 ' + (typeof m.savedSlot === 'number' ? m.savedSlot + 1 : '') + '。');
         if (mode === 'preview') render(); else setMode('preview');
+        syncToolbar();
         return;
       }
+      if (m.type === 'exported') { setStatus('已导出：' + m.path); return; }
       if (m.type === 'watchStarted') { return; }
       if (m.type === 'pickCancelled') {
         // User closed the native picker without choosing a file — clear the
