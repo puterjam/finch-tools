@@ -1748,6 +1748,10 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
   // authorities (CM's cursor-preserving scroll and ours) yank the window.
   let focusModeEnabled = false;
   let centerLineRaf = 0;
+  // While the mouse is down (drag-selecting text), centering would fight
+  // the drag: every selection change re-centers, and the smooth scroll
+  // yanks the viewport mid-selection. Defer to the mouseup instead.
+  let mouseSelecting = false;
   function centerActiveLine() {
     centerLineRaf = 0;
     if (!focusModeEnabled) return;
@@ -1755,9 +1759,17 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     if (line) line.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
   function scheduleCenterActiveLine() {
-    if (!focusModeEnabled || centerLineRaf) return;
+    if (!focusModeEnabled || centerLineRaf || mouseSelecting) return;
     centerLineRaf = requestAnimationFrame(() => requestAnimationFrame(centerActiveLine));
   }
+  // Attach on window so a drag that leaves the editor still ends cleanly.
+  function onWindowMouseUp() {
+    if (!mouseSelecting) return;
+    mouseSelecting = false;
+    // The selection just settled — center once now.
+    scheduleCenterActiveLine();
+  }
+  window.addEventListener('mouseup', onWindowMouseUp);
   const view = new EditorView({
     doc: options.value ?? '',
     parent: options.parent,
@@ -1800,7 +1812,10 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       imageAtomicRanges,
       livePreviewMarkdownPlugin,
       EditorView.domEventHandlers({
-        mousedown: (event) => handleMarkdownImageMouseDown(event) || handleMarkdownLinkMouseDown(event),
+        mousedown: (event) => {
+          mouseSelecting = true;
+          return handleMarkdownImageMouseDown(event) || handleMarkdownLinkMouseDown(event);
+        },
         click: (event) => handleMarkdownImageClick(event, options.onOpenImage) || handleMarkdownLinkClick(event, options.onOpenLink),
         paste: (event, dispatchView) => imagePasteHandler(dispatchView, event, options.onPasteImage),
         drop: (event, dispatchView) => imageDropHandler(dispatchView, event, options.onPasteImage),
@@ -1884,6 +1899,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     scrollDOM: view.scrollDOM,
     destroy() {
       if (centerLineRaf) { cancelAnimationFrame(centerLineRaf); centerLineRaf = 0; }
+      window.removeEventListener('mouseup', onWindowMouseUp);
       disposeStaticTableCellPreview();
       disposeTableMenuI18n();
       view.destroy();
