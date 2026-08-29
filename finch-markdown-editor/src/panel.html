@@ -70,6 +70,10 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .doc-sub{margin-top:2px;display:flex;gap:6px;font-size:11px;line-height:1.4;color:var(--muted)}
 .doc-sub .doc-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
 .doc-sub .doc-time{flex:none;opacity:.8}
+.doc-reveal{position:absolute;top:6px;right:6px;z-index:1;display:flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:none;border-radius:7px;background:color-mix(in srgb, var(--bg) 72%, transparent);color:var(--muted);cursor:pointer;opacity:0;transition:opacity .12s ease,background .12s ease,color .12s ease}
+.doc-reveal svg{width:14px;height:14px}
+.doc-card:hover .doc-reveal,.doc-reveal:focus-visible{opacity:1}
+.doc-reveal:hover{background:var(--card);color:var(--text)}
 .home-hint{margin:0;padding:22px 0;text-align:center;font-size:12.5px;color:var(--muted)}
 .home-hint[hidden],.home-recent[hidden]{display:none}
 .status{font-size:12px;color:var(--muted);padding:5px 10px;text-align:center;border-top:1px solid var(--border);background:var(--bg)}
@@ -239,6 +243,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'home.hintScoped': '这个目录里还没有用编辑器打开过的 Markdown 文档。',
       'home.hintDefault': '打开一个 Markdown 文件，之后这里会列出最近编辑的文档。',
       'home.untitled': '未命名',
+      'home.revealInFileManager': '在文件管理器中定位',
       'home.emptyDoc': '（空文档）',
       'home.cwdTitle': '在访达 / 文件资源管理器中打开：{path}',
       'home.today': '今天 {clock}',
@@ -284,6 +289,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'toolbar.fontFamily.default': '默认（无衬线）',
       'toolbar.fontFamily.serif': '衬线体',
       'toolbar.more.reload': '重新渲染',
+      'toolbar.more.reveal': '在文件管理器中定位',
       'toolbar.more.about': '关于渲染',
       'annotate.lineUnknown': '（未能精确定位对应行号，请以下方引用文本为准）',
       'annotate.lineSingle': '第 {a} 行',
@@ -314,6 +320,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'status.noSourceFile': '未关联本地文件：点击工具栏「打开」重新选择一次即可关联并启用保存。',
       'status.pickerTimeout': '文件选择器长时间无响应，已切换为浏览器内选择器：请重新点击"打开"。',
       'status.externalUpdateSkipped': '检测到文件外部更新；为避免覆盖未保存内容，暂未载入。',
+      'status.draftRestored': '已恢复上次未保存的编辑内容。',
+      'status.sourceMissing': '原文件已被移动或删除；当前内容仍保留在编辑器中，保存将在原路径重新创建文件。',
       'status.externalUpdateApplied': '检测到文件更新，已刷新。',
       'status.openingPicker': '正在打开文件选择器…',
       'status.opening': '正在打开…',
@@ -364,6 +372,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'home.hintScoped': 'No Markdown documents have been opened from this folder yet.',
       'home.hintDefault': 'Open a Markdown file — recently edited documents will show up here.',
       'home.untitled': 'Untitled',
+      'home.revealInFileManager': 'Show in file manager',
       'home.emptyDoc': '(Empty document)',
       'home.cwdTitle': 'Open in Finder / File Explorer: {path}',
       'home.today': 'Today {clock}',
@@ -409,6 +418,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'toolbar.fontFamily.default': 'Default (sans-serif)',
       'toolbar.fontFamily.serif': 'Serif',
       'toolbar.more.reload': 'Re-render',
+      'toolbar.more.reveal': 'Show in file manager',
       'toolbar.more.about': 'About rendering',
       'annotate.lineUnknown': "(Couldn't pinpoint the exact line — use the quoted text below as reference)",
       'annotate.lineSingle': 'Line {a}',
@@ -439,6 +449,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'status.noSourceFile': 'Not linked to a local file: click “Open” in the toolbar again to link it and enable saving.',
       'status.pickerTimeout': 'The file picker took too long to respond and switched to the in-browser picker — please click "Open" again.',
       'status.externalUpdateSkipped': 'Detected an external file update; not loaded yet to avoid overwriting unsaved changes.',
+      'status.draftRestored': 'Restored your last unsaved edits.',
+      'status.sourceMissing': 'The original file was moved or deleted; your content is still here — saving will recreate the file at its original path.',
       'status.externalUpdateApplied': 'Detected a file update and refreshed.',
       'status.openingPicker': 'Opening the file picker…',
       'status.opening': 'Opening…',
@@ -732,6 +744,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     for (var i = 0; i < list.length; i++) {
       var doc = list[i] || {};
       cards += '<button class="doc-card" type="button" data-path="' + escapeHtml(doc.path || '') + '" title="' + escapeHtml(doc.path || '') + '">'
+        + '<span class="doc-reveal" data-reveal-path="' + escapeHtml(doc.path || '') + '" role="button" tabindex="0" title="' + escapeHtml(t('home.revealInFileManager')) + '" aria-label="' + escapeHtml(t('home.revealInFileManager')) + '">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>'
+        + '</span>'
         + '<div class="doc-preview">' + escapeHtml(doc.preview || t('home.emptyDoc')) + '</div>'
         + '<div class="doc-foot">'
         + '<div class="doc-title">' + escapeHtml(doc.title || doc.fileName || t('home.untitled')) + '</div>'
@@ -751,13 +766,34 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   var loadingFromHome = false;
 
   if (homeGrid) homeGrid.addEventListener('click', function (event) {
+    if (!api || !api.postMessage) return;
+    var reveal = event.target && event.target.closest ? event.target.closest('.doc-reveal') : null;
+    if (reveal) {
+      event.preventDefault();
+      event.stopPropagation();
+      var revealPath = reveal.getAttribute('data-reveal-path') || '';
+      if (revealPath) api.postMessage({ type: 'openPath', path: revealPath });
+      return;
+    }
     var card = event.target && event.target.closest ? event.target.closest('.doc-card') : null;
-    if (!card || !api || !api.postMessage) return;
+    if (!card) return;
     var docPath = card.getAttribute('data-path') || '';
     if (!docPath) return;
     loadingFromHome = true;
     setStatus(t('status.opening'));
     api.postMessage({ type: 'loadPath', path: docPath });
+  });
+  // The reveal control is keyboard-focusable (role="button" tabindex="0")
+  // since it's nested inside the card's own <button>; Enter/Space need their
+  // own handler because a non-<button> element doesn't get native activation.
+  if (homeGrid) homeGrid.addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    var reveal = event.target && event.target.closest ? event.target.closest('.doc-reveal') : null;
+    if (!reveal || !api || !api.postMessage) return;
+    event.preventDefault();
+    event.stopPropagation();
+    var revealPath = reveal.getAttribute('data-reveal-path') || '';
+    if (revealPath) api.postMessage({ type: 'openPath', path: revealPath });
   });
 
   function updateEmptyState() {
@@ -884,6 +920,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         type: 'menu', id: 'more', icon: 'settings',
         items: [
           { id: 'reload', label: t('toolbar.more.reload'), disabled: mode !== 'preview' },
+          { id: 'reveal', label: t('toolbar.more.reveal'), disabled: !hasDoc },
           { id: 'more-sep', label: '', separator: true },
           { id: 'about', label: t('toolbar.more.about') },
         ],
@@ -938,6 +975,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       closePopup();
       updateEmptyState();
       setDirty(true);
+      scheduleDraftSave();
     },
     onOpenLink: function (url) {
       if (api && api.postMessage) api.postMessage({ type: 'openLink', url: url });
@@ -1321,6 +1359,36 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   var dirty = false;
   var savedFlash = false; // true for ~3s right after a successful save, drives the save-check icon
 
+  // ---- Unsaved-draft recovery: mirror edits to a backend sidecar file so a
+  // crash, an accidental "Open" over unsaved work, or just closing without
+  // saving never actually loses anything — reopening the same path resumes
+  // from here instead of the last save. Debounced well past typing speed so
+  // it never fights the save path or floods the host with messages; only
+  // meaningful once there's a real path to key the draft by. ----
+  var draftTimer = 0;
+  var draftPathSaved = ''; // path the pending/last-sent draft belongs to, so a document switch can't cross-write it
+
+  function scheduleDraftSave() {
+    if (!sourcePath || !api || !api.postMessage) return;
+    if (draftTimer) clearTimeout(draftTimer);
+    var path = sourcePath;
+    draftTimer = setTimeout(function () {
+      draftTimer = 0;
+      if (path !== sourcePath) return; // switched documents while the timer was pending
+      draftPathSaved = path;
+      api.postMessage({ type: 'saveDraft', path: path, markdown: markdown });
+    }, 1200);
+  }
+
+  function cancelDraftSave() {
+    if (draftTimer) { clearTimeout(draftTimer); draftTimer = 0; }
+  }
+
+  function discardDraftFor(path) {
+    cancelDraftSave();
+    if (path && api && api.postMessage) api.postMessage({ type: 'discardDraft', path: path });
+  }
+
   function setDirty(next, justSaved) {
     dirty = next;
     if (savedFlashTimer) { clearTimeout(savedFlashTimer); savedFlashTimer = 0; }
@@ -1344,6 +1412,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         savedMarkdown = content;
         setDirty(markdown !== content, markdown === content);
         setStatus(markdown === content ? t('status.saved') : t('status.savedWithNewChanges'));
+        cancelDraftSave();
         return true;
       } catch (e) {
         setStatus(t('status.saveFailed', { err: String(e) }), true);
@@ -1386,7 +1455,12 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   }
 
   function applyDocument(nextMarkdown, nextName, nextPath, force) {
-    if (!force && dirty && cm.hasFocus() && savedMarkdown !== null && nextMarkdown !== savedMarkdown) {
+    // Deliberately does NOT check cm.hasFocus(): unsaved local edits must
+    // never be silently clobbered by an external update, whether or not the
+    // editor happens to have DOM focus at that instant (e.g. the panel was
+    // blurred mid-edit). The user's own uncommitted work always wins here;
+    // the (still-running) draft mirror already backs it up on disk either way.
+    if (!force && dirty && savedMarkdown !== null && nextMarkdown !== savedMarkdown) {
       setStatus(t('status.externalUpdateSkipped'), true);
       return false;
     }
@@ -1467,7 +1541,21 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     }, 20000);
   }
 
+  // Picking a *different* file to open would otherwise silently replace
+  // whatever's currently in the buffer — this is the same "unsaved work"
+  // hazard as the Home button, just reached from a different toolbar item,
+  // so it gets the same confirm-first treatment.
   async function openFile() {
+    if (dirty) {
+      var choice = await askUnsavedConfirm(t('confirm.message', { file: fileName || t('common.markdownDocDefault') }));
+      if (choice === 'cancel') return;
+      if (choice === 'save') {
+        var saved = await saveNowAndWait();
+        if (!saved) { setStatus(t('status.saveFailedNoReturn'), true); return; }
+      } else if (choice === 'discard') {
+        discardDraftFor(sourcePath);
+      }
+    }
     stopWatching();
     if (pickFileSupported && api && api.postMessage) {
       if (nativePickPending) {
@@ -2062,6 +2150,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   // tells the backend to stop watching it, then shows the launch page again.
   function resetToHome() {
     stopWatching();
+    cancelDraftSave();
     closePopup();
     markdown = '';
     name = '';
@@ -2099,8 +2188,11 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       if (choice === 'save') {
         var saved = await saveNowAndWait();
         if (!saved) { setStatus(t('status.saveFailedNoReturn'), true); return; }
+      } else if (choice === 'discard') {
+        // The user explicitly threw these edits away — don't let the draft
+        // ghost-reappear next time this file is opened.
+        discardDraftFor(sourcePath);
       }
-      // choice === 'discard' falls through and leaves without saving.
     }
     resetToHome();
   }
@@ -2113,6 +2205,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     if (itemId === 'mode') { setMode(mode === 'edit' ? 'preview' : 'edit'); return; }
     if (itemId === 'save') { saveNow(); return; }
     if (itemId === 'reload') { render(); return; }
+    if (itemId === 'reveal') { if (sourcePath && api && api.postMessage) api.postMessage({ type: 'openPath', path: sourcePath }); return; }
     if (itemId && itemId.indexOf('font-size:') === 0) { setEditorFontSize(Number(itemId.slice('font-size:'.length))); return; }
     if (itemId && itemId.indexOf('font-family:') === 0) { setEditorFont(itemId.slice('font-family:'.length)); return; }
     if (itemId === 'about') { setStatus(t('status.rendererAbout')); return; }
@@ -2243,9 +2336,23 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         var wasLoadingFromHome = loadingFromHome;
         loadingFromHome = false;
         var applied = applyDocument(incoming, m.title || t('common.markdownDocDefault'), m.path || sourcePath, openedFromPicker || isFirst || isDifferentDocument);
-        if (!applied) syncToolbar(); // still clear the "open" button's pending/disabled state
-        if (applied && wasLoadingFromHome) setStatus(t('status.opened', { file: fileName }));
-        else if (applied && !isFirst) setStatus(t('status.contentUpdated'));
+        if (!applied) { syncToolbar(); return; } // still clear the "open" button's pending/disabled state
+        if (m.draftRestored) {
+          // The buffer we just loaded is an unsaved draft, not what's on
+          // disk — keep it marked dirty so Save (or the draft-mirror timer)
+          // stays active, and say so briefly instead of pretending nothing
+          // happened. No blocking prompt: it's just the user's own last edit.
+          setDirty(true);
+          setStatus(t('status.draftRestored'));
+        } else if (wasLoadingFromHome) {
+          setStatus(t('status.opened', { file: fileName }));
+        } else if (!isFirst) {
+          setStatus(t('status.contentUpdated'));
+        }
+        return;
+      }
+      if (m.type === 'sourceMissing') {
+        if (m.path && m.path === sourcePath) setStatus(t('status.sourceMissing'), true);
         return;
       }
       if (m.type === 'bmRendered') {

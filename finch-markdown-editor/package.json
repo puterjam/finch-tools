@@ -157,6 +157,10 @@
                 "label": "Re-render"
               },
               {
+                "id": "reveal",
+                "label": "Show in file manager"
+              },
+              {
                 "id": "more-sep",
                 "label": "",
                 "separator": true
