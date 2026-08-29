@@ -1364,11 +1364,25 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   // ---- Unsaved-draft recovery: mirror edits to a backend sidecar file so a
   // crash, an accidental "Open" over unsaved work, or just closing without
   // saving never actually loses anything — reopening the same path resumes
-  // from here instead of the last save. Debounced well past typing speed so
-  // it never fights the save path or floods the host with messages; only
-  // meaningful once there's a real path to key the draft by. ----
-  var draftTimer = 0;
-  var draftPathSaved = ''; // path the pending/last-sent draft belongs to, so a document switch can't cross-write it
+  // from here instead of the last save.
+  //
+  // This used to debounce the send itself (~1.2s after typing stopped) and
+  // then try to force-flush on blur/pagehide/visibilitychange when the tab
+  // looked like it might be closing. That was unreliable in practice: a
+  // Cmd/Ctrl+W on an already-focused panel tears it down directly without
+  // reliably running page-lifecycle JS first, so the "flush on the way out"
+  // half of that plan couldn't be counted on — losing whatever was typed in
+  // the last debounce window.
+  //
+  // So instead: every keystroke posts immediately, with no client-side
+  // delay at all — by the time this call returns, the latest content has
+  // already left the panel. The *disk write* is debounced on the backend
+  // instead (see `scheduleDraftWrite` in index.ts), where the timer lives
+  // in the long-running extension host rather than in this page, so it
+  // keeps ticking (and still writes) even if the panel is destroyed a
+  // moment later. The host also flushes immediately on panel disposal, so
+  // real teardown never has to wait out any debounce either.
+  var draftPathSaved = ''; // path the last-sent draft belongs to, so a document switch can't cross-write it
   var draftLastSent = null; // content of the most recent saveDraft actually posted, to skip redundant re-sends
 
   function postDraftSave(path) {
@@ -1381,46 +1395,24 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 
   function scheduleDraftSave() {
     if (!sourcePath || !api || !api.postMessage) return;
-    if (draftTimer) clearTimeout(draftTimer);
-    var path = sourcePath;
-    draftTimer = setTimeout(function () {
-      draftTimer = 0;
-      if (path !== sourcePath) return; // switched documents while the timer was pending
-      postDraftSave(path);
-    }, 1200);
-  }
-
-  function cancelDraftSave() {
-    if (draftTimer) { clearTimeout(draftTimer); draftTimer = 0; }
-  }
-
-  // Debounce alone would lose the last <1.2s of edits when the tab is closed
-  // outright (Cmd/Ctrl+W on the panel, switching Sessions, etc.) rather than
-  // navigated away from in-page — nothing here gets to run *after* teardown,
-  // so any pending edits have to be flushed the instant we learn the panel
-  // may be going away, not on the debounce's own schedule. Skips the round
-  // trip entirely if nothing changed since the last flush (e.g. repeated
-  // window-blur while idle) or if we're not actually pointed at a saved file.
-  function flushDraftSave() {
-    if (!dirty || !sourcePath || !api || !api.postMessage) return;
-    cancelDraftSave();
-    if (draftPathSaved === sourcePath && draftLastSent === markdown) return;
+    if (draftPathSaved === sourcePath && draftLastSent === markdown) return; // nothing actually changed
     postDraftSave(sourcePath);
+  }
+
+  // No-op now that there's no client-side timer to cancel — kept as a named
+  // call so the "we're done editing this document" call sites (save
+  // success, reset to home, document switch) still read as intentional and
+  // reset the dedupe state below them, without every call site needing to
+  // know the send is already synchronous.
+  function cancelDraftSave() {
+    draftPathSaved = '';
+    draftLastSent = null;
   }
 
   function discardDraftFor(path) {
     cancelDraftSave();
     if (path && api && api.postMessage) api.postMessage({ type: 'discardDraft', path: path });
   }
-
-  // visibilitychange fires reliably when a tab/panel is closed or hidden
-  // (unlike beforeunload, which host-embedded panels don't always get a
-  // chance to run); pagehide and window blur are added as extra safety nets
-  // since exactly which of these fire depends on how the host tears the
-  // panel down. All are cheap best-effort synchronous postMessage calls.
-  document.addEventListener('visibilitychange', function () { if (document.hidden) flushDraftSave(); });
-  window.addEventListener('pagehide', flushDraftSave);
-  window.addEventListener('blur', flushDraftSave);
 
   function setDirty(next, justSaved) {
     dirty = next;
