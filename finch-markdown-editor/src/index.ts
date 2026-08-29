@@ -438,21 +438,32 @@ async function renderWithBm(ctx: finch.MiniToolContext, markdown: string, markdo
   return html;
 }
 
-const panelWatchers = new Map<string, FSWatcher>();
+// Debounce timer lives alongside the watcher (not as a bare closure local)
+// so stopWatching() can cancel an *already-scheduled* refresh, not just stop
+// future fs events. Without this, closing the FSWatcher right after our own
+// saveMarkdown write (e.g. the "save and return to Home" flow) still left a
+// pending 150ms timer armed — it fired anyway and pushed the document right
+// back onto a panel that had just reset to the Home screen.
+interface SourceWatch { watcher: FSWatcher; timer?: ReturnType<typeof setTimeout>; }
+const panelWatchers = new Map<string, SourceWatch>();
 let lastPanel: finch.AppPanel | undefined;
 
 function stopWatching(panelId: string): void {
-  panelWatchers.get(panelId)?.close();
+  const entry = panelWatchers.get(panelId);
+  if (entry) {
+    entry.watcher.close();
+    if (entry.timer) clearTimeout(entry.timer);
+  }
   panelWatchers.delete(panelId);
 }
 
 function watchSource(ctx: finch.MiniToolContext, panel: finch.AppPanel, sourcePath: string): void {
   stopWatching(panel.id);
-  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const watcher = watch(sourcePath, () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(async () => {
+    const entry: SourceWatch = { watcher: undefined as unknown as FSWatcher };
+    entry.watcher = watch(sourcePath, () => {
+      if (entry.timer) clearTimeout(entry.timer);
+      entry.timer = setTimeout(async () => {
         try {
           const markdown = await readFile(sourcePath, 'utf8');
           await sendDocument(panel, { path: sourcePath, markdown, title: documentTitle(markdown, sourcePath) });
@@ -461,7 +472,7 @@ function watchSource(ctx: finch.MiniToolContext, panel: finch.AppPanel, sourcePa
         }
       }, 150);
     });
-    panelWatchers.set(panel.id, watcher);
+    panelWatchers.set(panel.id, entry);
   } catch (error) {
     ctx.logger.warn(`Could not watch ${sourcePath}: ${String(error)}`);
   }

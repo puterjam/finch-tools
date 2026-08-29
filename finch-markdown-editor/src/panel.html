@@ -1766,6 +1766,12 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     if (dirty) {
       var choice = await askUnsavedConfirm('「' + (fileName || 'Markdown 文档') + '」还有未保存的改动，要保存后再返回首页吗？');
       if (choice === 'cancel') return;
+      // The user has committed to leaving (save-then-leave or discard-then-
+      // leave) — tell the backend to stop watching *before* the save write
+      // below, not after. Otherwise our own writeFile() triggers its own
+      // fs.watch tick, which can race resetToHome() and push the just-saved
+      // document straight back onto a panel that already reset to Home.
+      if (api && api.postMessage) api.postMessage({ type: 'goHome' });
       if (choice === 'save') {
         var saved = await saveNowAndWait();
         if (!saved) { setStatus('保存失败，未返回首页。', true); return; }
