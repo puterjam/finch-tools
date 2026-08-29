@@ -79,7 +79,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .popup.hidden{display:none}
 @keyframes popup-in{from{opacity:0;transform:translateY(5px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
 @media (prefers-reduced-motion:reduce){.popup{animation:none}}
-.popup input{width:220px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:4px 6px}
+.popup input{width:147px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:4px 6px}
 .popup button{font:inherit;border:0;background:var(--accent);color:#fff;border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap}
 .popup button:hover{opacity:.9}
 /* Unsaved-changes confirm, deliberately a plain in-page overlay rather than
@@ -873,11 +873,15 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     });
   }
 
-  function positionPopup(top, bottom, centerX) {
+  // Anchors the popup to the upper-left of the selection's end (cursor)
+  // position: its right edge lines up with the cursor x and it opens above
+  // when there's room, so it reads as "attached to where you stopped
+  // selecting" rather than floating centered over the whole selection.
+  function positionPopup(top, bottom, cursorX) {
     var margin = 8;
     var w = popup.offsetWidth || 300;
     var h = popup.offsetHeight || 44;
-    var left = Math.max(margin, Math.min(centerX - w / 2, window.innerWidth - w - margin));
+    var left = Math.max(margin, Math.min(cursorX - w, window.innerWidth - w - margin));
     var y = (top - margin >= h + 10) ? (top - h - 10) : (bottom + 10);
     y = Math.max(margin, Math.min(y, window.innerHeight - h - margin));
     popup.style.left = left + 'px';

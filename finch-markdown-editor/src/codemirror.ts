@@ -918,7 +918,16 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       const start = range.from;
       const end = range.to;
       const text = view.state.sliceDoc(start, end);
-      const anchor = view.coordsAtPos(range.head) ?? view.coordsAtPos(end) ?? view.dom.getBoundingClientRect();
+      // Bias toward the upstream side (-1) of the selection's end position:
+      // at a soft-wrap boundary, or right after a literal "\n", the default
+      // (downstream) side reports the coordinates of the *next* visual
+      // line's start instead of the previous line's tail, which would pin
+      // the popup to the wrong line.
+      const anchor =
+        view.coordsAtPos(range.head, -1) ??
+        view.coordsAtPos(range.head) ??
+        view.coordsAtPos(end) ??
+        view.dom.getBoundingClientRect();
       return {
         start,
         end,
