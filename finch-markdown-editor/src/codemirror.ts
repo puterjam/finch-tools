@@ -67,19 +67,14 @@ interface MarkdownEditorOptions {
 // --- Font-size model ---------------------------------------------------
 // `&` (the `.cm-editor` root) is the ONE place an absolute pixel size is
 // set; every other rule below expresses its size as `em`, which resolves
-// against *this* 14px root because `.cm-scroller` and `.cm-gutters` are
-// both direct children of `.cm-editor` (siblings, not nested inside one
+// against this root because `.cm-scroller` and `.cm-gutters` are both
+// direct children of `.cm-editor` (siblings, not nested inside one
 // another) — so there is no hidden chained multiplication to account for.
-// Previously the root itself was `1.2em` (relative to the *host page's*
-// inherited font-size, an indirect and easy-to-miscalculate 16px×1.2×0.8
-// chain) which is why hitting an exact "14px body / 12px gutter" target
-// felt unreliable. Change `CM_ROOT_PX` to shift both together; the ratios
-// below (body 1em, gutter 6/7em) keep the 14:12 relationship intact.
+// The toolbar font-size menu writes the chosen tier (14/16/18) onto this
+// root as an inline style, and body text inherits it unchanged — the menu
+// value IS the rendered body size. The gutter stays a fixed fraction
+// (12/16) of the same root so it scales along.
 const CM_ROOT_PX = 16;
-// Body text = the one ratio shared by the root scroller and the selected
-// cell's embedded editor, so a cell's text keeps the same rendered size
-// the moment it becomes editable (see the .tbl-cell-editor override below).
-const CM_BODY_FONT_SIZE = '0.9em';
 const CM_LINE_WIDTH = '40rem';
 const CM_LINE_MAX_WIDTH = '88%';
 const finchTheme = EditorView.theme({
@@ -100,9 +95,10 @@ const finchTheme = EditorView.theme({
     // never expose a second horizontal scrollbar in the editor pane.
     overflowX: 'hidden',
     overflowY: 'auto',
-    // Body text = the root size itself (14px), i.e. this is the reference
-    // "14px" the human eye actually reads while typing.
-    fontSize: CM_BODY_FONT_SIZE,
+    // No font-size here on purpose: body text inherits the root's inline
+    // size directly, so the toolbar font-size menu value (14/16/18) is
+    // exactly what DevTools measures on body text. An earlier 0.9em made
+    // the 14px tier render at ~12.6px.
   },
   '.cm-content': {
     padding: '20px 0',
@@ -159,14 +155,23 @@ const finchTheme = EditorView.theme({
     width: '100% !important',
     maxWidth: '100%',
   },
-  // The selected cell's embedded editor resolves the package's default
-  // `--tbl-style-font-size: inherit` against its own `.cm-editor` root,
-  // which carries this theme's copied 16px base — one em-step above the
-  // root editor's actual body text. Static cells inherit through the root
-  // `.cm-scroller` instead, so without this pin the text visibly grew the
-  // moment a cell became editable. Same ratio as the root body rule.
-  '.tbl-table-widget .tbl-cell-editor .cm-editor .cm-scroller': {
-    fontSize: CM_BODY_FONT_SIZE,
+  // The selected cell's embedded editor must render at exactly the body
+  // size the surrounding table already shows. Its own root carries the
+  // copied theme base (a fixed 16px), which tracks neither the root
+  // editor's inline font-size (the toolbar font-size menu writes it there)
+  // nor the 0.9em body ratio — so `inherit` from the DOM position is the
+  // only value that stays correct across every menu size. The package's
+  // `--tbl-style-font-size: inherit` then cascades it down to the
+  // scroller/content/line elements unchanged.
+  '.tbl-table-widget .tbl-cell-editor .cm-editor': {
+    fontSize: 'inherit',
+  },
+  // Keep the selected cell's editable text at the same body size: with the
+  // 0.9em chain gone, `inherit` tracks the root editor's inline font-size
+  // (the menu tier) through the DOM, matching the static cells exactly.
+  // An earlier 0.9em here compensated for the old double-scaling chain.
+  '.tbl-cell-editor .cm-editor .cm-content': {
+    fontSize: 'inherit',
   },
   // Tint the active cell / row / column boundary against dark skins. The
   // outline itself keeps the package's default 2px width — its ::after
@@ -311,8 +316,8 @@ const finchTheme = EditorView.theme({
     borderRight: '0px',
     // `.cm-gutters` is a direct child of `.cm-editor` (a sibling of
     // `.cm-scroller`, not nested inside it), so this `em` resolves against
-    // the same 14px root as body text — 6/7em = 12px exactly, independent
-    // of whatever `.cm-scroller`/`.cm-content` end up doing.
+    // the same root the font-size menu writes — 12px at the 16px tier,
+    // scaling with the menu, independent of `.cm-scroller`/`.cm-content`.
     fontSize: `${12 / CM_ROOT_PX}em`,
   },
   '.cm-gutterElement': { padding: '0px 8px 0 10px' },

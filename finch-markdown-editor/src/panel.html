@@ -278,9 +278,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'toolbar.style.customSlotEmpty': '自定义风格 {n}（空）',
       'toolbar.fontSize.tooltipPreview': '预览时不可更改字体',
       'toolbar.fontSize.tooltipEdit': '编辑器字体大小',
-      'toolbar.fontSize.small': '小',
-      'toolbar.fontSize.medium': '中',
-      'toolbar.fontSize.large': '大',
+      'toolbar.fontSize.small': '小 · 14px',
+      'toolbar.fontSize.medium': '中 · 16px',
+      'toolbar.fontSize.large': '大 · 18px',
       'toolbar.fontFamily.default': '默认（无衬线）',
       'toolbar.fontFamily.serif': '衬线体',
       'toolbar.more.reload': '重新渲染',
@@ -403,9 +403,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'toolbar.style.customSlotEmpty': 'Custom style {n} (empty)',
       'toolbar.fontSize.tooltipPreview': "Font can't be changed while previewing",
       'toolbar.fontSize.tooltipEdit': 'Editor font size',
-      'toolbar.fontSize.small': 'Small',
-      'toolbar.fontSize.medium': 'Medium',
-      'toolbar.fontSize.large': 'Large',
+      'toolbar.fontSize.small': 'Small · 14px',
+      'toolbar.fontSize.medium': 'Medium · 16px',
+      'toolbar.fontSize.large': 'Large · 18px',
       'toolbar.fontFamily.default': 'Default (sans-serif)',
       'toolbar.fontFamily.serif': 'Serif',
       'toolbar.more.reload': 'Re-render',
@@ -551,10 +551,13 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     songti: 'Songti SC, STSong, SimSun, Noto Serif CJK SC, serif',
     rounded: 'PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif'
   };
-  var editorFontSize = 16;
+  var editorFontSize = 14;
   var editorFont = 'rounded';
   try {
-    editorFontSize = Number(localStorage.getItem('md-editor-font-size')) || 16;
+    // Only the three menu tiers are valid; anything else (missing, corrupt,
+    // or from an older tier set) falls back to the default 14px tier.
+    var savedFontSize = Number(localStorage.getItem('md-editor-font-size'));
+    if (savedFontSize === 14 || savedFontSize === 16 || savedFontSize === 18) editorFontSize = savedFontSize;
     var savedEditorFont = localStorage.getItem('md-editor-font-family');
     if (EDITOR_FONTS[savedEditorFont]) editorFont = savedEditorFont;
     else if (savedEditorFont) localStorage.removeItem('md-editor-font-family');
