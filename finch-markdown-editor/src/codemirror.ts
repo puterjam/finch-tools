@@ -76,6 +76,10 @@ interface MarkdownEditorOptions {
 // felt unreliable. Change `CM_ROOT_PX` to shift both together; the ratios
 // below (body 1em, gutter 6/7em) keep the 14:12 relationship intact.
 const CM_ROOT_PX = 16;
+// Body text = the one ratio shared by the root scroller and the selected
+// cell's embedded editor, so a cell's text keeps the same rendered size
+// the moment it becomes editable (see the .tbl-cell-editor override below).
+const CM_BODY_FONT_SIZE = '0.9em';
 const CM_LINE_WIDTH = '40rem';
 const CM_LINE_MAX_WIDTH = '88%';
 const finchTheme = EditorView.theme({
@@ -98,7 +102,7 @@ const finchTheme = EditorView.theme({
     overflowY: 'auto',
     // Body text = the root size itself (14px), i.e. this is the reference
     // "14px" the human eye actually reads while typing.
-    fontSize: '0.9em',
+    fontSize: CM_BODY_FONT_SIZE,
   },
   '.cm-content': {
     padding: '20px 0',
@@ -155,25 +159,24 @@ const finchTheme = EditorView.theme({
     width: '100% !important',
     maxWidth: '100%',
   },
-  // Make the active cell / row / column boundary unmistakable against dark
-  // skins. The package only draws a subtle 2px outline by default.
+  // The selected cell's embedded editor resolves the package's default
+  // `--tbl-style-font-size: inherit` against its own `.cm-editor` root,
+  // which carries this theme's copied 16px base — one em-step above the
+  // root editor's actual body text. Static cells inherit through the root
+  // `.cm-scroller` instead, so without this pin the text visibly grew the
+  // moment a cell became editable. Same ratio as the root body rule.
+  '.tbl-table-widget .tbl-cell-editor .cm-editor .cm-scroller': {
+    fontSize: CM_BODY_FONT_SIZE,
+  },
+  // Tint the active cell / row / column boundary against dark skins. The
+  // outline itself keeps the package's default 2px width — its ::after
+  // overlay geometry (`calc(100% + 2px)` at -1px offset) is designed for
+  // exactly that, so wider borders also misaligned the overlay by a pixel.
   '.tbl-table-widget .tbl-cell[data-selected]': {
     backgroundColor: 'color-mix(in srgb, var(--accent) 15%, var(--tbl-row-background))',
   },
   '.tbl-table-widget .tbl-cell[data-outline]::after': {
     backgroundColor: 'color-mix(in srgb, var(--accent) 7%, transparent)',
-  },
-  '.tbl-table-widget .tbl-cell[data-outline~="top"]::after': {
-    borderTopWidth: '3px !important',
-  },
-  '.tbl-table-widget .tbl-cell[data-outline~="right"]::after': {
-    borderRightWidth: '3px !important',
-  },
-  '.tbl-table-widget .tbl-cell[data-outline~="bottom"]::after': {
-    borderBottomWidth: '3px !important',
-  },
-  '.tbl-table-widget .tbl-cell[data-outline~="left"]::after': {
-    borderLeftWidth: '3px !important',
   },
   // Headings get a distinct size per level (h1 largest down to h6), like the
   // rendered preview, so the raw Markdown view already hints at document
