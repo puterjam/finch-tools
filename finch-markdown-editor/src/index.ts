@@ -91,6 +91,25 @@ async function readClipboardImageDataUrls(ctx: finch.MiniToolContext, urls: stri
   return result;
 }
 
+// Mirrors Finch Delivery: the native preview receives the original absolute
+// file path directly. Do not resolve/canonicalize it through URL or realpath
+// again here—the Panel has already decoded `finch-file://local?path=...`.
+async function openLocalImagePreview(ctx: finch.MiniToolContext, filePath: string): Promise<void> {
+  if (!path.isAbsolute(filePath) || !IMAGE_MIME_BY_EXT[path.extname(filePath).toLowerCase()]) {
+    throw new Error('Unsupported local image file.');
+  }
+  await ctx.ui.openFilePreview(filePath);
+}
+
+async function openMarkdownImagePreview(ctx: finch.MiniToolContext, rawUrl: string): Promise<void> {
+  const url = new URL(rawUrl);
+  if (url.protocol === 'http:' || url.protocol === 'https:') {
+    await ctx.browser.open(url.href);
+    return;
+  }
+  throw new Error(`Unsupported image URL: ${url.protocol}`);
+}
+
 interface StyleSlot {
   css: string;
   label: string;
@@ -188,7 +207,7 @@ async function rememberLastPath(ctx: finch.MiniToolContext, panel: finch.AppPane
     const legacyPaths = [...Object.values(state.panels ?? {}), ...Object.values(state.sessions ?? {})];
     state.recentPaths = [sourcePath, ...(state.recentPaths ?? []), ...legacyPaths]
       .filter((value, index, values) => path.isAbsolute(value) && values.indexOf(value) === index)
-      .slice(0, 100);
+      .slice(0, 50);
     state.panels = { ...state.panels, [panel.id]: sourcePath };
     // Keep the previous shape warm for downgrade compatibility, but always
     // prefer the Panel id on reads so Home scopes in different Spaces cannot
@@ -214,7 +233,7 @@ async function readLastPath(ctx: finch.MiniToolContext, panel: finch.AppPanel): 
   return undefined;
 }
 
-const RECENT_LIMIT = 12;
+const RECENT_LIMIT = 50;
 const RECENT_PREVIEW_CHARS = 220;
 
 function isMarkdownPath(filePath: string): boolean {
@@ -541,6 +560,17 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
         await sendDocument(panel, liveDocument);
       } else if (!await restoreDocument(ctx, panel)) {
         await panel.postMessage({ type: 'lastFileUnavailable' });
+      }
+      return;
+    }
+    case 'openImage': {
+      const filePath = String(message.path ?? '').trim();
+      const rawUrl = String(message.url ?? '').trim();
+      try {
+        if (filePath) await openLocalImagePreview(ctx, filePath);
+        else await openMarkdownImagePreview(ctx, rawUrl);
+      } catch (error) {
+        ctx.logger.warn(`Ignored Markdown image preview: ${error instanceof Error ? error.message : String(error)}`);
       }
       return;
     }

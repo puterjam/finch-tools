@@ -942,6 +942,20 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     onOpenLink: function (url) {
       if (api && api.postMessage) api.postMessage({ type: 'openLink', url: url });
     },
+    onOpenImage: function (url) {
+      if (!api || !api.postMessage) return;
+      // Match Finch Delivery's preview message: pass the decoded absolute path
+      // directly to the host for local Finch files, rather than asking it to
+      // parse the custom URL a second time.
+      try {
+        var parsedImageUrl = new URL(url);
+        if (parsedImageUrl.protocol === 'finch-file:' && parsedImageUrl.hostname === 'local') {
+          var imagePath = parsedImageUrl.searchParams.get('path');
+          if (imagePath) { api.postMessage({ type: 'openImage', path: imagePath }); return; }
+        }
+      } catch (_) {}
+      api.postMessage({ type: 'openImage', url: url });
+    },
     onPasteImage: pasteImageToHost,
   });
   cm.setFontSize(editorFontSize);

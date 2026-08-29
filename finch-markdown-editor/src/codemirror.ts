@@ -17,7 +17,7 @@ import {
   TableStyle,
   TableTheme,
 } from 'codemirror-markdown-tables';
-import { RangeSetBuilder, StateField, type RangeSet, type Text } from '@codemirror/state';
+import { EditorState, RangeSetBuilder, StateField, type RangeSet, type Text } from '@codemirror/state';
 import { indentLess, indentMore, indentWithTab, defaultKeymap, historyKeymap } from '@codemirror/commands';
 import { searchKeymap } from '@codemirror/search';
 import {
@@ -57,6 +57,8 @@ interface MarkdownEditorOptions {
   onChange(value: string): void;
   /** Ask the mini tool host to open a web URL in Finch's Browser Panel. */
   onOpenLink?(href: string): void;
+  /** Ask the mini tool host to preview a Markdown image. */
+  onOpenImage?(src: string): void;
   /** Host bridge for a pasted image: given the File, resolve the Markdown
    * image target URL to insert (typically a `finch-file://` URL after the
    * host writes it to disk). Omit to fall back to embedding a data: URL
@@ -219,6 +221,9 @@ const finchTheme = EditorView.theme({
   '.tbl-cell-view .cm-md-delimiter': { display: 'none' },
   '.tbl-cell-view .cm-md-strong': { fontWeight: '700' },
   '.tbl-cell-view .cm-md-emphasis': { fontStyle: 'italic' },
+  '.tbl-table-widget .tbl-table-head .tbl-cell-view, .tbl-table-widget .tbl-table-head .tbl-cell-editor .cm-content': {
+    color: 'var(--accent)',
+  },
   '.cm-md-inline-code': {
     padding: '0.08em 0.32em',
     borderRadius: '5px',
@@ -226,6 +231,52 @@ const finchTheme = EditorView.theme({
     backgroundColor: 'color-mix(in srgb, var(--text) 9%, transparent)',
     fontFamily: 'var(--finch-font-mono)',
     fontSize: '0.8em',
+  },
+  // Image source is replaced inside its own `.cm-line`, rather than becoming
+  // a separate CodeMirror block. The widget and image therefore inherit the
+  // reading column's width instead of the full editor canvas.
+  '.cm-line > .cm-widget:has(.cm-md-image-block)': {
+    display: 'inline-block',
+    width: '100%',
+    maxWidth: '100%',
+  },
+  '.cm-md-image-block': {
+    display: 'inline-block',
+    maxWidth: '100%',
+    margin: '8px 0',
+    lineHeight: '1.4',
+    verticalAlign: 'top',
+  },
+  '.cm-md-image-block img': {
+    display: 'block',
+    maxHeight: '80vh',
+    maxWidth: '100%',
+    width: 'auto',
+    borderRadius: '8px',
+    cursor: 'zoom-in',
+  },
+  // Caption is a separate contenteditable node so users can rename the
+  // image's alt text without ever falling back to raw Markdown source —
+  // that revert used to cause a visible layout jump on selection.
+  '.cm-md-image-caption': {
+    display: 'block',
+    marginTop: '6px',
+    fontSize: '0.82em',
+    lineHeight: '1.4',
+    // Muted until there is real content — matches the placeholder color —
+    // then switches to full text color regardless of focus state.
+    color: 'color-mix(in srgb, var(--muted) 80%, transparent)',
+    outline: 'none',
+    cursor: 'text',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+  },
+  '.cm-md-image-caption:empty::before': {
+    content: 'attr(data-placeholder)',
+    color: 'color-mix(in srgb, var(--muted) 80%, transparent)',
+  },
+  '.cm-md-image-caption:not(:empty)': {
+    color: 'var(--text)',
   },
   '.cm-md-link': {
     color: 'var(--accent) !important',
@@ -243,7 +294,7 @@ const finchTheme = EditorView.theme({
   },
   // List rows sit two characters in from ordinary body text.
   '.cm-line.cm-md-list-line': {
-    paddingLeft: '3ch',
+    paddingLeft: '2ch',
   },
   '.cm-line.cm-md-code-line': {
     color: 'var(--text)',
@@ -282,7 +333,7 @@ const finchTheme = EditorView.theme({
   '.cm-md-code-copy': {
     float: 'right',
     height: '20px',
-    margin: '4px -18px',
+    margin: '4px -7px',
     padding: '0 7px',
     border: '0px',
     borderRadius: '6px',
@@ -530,6 +581,147 @@ function clickableLinkMark(href: string): Decoration {
 //   <https://…>  -> clickable URL (angle brackets hidden)
 //   https://…    -> clickable URL
 // Entering/selecting a link restores its full source for editing.
+class MarkdownImageWidget extends WidgetType {
+  private captionEl: HTMLElement | null = null;
+
+  constructor(private readonly src: string, private readonly alt: string) { super(); }
+  eq(other: MarkdownImageWidget): boolean { return other.src === this.src && other.alt === this.alt; }
+
+  // WidgetType ignores DOM events by default. Clicks on the image itself
+  // (open preview) or on the wrapper background still need to reach the
+  // EditorView, but the caption is a real contenteditable node and must
+  // handle its own clicks/typing/selection without CodeMirror interfering —
+  // otherwise every keystroke would fight with the main editor selection.
+  ignoreEvent(event: Event): boolean {
+    return !!(this.captionEl && event.target instanceof Node && this.captionEl.contains(event.target));
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const wrap = document.createElement('span');
+    wrap.className = 'cm-md-image-block';
+    const image = document.createElement('img');
+    image.src = this.src;
+    image.alt = this.alt;
+    image.dataset.mdImageSrc = this.src;
+    image.title = this.alt || this.src;
+    wrap.appendChild(image);
+
+    // The caption doubles as the Markdown alt text. Edits commit back into
+    // the document on blur/Enter rather than per keystroke, so typing never
+    // triggers a decoration rebuild (no flicker, no lost caret).
+    const caption = document.createElement('div');
+    caption.className = 'cm-md-image-caption';
+    caption.contentEditable = 'plaintext-only' as any;
+    if (caption.contentEditable !== 'plaintext-only') caption.contentEditable = 'true';
+    caption.spellcheck = false;
+    caption.dataset.placeholder = '添加图片说明…';
+    caption.textContent = this.alt;
+    caption.addEventListener('paste', (event) => {
+      event.preventDefault();
+      const text = event.clipboardData?.getData('text/plain') ?? '';
+      document.execCommand('insertText', false, text.replace(/[\r\n]+/g, ' '));
+    });
+    caption.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        caption.blur();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        caption.textContent = this.alt;
+        caption.blur();
+      }
+    });
+    // Deleting all text with backspace often leaves a stray <br> behind,
+    // which would defeat the CSS `:empty` check driving the muted/placeholder
+    // color — normalize it away so "no caption yet" always looks muted.
+    caption.addEventListener('input', () => {
+      if (!caption.textContent) caption.replaceChildren();
+    });
+    caption.addEventListener('blur', () => commitImageCaption(view, wrap, this.alt, caption.textContent ?? ''));
+    wrap.appendChild(caption);
+    this.captionEl = caption;
+    return wrap;
+  }
+}
+
+// Reads back the Image node that currently owns `wrap` (positions shift as
+// the document is edited elsewhere, so this is resolved fresh on commit
+// rather than captured once at decoration build time) and rewrites just its
+// alt text, leaving the URL and title untouched.
+function commitImageCaption(view: EditorView, wrap: HTMLElement, previousAlt: string, nextAlt: string): void {
+  if (nextAlt === previousAlt) return;
+  let pos: number;
+  try { pos = view.posAtDOM(wrap); } catch { return; }
+  const line = view.state.doc.lineAt(Math.min(pos, view.state.doc.length));
+  const found: Array<{ from: number; to: number }> = [];
+  syntaxTree(view.state).iterate({
+    from: line.from,
+    to: line.to,
+    enter: (ref) => {
+      if (ref.name === 'Image' && ref.from <= pos && pos <= ref.to) {
+        found.push({ from: ref.from, to: ref.to });
+        return false;
+      }
+      return undefined;
+    },
+  });
+  const range = found[0];
+  if (!range) return;
+  const source = view.state.sliceDoc(range.from, range.to);
+  const match = /^!\[[^\]]*\](\([^)]*\))/.exec(source);
+  if (!match) return;
+  view.dispatch({ changes: { from: range.from, to: range.to, insert: `![${nextAlt}]${match[1]}` } });
+}
+
+// Block widgets must be delivered through a StateField's direct
+// EditorView.decorations provider. ViewPlugin decorations are computed after
+// viewport layout and may not change vertical layout. Keeping image wrappers
+// in this field makes documents containing images safe to open.
+function imageWrapperDecorations(state: EditorState): DecorationSet {
+  const decorations: any[] = [];
+  syntaxTree(state).iterate({
+    enter: (ref) => {
+      if (ref.name !== 'Image') return undefined;
+      const line = state.doc.lineAt(ref.from);
+      if (line.text.trim() !== state.sliceDoc(ref.from, ref.to)) return false;
+      // Images stay rendered even while the selection sits on them — the
+      // caption is directly editable and the whole node is deletable as one
+      // atomic unit (see `imageAtomicRanges` below), so there is no need to
+      // ever fall back to raw Markdown source and jar the layout.
+      const url = ref.node.getChild('URL');
+      if (!url) return false;
+      const source = state.sliceDoc(ref.from, ref.to);
+      const alt = /^!\[([^\]]*)\]/.exec(source)?.[1] ?? '';
+      const src = state.sliceDoc(url.from, url.to).trim();
+      if (!src) return false;
+      decorations.push(Decoration.replace({
+        widget: new MarkdownImageWidget(src, alt),
+        inclusive: false,
+      }).range(ref.from, ref.to));
+      return false;
+    },
+  });
+  return Decoration.set(decorations, true);
+}
+
+const imageWrapperExtension = StateField.define<DecorationSet>({
+  create: imageWrapperDecorations,
+  update(decorations, transaction) {
+    // Selection no longer changes what an image renders as, so only doc
+    // edits need to recompute this field (cheaper, and avoids needlessly
+    // recreating widget objects — hence caption DOM — on every cursor move).
+    return transaction.docChanged ? imageWrapperDecorations(transaction.state) : decorations.map(transaction.changes);
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+// Treat each image as a single indivisible unit for cursor motion and
+// deletion: arrow keys skip over it in one step, and Backspace/Delete at
+// either boundary removes the whole Markdown source in one keystroke —
+// this is the "select the image and delete it" gesture, no custom
+// selection/keymap handling required.
+const imageAtomicRanges = EditorView.atomicRanges.of((view) => view.state.field(imageWrapperExtension));
+
 function collectLinkPreview(view: EditorView): LinkPreviewResult {
   const decorations: any[] = [];
   const urlRanges: Array<{ from: number; to: number }> = [];
@@ -642,6 +834,27 @@ function handleMarkdownLinkClick(event: MouseEvent, onOpenLink?: (href: string) 
   event.preventDefault();
   event.stopPropagation();
   onOpenLink?.(href);
+  return true;
+}
+
+function markdownImageFromEvent(event: MouseEvent): HTMLImageElement | null {
+  if (event.button !== 0 || !(event.target instanceof Element)) return null;
+  return event.target.closest<HTMLImageElement>('.cm-md-image-block img[data-md-image-src]');
+}
+
+function handleMarkdownImageMouseDown(event: MouseEvent): boolean {
+  if (!markdownImageFromEvent(event)) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  return true;
+}
+
+function handleMarkdownImageClick(event: MouseEvent, onOpenImage?: (src: string) => void): boolean {
+  const src = markdownImageFromEvent(event)?.dataset.mdImageSrc;
+  if (!src) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  onOpenImage?.(src);
   return true;
 }
 
@@ -918,9 +1131,6 @@ function createMarkdownLivePreviewPlugin(previewLinks: boolean) {
 }
 
 const livePreviewMarkdownPlugin = createMarkdownLivePreviewPlugin(true);
-// Cell editors are active editing surfaces: keep links in literal Markdown
-// form there, while the outer document and static cells retain link preview.
-const cellLivePreviewMarkdownPlugin = createMarkdownLivePreviewPlugin(false);
 
 // Pasting an image (e.g. copied from a screenshot tool or another app) has
 // no useful text representation, so the browser's default paste silently
@@ -1014,6 +1224,46 @@ const PURE_DELIMITER_LINE_RE = /^\s*(?:#{1,6}|>|[-+*]|\d+[.)]|`{1,}|\*\*|__|~~|_
 
 function isPureDelimiterLine(text: string): boolean {
   return FENCE_RE.test(text) || HR_RE.test(text) || PURE_DELIMITER_LINE_RE.test(text);
+}
+
+function moveIntoAdjacentTable(view: EditorView, direction: -1 | 1): boolean {
+  const selection = view.state.selection.main;
+  if (!selection.empty) return false;
+  const currentLine = view.state.doc.lineAt(selection.head).number;
+  let tableIndex = -1;
+  let index = 0;
+  syntaxTree(view.state).iterate({
+    enter: (ref) => {
+      if (ref.name !== 'Table') return undefined;
+      const first = view.state.doc.lineAt(ref.from).number;
+      const last = view.state.doc.lineAt(ref.to).number;
+      if ((direction > 0 && first === currentLine + 1) || (direction < 0 && last === currentLine - 1)) {
+        tableIndex = index;
+      }
+      index++;
+      return false;
+    },
+  });
+  if (tableIndex < 0) return false;
+
+  // The table package selects a cell from pointerdown; replay that native
+  // entry path so its own embedded editor, selection state and key bindings
+  // remain authoritative. A frame lets the block widget be measured first.
+  window.requestAnimationFrame(() => {
+    const widget = view.dom.querySelectorAll<HTMLElement>('.tbl-table-widget')[tableIndex];
+    const cells = widget?.querySelectorAll<HTMLElement>('.tbl-cell');
+    if (!cells?.length) return;
+    const cell = cells[direction > 0 ? 0 : cells.length - 1];
+    const rect = cell.getBoundingClientRect();
+    cell.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true,
+      button: 0,
+      clientX: rect.left + Math.min(12, rect.width / 2),
+      clientY: rect.top + Math.min(12, rect.height / 2),
+    }));
+    window.requestAnimationFrame(() => cell.querySelector<HTMLElement>('.tbl-cell-editor .cm-content')?.focus());
+  });
+  return true;
 }
 
 function moveIntoSkippedDelimiterLine(view: EditorView, direction: -1 | 1): boolean {
@@ -1277,17 +1527,31 @@ function installStaticTableCellPreview(root: HTMLElement): () => void {
     cell.dataset.mdPreviewSource = source;
     cell.innerHTML = `<span data-md-preview="true">${renderStaticTableCellMarkdown(source)}</span>`;
   });
+  // Svelte can unmount the cell editor and restore its static sibling across
+  // several microtasks. Render on the next animation frame, after that DOM
+  // transition settles, instead of racing its intermediate static markup.
+  let frame = 0;
+  const scheduleRender = () => {
+    if (frame) return;
+    frame = window.requestAnimationFrame(() => {
+      frame = 0;
+      render();
+    });
+  };
   render();
-  const observer = new MutationObserver(() => render());
+  const observer = new MutationObserver(scheduleRender);
   observer.observe(root, { childList: true, subtree: true, characterData: true });
-  return () => observer.disconnect();
+  return () => {
+    observer.disconnect();
+    if (frame) window.cancelAnimationFrame(frame);
+  };
 }
 
 const markdownEditorKeymap = keymap.of([
   { key: '`', run: handleFenceTriggerBacktick },
   { key: 'Enter', run: completeOpeningCodeFence },
-  { key: 'ArrowUp', run: (view) => moveIntoSkippedDelimiterLine(view, -1) },
-  { key: 'ArrowDown', run: (view) => moveIntoSkippedDelimiterLine(view, 1) },
+  { key: 'ArrowUp', run: (view) => moveIntoAdjacentTable(view, -1) || moveIntoSkippedDelimiterLine(view, -1) },
+  { key: 'ArrowDown', run: (view) => moveIntoAdjacentTable(view, 1) || moveIntoSkippedDelimiterLine(view, 1) },
   { key: 'Tab', run: (view) => selectionStartsOnListItem(view) && indentMore(view) },
   { key: 'Shift-Tab', run: (view) => selectionStartsOnListItem(view) && indentLess(view) },
   { key: 'Alt-Mod-t', run: insertEmptyMarkdownTable() },
@@ -1339,13 +1603,12 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
         // Undo/redo and search inside a cell must act on the document's
         // history, which lives on the root editor — delegate those keys up.
         globalKeyBindings: [...historyKeymap, ...searchKeymap],
-        // Cell-local preview handles lightweight inline formatting only:
-        // emphasis/strong emphasis and inline code. Links deliberately stay
-        // literal Markdown in an active cell, while static cells render them.
+        // A selected cell is an editing surface: keep its Markdown entirely
+        // literal. This also keeps the DOM text lossless for static-cell
+        // synchronization when the embedded editor unmounts.
         extensions: [
           cellMarkdownSupport,
           syntaxHighlighting(markdownHighlight),
-          cellLivePreviewMarkdownPlugin,
           keymap.of(defaultKeymap),
         ],
       }),
@@ -1353,10 +1616,12 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       finchTheme,
       syntaxHighlighting(markdownHighlight),
       blockSpacingPlugin,
+      imageWrapperExtension,
+      imageAtomicRanges,
       livePreviewMarkdownPlugin,
       EditorView.domEventHandlers({
-        mousedown: (event) => handleMarkdownLinkMouseDown(event),
-        click: (event) => handleMarkdownLinkClick(event, options.onOpenLink),
+        mousedown: (event) => handleMarkdownImageMouseDown(event) || handleMarkdownLinkMouseDown(event),
+        click: (event) => handleMarkdownImageClick(event, options.onOpenImage) || handleMarkdownLinkClick(event, options.onOpenLink),
         paste: (event, dispatchView) => imagePasteHandler(dispatchView, event, options.onPasteImage),
         drop: (event, dispatchView) => imageDropHandler(dispatchView, event, options.onPasteImage),
       }),
