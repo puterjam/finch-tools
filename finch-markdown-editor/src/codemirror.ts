@@ -74,6 +74,8 @@ interface MarkdownEditorOptions {
 // felt unreliable. Change `CM_ROOT_PX` to shift both together; the ratios
 // below (body 1em, gutter 6/7em) keep the 14:12 relationship intact.
 const CM_ROOT_PX = 16;
+const CM_LINE_WIDTH = '40rem';
+const CM_LINE_MAX_WIDTH = '88%';
 const finchTheme = EditorView.theme({
   '&': {
     height: '100%',
@@ -125,12 +127,61 @@ const finchTheme = EditorView.theme({
   '.cm-line': {
     // '--md-line-pad': 'max(24px, calc((100% - 750px) / 2))',
     boxSizing: 'border-box',
-    width: '40rem',
-    maxWidth: '88%',
+    width: CM_LINE_WIDTH,
+    maxWidth: CM_LINE_MAX_WIDTH,
     marginInline: 'auto',
     paddingTop: '2px',
     paddingBottom: '2px',
     lineHeight: '1.7rem',
+  },
+  // A block replacement leaves CodeMirror's source-line box immediately
+  // before the widget. Collapse that empty box so the table occupies its
+  // actual first source line instead of appearing one visual row below it.
+  '.cm-content > .cm-line:has(+ .tbl-table-widget)': {
+    height: '0 !important',
+    minHeight: '0 !important',
+    paddingTop: '0 !important',
+    paddingBottom: '0 !important',
+    lineHeight: '0 !important',
+    overflow: 'hidden',
+  },
+  // Match the same centered reading column as ordinary `.cm-line` content.
+  // The small right/bottom inset keeps the package's append-row/column grips
+  // visible without letting the table itself exceed the readable column.
+  '.cm-content > .tbl-table-widget': {
+    boxSizing: 'border-box',
+    width: `${CM_LINE_WIDTH} !important`,
+    maxWidth: `${CM_LINE_MAX_WIDTH} !important`,
+    marginInline: 'auto !important',
+    padding: '0 16px 16px 6px !important',
+  },
+  '.tbl-table-widget .tbl-table-wrapper': {
+    width: '100% !important',
+    maxWidth: '100%',
+  },
+  '.tbl-table-widget .tbl-table': {
+    width: '100% !important',
+    maxWidth: '100%',
+  },
+  // Make the active cell / row / column boundary unmistakable against dark
+  // skins. The package only draws a subtle 2px outline by default.
+  '.tbl-table-widget .tbl-cell[data-selected]': {
+    backgroundColor: 'color-mix(in srgb, var(--accent) 15%, var(--tbl-row-background))',
+  },
+  '.tbl-table-widget .tbl-cell[data-outline]::after': {
+    backgroundColor: 'color-mix(in srgb, var(--accent) 7%, transparent)',
+  },
+  '.tbl-table-widget .tbl-cell[data-outline~="top"]::after': {
+    borderTopWidth: '3px !important',
+  },
+  '.tbl-table-widget .tbl-cell[data-outline~="right"]::after': {
+    borderRightWidth: '3px !important',
+  },
+  '.tbl-table-widget .tbl-cell[data-outline~="bottom"]::after': {
+    borderBottomWidth: '3px !important',
+  },
+  '.tbl-table-widget .tbl-cell[data-outline~="left"]::after': {
+    borderLeftWidth: '3px !important',
   },
   // Headings get a distinct size per level (h1 largest down to h6), like the
   // rendered preview, so the raw Markdown view already hints at document
@@ -1035,7 +1086,7 @@ const finchTableTheme = TableTheme.light.with({
   '--tbl-theme-even-row-background': 'color-mix(in srgb, var(--text) 4%, var(--card))',
   '--tbl-theme-header-row-background': 'color-mix(in srgb, var(--text) 9%, var(--card))',
   '--tbl-theme-text-color': 'var(--text)',
-  '--tbl-theme-outline-color': 'var(--border)',
+  '--tbl-theme-outline-color': 'var(--accent)',
   '--tbl-theme-border-color': 'color-mix(in srgb, var(--text) 16%, transparent)',
   '--tbl-theme-border-hover-color': 'color-mix(in srgb, var(--accent) 50%, transparent)',
   '--tbl-theme-border-active-color': 'var(--accent)',
@@ -1044,8 +1095,8 @@ const finchTableTheme = TableTheme.light.with({
   '--tbl-theme-menu-border-color': 'var(--border)',
   '--tbl-theme-menu-hover-background': 'color-mix(in srgb, var(--accent) 14%, transparent)',
   '--tbl-theme-menu-hover-text-color': 'var(--text)',
-  '--tbl-theme-select-all-focus-overlay': 'color-mix(in srgb, var(--accent) 20%, transparent)',
-  '--tbl-theme-select-all-blur-overlay': 'color-mix(in srgb, var(--text) 10%, transparent)',
+  '--tbl-theme-select-all-focus-overlay': 'color-mix(in srgb, var(--accent) 34%, transparent)',
+  '--tbl-theme-select-all-blur-overlay': 'color-mix(in srgb, var(--accent) 18%, transparent)',
 });
 
 // Table prose follows the editor's own font menu (--md-editor-font-family is
@@ -1054,6 +1105,69 @@ const finchTableStyle = TableStyle.default.with({
   '--tbl-style-font-family': 'var(--md-editor-font-family, var(--finch-font-mono))',
   '--tbl-style-menu-font-family': 'var(--finch-font-body, system-ui)',
 });
+
+// codemirror-markdown-tables v1.0.1 hardcodes its Svelte menu labels and does
+// not expose a locale/labels config. Translate only the leaf text nodes at
+// the portal boundary; actions, icons and DOM structure remain package-owned.
+const TABLE_MENU_ZH: Record<string, string> = {
+  'Sort by column (A-Z)': '按列升序（A–Z）',
+  'Sort by column (Z-A)': '按列降序（Z–A）',
+  'Sort by row (A-Z)': '按行升序（A–Z）',
+  'Sort by row (Z-A)': '按行降序（Z–A）',
+  'Align none': '取消对齐',
+  'Align left': '左对齐',
+  'Align center': '居中对齐',
+  'Align right': '右对齐',
+  'Add row above': '在上方添加行',
+  'Add row below': '在下方添加行',
+  'Add column before': '在左侧添加列',
+  'Add column after': '在右侧添加列',
+  'Move row up': '上移行',
+  'Move row down': '下移行',
+  'Move column left': '左移列',
+  'Move column right': '右移列',
+  'Duplicate row': '复制行',
+  'Duplicate column': '复制列',
+  'Clear row': '清空行',
+  'Clear column': '清空列',
+  'Delete row': '删除行',
+  'Delete column': '删除列',
+};
+const TABLE_MENU_EN = new Map(Object.entries(TABLE_MENU_ZH).map(([en, zh]) => [zh, en]));
+
+function translateTableMenus(): void {
+  const isZh = /^zh/i.test(document.documentElement.lang);
+  document.querySelectorAll<HTMLElement>('.tbl-menu-item-text').forEach((element) => {
+    const current = (element.textContent || '').trim();
+    const english = TABLE_MENU_EN.get(current) || current;
+    const next = isZh ? TABLE_MENU_ZH[english] || current : english;
+    // Avoid a MutationObserver feedback loop — setting identical textContent
+    // would still emit another childList mutation.
+    if (next !== current) element.textContent = next;
+  });
+}
+
+function installTableMenuI18n(): () => void {
+  translateTableMenus();
+  const observer = new MutationObserver((mutations) => {
+    const menuChanged = mutations.some((mutation) => {
+      if (mutation.type === 'attributes') return true;
+      if (mutation.target instanceof Element && mutation.target.closest('.tbl-menu')) return true;
+      return Array.from(mutation.addedNodes).some((node) =>
+        node instanceof Element
+        && (node.matches('.tbl-menu, .tbl-menu-item-text') || !!node.querySelector('.tbl-menu-item-text')),
+      );
+    });
+    if (menuChanged) translateTableMenus();
+  });
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['lang'],
+  });
+  return () => observer.disconnect();
+}
 
 const markdownEditorKeymap = keymap.of([
   { key: '`', run: handleFenceTriggerBacktick },
@@ -1128,6 +1242,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       }),
     ],
   });
+  const disposeTableMenuI18n = installTableMenuI18n();
 
   return {
     getValue: () => view.state.doc.toString(),
@@ -1174,7 +1289,10 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       view.requestMeasure();
     },
     scrollDOM: view.scrollDOM,
-    destroy: () => view.destroy(),
+    destroy() {
+      disposeTableMenuI18n();
+      view.destroy();
+    },
   };
 }
 
