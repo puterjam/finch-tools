@@ -8,10 +8,18 @@ import { python } from '@codemirror/lang-python';
 import { sql } from '@codemirror/lang-sql';
 import { yaml } from '@codemirror/lang-yaml';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
-import { HighlightStyle, LanguageDescription, LanguageSupport, StreamLanguage, syntaxHighlighting } from '@codemirror/language';
+import { HighlightStyle, LanguageDescription, LanguageSupport, StreamLanguage, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
+import {
+  insertEmptyMarkdownTable,
+  markdownTableAutocompleter,
+  markdownTables,
+  TableStyle,
+  TableTheme,
+} from 'codemirror-markdown-tables';
 import { RangeSetBuilder, StateField, type RangeSet, type Text } from '@codemirror/state';
-import { indentLess, indentMore, indentWithTab } from '@codemirror/commands';
+import { indentLess, indentMore, indentWithTab, defaultKeymap, historyKeymap } from '@codemirror/commands';
+import { searchKeymap } from '@codemirror/search';
 import {
   Decoration,
   type DecorationSet,
@@ -572,12 +580,34 @@ function collectCodeLines(view: EditorView): Map<number, CodeLineInfo> {
   return result;
 }
 
+// GFM Table blocks are rendered by the interactive table widget (a block
+// replacing decoration spanning the whole table). The live-preview pass must
+// leave those lines alone — its inline hidden-marker replacements would
+// overlap the replaced block, and the widget draws cell content itself.
+function collectTableLines(view: EditorView): Set<number> {
+  const lines = new Set<number>();
+  syntaxTree(view.state).iterate({
+    enter: (node) => {
+      if (node.name === 'Table') {
+        const first = view.state.doc.lineAt(node.from).number;
+        const last = view.state.doc.lineAt(node.to).number;
+        for (let n = first; n <= last; n++) lines.add(n);
+        return false;
+      }
+      return undefined;
+    },
+  });
+  return lines;
+}
+
 function computeMarkdownLivePreview(view: EditorView): DecorationSet {
   const ranges: any[] = [];
   const doc = view.state.doc;
   const codeLines = collectCodeLines(view);
+  const tableLines = collectTableLines(view);
   for (let lineNo = 1; lineNo <= doc.lines; lineNo++) {
     const line = doc.line(lineNo);
+    if (tableLines.has(lineNo)) continue;
     const active = lineIntersectsSelection(view, line.from, line.to);
     const codeInfo = codeLines.get(lineNo);
 
@@ -860,6 +890,39 @@ function completeOpeningCodeFence(view: EditorView): boolean {
   return true;
 }
 
+// --- Interactive Markdown tables ----------------------------------------
+// `codemirror-markdown-tables` replaces GFM table syntax with an editable
+// table component (Tab/Enter move between cells, borders insert/delete rows
+// and columns, headers drag to reorder). All theme colors are expressed as
+// panel CSS variables, so the table follows the Finch skin — light or dark —
+// with no extra wiring; the single-theme form applies in both CodeMirror
+// light/dark modes (the editor never sets the `dark` facet).
+const finchTableTheme = TableTheme.light.with({
+  '--tbl-theme-row-background': 'var(--card)',
+  '--tbl-theme-odd-row-background': 'var(--card)',
+  '--tbl-theme-even-row-background': 'color-mix(in srgb, var(--text) 4%, var(--card))',
+  '--tbl-theme-header-row-background': 'color-mix(in srgb, var(--text) 9%, var(--card))',
+  '--tbl-theme-text-color': 'var(--text)',
+  '--tbl-theme-outline-color': 'var(--border)',
+  '--tbl-theme-border-color': 'color-mix(in srgb, var(--text) 16%, transparent)',
+  '--tbl-theme-border-hover-color': 'color-mix(in srgb, var(--accent) 50%, transparent)',
+  '--tbl-theme-border-active-color': 'var(--accent)',
+  '--tbl-theme-menu-background': 'var(--card)',
+  '--tbl-theme-menu-text-color': 'var(--text)',
+  '--tbl-theme-menu-border-color': 'var(--border)',
+  '--tbl-theme-menu-hover-background': 'color-mix(in srgb, var(--accent) 14%, transparent)',
+  '--tbl-theme-menu-hover-text-color': 'var(--text)',
+  '--tbl-theme-select-all-focus-overlay': 'color-mix(in srgb, var(--accent) 20%, transparent)',
+  '--tbl-theme-select-all-blur-overlay': 'color-mix(in srgb, var(--text) 10%, transparent)',
+});
+
+// Table prose follows the editor's own font menu (--md-editor-font-family is
+// set on the editor root by setFontFamily); menus use the Finch UI font.
+const finchTableStyle = TableStyle.default.with({
+  '--tbl-style-font-family': 'var(--md-editor-font-family, var(--finch-font-mono))',
+  '--tbl-style-menu-font-family': 'var(--finch-font-body, system-ui)',
+});
+
 const markdownEditorKeymap = keymap.of([
   { key: '`', run: handleFenceTriggerBacktick },
   { key: 'Enter', run: completeOpeningCodeFence },
@@ -867,11 +930,22 @@ const markdownEditorKeymap = keymap.of([
   { key: 'ArrowDown', run: (view) => moveIntoSkippedDelimiterLine(view, 1) },
   { key: 'Tab', run: (view) => selectionStartsOnListItem(view) && indentMore(view) },
   { key: 'Shift-Tab', run: (view) => selectionStartsOnListItem(view) && indentLess(view) },
+  { key: 'Alt-Mod-t', run: insertEmptyMarkdownTable() },
   indentWithTab,
 ]);
 
 function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHandle {
   let suppressChange = false;
+  const markdownSupport = markdown({
+    codeLanguages: fencedCodeLanguages,
+    // CommonMark's Setext heading rule silently promotes a plain line of
+    // text into a bold, accent-colored H1/H2 whenever it's immediately
+    // followed (no blank line) by a `-`/`=` divider — surprising in this
+    // editor, where `---` is meant to always read as a plain horizontal
+    // rule. Dropping the SetextHeading block parser keeps that divider
+    // literal instead of retroactively re-coloring the line above it.
+    extensions: [{ remove: ['SetextHeading'] }],
+  });
   const view = new EditorView({
     doc: options.value ?? '',
     parent: options.parent,
@@ -879,15 +953,27 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       markdownEditorKeymap,
       basicSetup,
       codeGutterLineHighlighter,
-      markdown({
-        codeLanguages: fencedCodeLanguages,
-        // CommonMark's Setext heading rule silently promotes a plain line of
-        // text into a bold, accent-colored H1/H2 whenever it's immediately
-        // followed (no blank line) by a `-`/`=` divider — surprising in this
-        // editor, where `---` is meant to always read as a plain horizontal
-        // rule. Dropping the SetextHeading block parser keeps that divider
-        // literal instead of retroactively re-coloring the line above it.
-        extensions: [{ remove: ['SetextHeading'] }],
+      markdownSupport,
+      // Typing `|` on an empty line pops a table-size picker (2x2/3x3/4x4)
+      // via CodeMirror's own autocompletion (basicSetup already includes
+      // the autocompletion extension).
+      markdownSupport.language.data.of({ autocomplete: markdownTableAutocompleter() }),
+      // Interactive table component: Tab/Enter navigate cells, borders
+      // insert/delete rows & columns, row/column headers drag to reorder.
+      markdownTables({
+        theme: finchTableTheme,
+        style: finchTableStyle,
+        // `.cm-content` has no horizontal padding, so the row/column grips
+        // sit on the table's own top/left border instead of hanging outside
+        // the editor edge where they would be clipped.
+        handlePosition: 'inside',
+        // Undo/redo and search inside a cell must act on the document's
+        // history, which lives on the root editor — delegate those keys up.
+        globalKeyBindings: [...historyKeymap, ...searchKeymap],
+        // Cell-local extensions: keep syntax colors on the Finch skin (the
+        // default palette is light-mode oriented), and defaultKeymap gives
+        // cell-scoped shortcuts like Cmd+A selecting the cell's own text.
+        extensions: [syntaxHighlighting(markdownHighlight), keymap.of(defaultKeymap)],
       }),
       EditorView.lineWrapping,
       finchTheme,

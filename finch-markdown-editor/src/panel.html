@@ -250,7 +250,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'actions.exportPdf': '导出 PDF',
       'actions.aiStyle': '让 AI 设计排版',
       'actions.toggle': '展开/收起',
-      'popup.placeholder': '让 {name} 怎么改这段？',
+      'popup.placeholder': '让 {name} 编辑',
       'popup.send': '发送',
       'confirm.cancel': '取消',
       'confirm.discard': '不保存',
@@ -375,7 +375,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'actions.exportPdf': 'Export PDF',
       'actions.aiStyle': 'Ask AI to design layout',
       'actions.toggle': 'Expand/collapse',
-      'popup.placeholder': 'How should {name} revise this?',
+      'popup.placeholder': 'Let {name} edit',
       'popup.send': 'Send',
       'confirm.cancel': 'Cancel',
       'confirm.discard': "Don't save",
@@ -642,7 +642,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       : t('home.tagline.default');
   }
 
-  // "让 AI 怎么改这段？" placeholder becomes "让 <assistant name> 怎么改这段？"
+  // "让 AI 编辑" placeholder becomes "让 <assistant name> 编辑"
   // once the real assistant name arrives — same withAssistant/default split
   // as the tagline above, so the popup never claims to be a generic "AI"
   // when it's actually this session's named assistant. Fallback "Finch"
