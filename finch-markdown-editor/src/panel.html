@@ -1314,6 +1314,22 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   async function submitAnnotation() {
     var comment = popupInput.value.trim();
     if (!selection.text || !api || !api.composer) return;
+    // The prompt tells the AI it can read/overwrite the file at `sourcePath`
+    // directly — but if there are unsaved edits, disk still has the old
+    // content: the AI would read stale context (or, if it applies a
+    // full-document rewrite based on that stale read, would clobber the
+    // very edits the user hasn't saved yet). Flush to disk first whenever
+    // there's somewhere to save to, so the file the AI reads always matches
+    // what's on screen. A brand new unsaved document (no sourcePath) has
+    // nowhere to save to yet — the prompt already says so via
+    // `annotate.pathMissing` — so there's nothing to flush in that case.
+    if (dirty && sourcePath) {
+      var saved = await saveNowAndWait();
+      if (!saved) {
+        setStatus(t('status.saveFailedNoReturn'), true);
+        return;
+      }
+    }
     try {
       await api.composer.addContexts([{
         type: 'annotation',
