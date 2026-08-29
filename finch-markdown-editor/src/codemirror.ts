@@ -918,14 +918,16 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       const start = range.from;
       const end = range.to;
       const text = view.state.sliceDoc(start, end);
-      // Bias toward the upstream side (-1) of the selection's end position:
-      // at a soft-wrap boundary, or right after a literal "\n", the default
-      // (downstream) side reports the coordinates of the *next* visual
-      // line's start instead of the previous line's tail, which would pin
-      // the popup to the wrong line.
+      // Always anchor to `end` (range.to), not `range.head`: head is
+      // whichever side the caret landed on, so a backward drag (or a
+      // backward keyboard selection) would put it at the *start* of the
+      // selection instead of its end. Bias toward the upstream side (-1)
+      // of that position: at a soft-wrap boundary, or right after a
+      // literal "\n", the default (downstream) side reports the
+      // coordinates of the *next* visual line's start instead of the
+      // previous line's tail, which would pin the popup to the wrong line.
       const anchor =
-        view.coordsAtPos(range.head, -1) ??
-        view.coordsAtPos(range.head) ??
+        view.coordsAtPos(end, -1) ??
         view.coordsAtPos(end) ??
         view.dom.getBoundingClientRect();
       return {
