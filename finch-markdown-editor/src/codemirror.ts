@@ -795,10 +795,46 @@ function moveIntoSkippedDelimiterLine(view: EditorView, direction: -1 | 1): bool
   return true;
 }
 
-// Pressing Enter on an unmatched opening fence completes the block before
-// prose can accidentally become code. Do this on Enter (rather than as soon
-// as the third backtick is typed) so ` ```ts` / ` ```python` remain natural
-// to type. The cursor lands on the empty code line between the two fences.
+// Completes the fence block the instant the 3rd backtick is typed — not on
+// Enter — so it feels like the same "type ``` and it closes itself" moment
+// editors like Typora/Obsidian give. Only intercepts the specific keystroke
+// that turns "``" into "```" at the start of an otherwise-empty line (empty
+// but for leading whitespace, and nothing after the cursor); any other
+// backtick keystroke (inline code spans, a 4th+ backtick, etc.) falls
+// through to normal self-insertion. `` ```ts `` / `` ```python `` are still
+// natural to type: the cursor lands right after the 3rd backtick, on the
+// same (opening) line, so the language name types in before the new blank
+// + closing-fence lines below it.
+function handleFenceTriggerBacktick(view: EditorView): boolean {
+  const selection = view.state.selection.main;
+  if (!selection.empty) return false;
+  const line = view.state.doc.lineAt(selection.head);
+  const before = line.text.slice(0, selection.head - line.from);
+  const after = line.text.slice(selection.head - line.from);
+  if (!/^\s*``$/.test(before) || after.trim() !== '') return false;
+
+  let precedingFences = 0;
+  for (let lineNo = 1; lineNo < line.number; lineNo++) {
+    if (FENCE_RE.test(view.state.doc.line(lineNo).text)) precedingFences++;
+  }
+  // An odd number of preceding fences means this one closes an existing
+  // block, so it should type as a plain backtick, not trigger completion.
+  if (precedingFences % 2 !== 0) return false;
+
+  const indent = /^\s*/.exec(before)?.[0] ?? '';
+  const closing = `${indent}\`\`\``;
+  view.dispatch({
+    changes: { from: selection.head, insert: `\`\n\n${closing}` },
+    selection: { anchor: selection.head + 1 },
+    scrollIntoView: true,
+  });
+  return true;
+}
+
+// Fallback for a pasted opening fence (three backticks landing in one paste,
+// so the per-keystroke handler above never sees them individually): Enter
+// still completes an unmatched opening fence into a full block. The cursor
+// lands on the empty code line between the two fences.
 function completeOpeningCodeFence(view: EditorView): boolean {
   const selection = view.state.selection.main;
   if (!selection.empty) return false;
@@ -825,6 +861,7 @@ function completeOpeningCodeFence(view: EditorView): boolean {
 }
 
 const markdownEditorKeymap = keymap.of([
+  { key: '`', run: handleFenceTriggerBacktick },
   { key: 'Enter', run: completeOpeningCodeFence },
   { key: 'ArrowUp', run: (view) => moveIntoSkippedDelimiterLine(view, -1) },
   { key: 'ArrowDown', run: (view) => moveIntoSkippedDelimiterLine(view, 1) },
