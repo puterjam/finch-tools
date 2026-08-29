@@ -148,7 +148,7 @@ const finchTheme = EditorView.theme({
     padding: '0 16px 16px 6px !important',
   },
   '.tbl-table-widget .tbl-table-wrapper': {
-    width: 'auto !important',
+    // width: 'auto !important',
     maxWidth: '100%',
   },
   '.tbl-table-widget .tbl-table': {
@@ -163,18 +163,20 @@ const finchTheme = EditorView.theme({
   // only value that stays correct across every menu size. The package's
   // `--tbl-style-font-size: inherit` then cascades it down to the
   // scroller/content/line elements unchanged.
-  '.tbl-table-widget .tbl-cell-editor .cm-editor': {
-    fontSize: '0.8rem',
+  '.tbl-cell-editor .cm-editor .cm-line': {
+    fontSize: '0.9rem',
+    fontFamily: 'var(--md-editor-font-family, var(--finch-font-mono))',
   },
   // Keep the selected cell's editable text at the same body size: with the
   // 0.9em chain gone, `inherit` tracks the root editor's inline font-size
   // (the menu tier) through the DOM, matching the static cells exactly.
   // An earlier 0.9em here compensated for the old double-scaling chain.
-  '.tbl-cell-editor .cm-editor .cm-content': {
-    fontSize: '0.8rem',
-  },
+  // '.tbl-cell-editor .cm-editor .cm-content': {
+  //   fontSize: '0.8rem',
+  // },
   '.tbl-cell-view': {
-    fontSize: '0.8rem',
+    fontSize: '0.9rem',
+    fontFamily: 'var(--md-editor-font-family, var(--finch-font-mono))',
   },
   // Tint the active cell / row / column boundary against dark skins. The
   // outline itself keeps the package's default 2px width — its ::after
@@ -198,12 +200,12 @@ const finchTheme = EditorView.theme({
   // instead of ballooning past body size the way a flat +0.1em/level did.
   // Kept deliberately compact for source editing: hierarchy comes mostly
   // from weight and Markdown's accent syntax, rather than oversized rows.
-  '.cm-line.cm-md-h1': { fontSize: '1.45em', fontWeight: '700', lineHeight: '1.4' },
-  '.cm-line.cm-md-h2': { fontSize: '1.3em', fontWeight: '700', lineHeight: '1.4' },
-  '.cm-line.cm-md-h3': { fontSize: '1.2em', fontWeight: '700', lineHeight: '1.4' },
-  '.cm-line.cm-md-h4': { fontSize: '1.1em', fontWeight: '700', lineHeight: '1.4' },
-  '.cm-line.cm-md-h5': { fontSize: '1.04em', fontWeight: '700', lineHeight: '1.4' },
-  '.cm-line.cm-md-h6': { fontSize: '1em', fontWeight: '700', lineHeight: '1.4' },
+  '.cm-line.cm-md-h1': { fontSize: '1.45em', fontWeight: '700', lineHeight: 'normal !important' },
+  '.cm-line.cm-md-h2': { fontSize: '1.3em', fontWeight: '700', lineHeight: 'normal !important' },
+  '.cm-line.cm-md-h3': { fontSize: '1.2em', fontWeight: '700', lineHeight: 'normal !important' },
+  '.cm-line.cm-md-h4': { fontSize: '1.1em', fontWeight: '700', lineHeight: 'normal !important' },
+  '.cm-line.cm-md-h5': { fontSize: '1.04em', fontWeight: '700', lineHeight: 'normal !important' },
+  '.cm-line.cm-md-h6': { fontSize: '1em', fontWeight: '700', lineHeight: 'normal !important' },
   // Source-mode live preview: non-active Markdown delimiters collapse out of
   // sight; the cursor/selection line deliberately has no such decoration.
   '.cm-md-bullet': {
@@ -214,6 +216,9 @@ const finchTheme = EditorView.theme({
     textAlign: 'center',
     fontFamily: 'monospace',
   },
+  '.tbl-cell-view .cm-md-delimiter': { display: 'none' },
+  '.tbl-cell-view .cm-md-strong': { fontWeight: '700' },
+  '.tbl-cell-view .cm-md-emphasis': { fontStyle: 'italic' },
   '.cm-md-inline-code': {
     padding: '0.08em 0.32em',
     borderRadius: '5px',
@@ -250,9 +255,9 @@ const finchTheme = EditorView.theme({
     fontFamily: 'var(--finch-font-mono)',
     paddingTop: '0',
     paddingBottom: '0',
-    paddingLeft: '12px',
-    paddingRight: '12px',
-    fontSize: '12px !important',
+    paddingLeft: '24px',
+    paddingRight: '24px',
+    fontSize: '0.8em !important',
   },
 
   '.cm-line.cm-md-code-line span': {
@@ -263,17 +268,21 @@ const finchTheme = EditorView.theme({
     borderRadius: '8px 8px 0 0',
     height: '22px',
     paddingTop: '2px',
+    paddingLeft: '12px',
+    paddingRight: '12px',
   },
   '.cm-line.cm-md-code-close': {
     fontSize: '12px',
     borderRadius: '0 0 8px 8px',
     height: '22px',
+    paddingLeft: '12px',
+    paddingRight: '12px',
   },
   '.cm-md-code-fence-empty': { opacity: '0' },
   '.cm-md-code-copy': {
     float: 'right',
     height: '20px',
-    margin: '4px -8px',
+    margin: '4px -18px',
     padding: '0 7px',
     border: '0px',
     borderRadius: '6px',
@@ -336,6 +345,7 @@ const finchTheme = EditorView.theme({
         lineHeight: '32px',
         color: 'color-mix(in srgb, var(--muted) 35%, transparent)',
         fontFamily: 'var(--finch-font-mono)',
+        fontSize: '12px',
   },
   // Fenced code lines render at a smaller font/line-height than prose
   // (`.cm-md-code-line` above), so their gutter row gets its own
@@ -813,12 +823,14 @@ function collectTableLines(view: EditorView): Set<number> {
   return lines;
 }
 
-function computeMarkdownLivePreview(view: EditorView): DecorationSet {
+function computeMarkdownLivePreview(view: EditorView, previewLinks = true): DecorationSet {
   const ranges: any[] = [];
   const doc = view.state.doc;
   const codeLines = collectCodeLines(view);
   const tableLines = collectTableLines(view);
-  const linkPreview = collectLinkPreview(view);
+  const linkPreview: LinkPreviewResult = previewLinks
+    ? collectLinkPreview(view)
+    : { decorations: [], urlRanges: [] };
   ranges.push(...linkPreview.decorations, ...collectInlineFormatPreview(view));
   for (let lineNo = 1; lineNo <= doc.lines; lineNo++) {
     const line = doc.line(lineNo);
@@ -890,18 +902,25 @@ function computeMarkdownLivePreview(view: EditorView): DecorationSet {
   return Decoration.set(ranges, true);
 }
 
-const livePreviewMarkdownPlugin = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet;
-    constructor(view: EditorView) { this.decorations = computeMarkdownLivePreview(view); }
-    update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
-        this.decorations = computeMarkdownLivePreview(update.view);
+function createMarkdownLivePreviewPlugin(previewLinks: boolean) {
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+      constructor(view: EditorView) { this.decorations = computeMarkdownLivePreview(view, previewLinks); }
+      update(update: ViewUpdate) {
+        if (update.docChanged || update.selectionSet || update.viewportChanged) {
+          this.decorations = computeMarkdownLivePreview(update.view, previewLinks);
+        }
       }
-    }
-  },
-  { decorations: (plugin) => plugin.decorations },
-);
+    },
+    { decorations: (plugin) => plugin.decorations },
+  );
+}
+
+const livePreviewMarkdownPlugin = createMarkdownLivePreviewPlugin(true);
+// Cell editors are active editing surfaces: keep links in literal Markdown
+// form there, while the outer document and static cells retain link preview.
+const cellLivePreviewMarkdownPlugin = createMarkdownLivePreviewPlugin(false);
 
 // Pasting an image (e.g. copied from a screenshot tool or another app) has
 // no useful text representation, so the browser's default paste silently
@@ -1194,6 +1213,76 @@ function installTableMenuI18n(): () => void {
   return () => observer.disconnect();
 }
 
+function escapeTableCellHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[character]!);
+}
+
+// Unselected cells are package-owned static HTML, not CodeMirror views. Keep
+// this deliberately small and self-contained: URLs, emphasis/strong emphasis
+// and inline code only. The original delimiters remain in the DOM (hidden by
+// CSS), so the table package can still map a click/selection back to Markdown.
+function renderStaticTableCellMarkdown(source: string): string {
+  const tokens: string[] = [];
+  const token = (html: string) => `\u0000${tokens.push(html) - 1}\u0000`;
+  let html = escapeTableCellHtml(source);
+
+  html = html.replace(/`([^`\n]+)`/g, (_match, code) => token(
+    '<span class="cm-md-delimiter">`</span>'
+    + `<span class="cm-md-inline-code">${code}</span>`
+    + '<span class="cm-md-delimiter">`</span>',
+  ));
+  // Resolve a Markdown link before bare URLs, otherwise the URL token would
+  // leave its surrounding `[label]()` syntax visible in the static cell.
+  html = html.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi, (_match, label, url) => token(
+    '<span class="cm-md-delimiter">[</span>'
+    + `<span class="cm-md-link" data-md-href="${url}" role="link" title="${url}">${label}</span>`
+    + '<span class="cm-md-delimiter">](</span>'
+    + `<span class="cm-md-delimiter">${url}</span>`
+    + '<span class="cm-md-delimiter">)</span>',
+  ));
+  html = html.replace(/https?:\/\/[^\s<]+/gi, (url) => token(
+    `<span class="cm-md-link" data-md-href="${url}" role="link" title="${url}">${url}</span>`,
+  ));
+  html = html.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, (_match, delimiter, text) =>
+    `<span class="cm-md-delimiter">${delimiter}</span><strong class="cm-md-strong">${text}</strong><span class="cm-md-delimiter">${delimiter}</span>`,
+  );
+  html = html.replace(/\*(?=\S)([^*\n]*?\S)\*/g, (_match, text) =>
+    `<span class="cm-md-delimiter">*</span><em class="cm-md-emphasis">${text}</em><span class="cm-md-delimiter">*</span>`,
+  );
+  html = html.replace(/_(?=\S)([^_\n]*?\S)_/g, (_match, text) =>
+    `<span class="cm-md-delimiter">_</span><em class="cm-md-emphasis">${text}</em><span class="cm-md-delimiter">_</span>`,
+  );
+  return html.replace(/\u0000(\d+)\u0000/g, (_match, index) => tokens[Number(index)]!);
+}
+
+function installStaticTableCellPreview(root: HTMLElement): () => void {
+  const render = () => root.querySelectorAll<HTMLElement>('.tbl-cell-view').forEach((cell) => {
+    const cellRoot = cell.closest<HTMLElement>('.tbl-cell');
+    const editorContent = cellRoot?.querySelector<HTMLElement>('.tbl-cell-editor .cm-content');
+    const alreadyRendered = !!cell.querySelector('[data-md-preview]');
+
+    // A selected cell keeps its static sibling hidden while its embedded CM
+    // editor changes. Cache that editor's source on the owning cell; when the
+    // editor is later unmounted, the old static DOM must not win over it.
+    if (editorContent) cellRoot!.dataset.mdPreviewEditedSource = editorContent.textContent || '';
+    const source = editorContent
+      ? editorContent.textContent || ''
+      : alreadyRendered
+        ? (cellRoot?.dataset.mdPreviewEditedSource ?? cell.textContent ?? '')
+        : cell.textContent || '';
+
+    if (cell.dataset.mdPreviewSource === source && alreadyRendered) return;
+    cell.dataset.mdPreviewSource = source;
+    cell.innerHTML = `<span data-md-preview="true">${renderStaticTableCellMarkdown(source)}</span>`;
+  });
+  render();
+  const observer = new MutationObserver(() => render());
+  observer.observe(root, { childList: true, subtree: true, characterData: true });
+  return () => observer.disconnect();
+}
+
 const markdownEditorKeymap = keymap.of([
   { key: '`', run: handleFenceTriggerBacktick },
   { key: 'Enter', run: completeOpeningCodeFence },
@@ -1207,13 +1296,15 @@ const markdownEditorKeymap = keymap.of([
 
 function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHandle {
   let suppressChange = false;
-  const markdownSupport = markdown({
+  // Shared parser configuration for the document and an interactive table
+  // cell. A cell does not need fenced-code language loading, but it must use
+  // the same GFM grammar so bare HTTP(S) URLs and inline Markdown parse.
+  const markdownConfig = {
     // Default base is plain CommonMark — it has NO GFM table parsing, so
     // the syntax tree never grows `Table` nodes and the interactive table
     // widget (and `collectTableLines`) would never fire. `markdownLanguage`
     // is the GFM build (tables, task lists, strikethrough, autolinks).
     base: markdownLanguage,
-    codeLanguages: fencedCodeLanguages,
     // CommonMark's Setext heading rule silently promotes a plain line of
     // text into a bold, accent-colored H1/H2 whenever it's immediately
     // followed (no blank line) by a `-`/`=` divider — surprising in this
@@ -1221,7 +1312,9 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     // rule. Dropping the SetextHeading block parser keeps that divider
     // literal instead of retroactively re-coloring the line above it.
     extensions: [{ remove: ['SetextHeading'] }],
-  });
+  };
+  const markdownSupport = markdown({ ...markdownConfig, codeLanguages: fencedCodeLanguages });
+  const cellMarkdownSupport = markdown(markdownConfig);
   const view = new EditorView({
     doc: options.value ?? '',
     parent: options.parent,
@@ -1246,10 +1339,15 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
         // Undo/redo and search inside a cell must act on the document's
         // history, which lives on the root editor — delegate those keys up.
         globalKeyBindings: [...historyKeymap, ...searchKeymap],
-        // Cell-local extensions: keep syntax colors on the Finch skin (the
-        // default palette is light-mode oriented), and defaultKeymap gives
-        // cell-scoped shortcuts like Cmd+A selecting the cell's own text.
-        extensions: [syntaxHighlighting(markdownHighlight), keymap.of(defaultKeymap)],
+        // Cell-local preview handles lightweight inline formatting only:
+        // emphasis/strong emphasis and inline code. Links deliberately stay
+        // literal Markdown in an active cell, while static cells render them.
+        extensions: [
+          cellMarkdownSupport,
+          syntaxHighlighting(markdownHighlight),
+          cellLivePreviewMarkdownPlugin,
+          keymap.of(defaultKeymap),
+        ],
       }),
       EditorView.lineWrapping,
       finchTheme,
@@ -1268,6 +1366,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     ],
   });
   const disposeTableMenuI18n = installTableMenuI18n();
+  const disposeStaticTableCellPreview = installStaticTableCellPreview(options.parent);
 
   return {
     getValue: () => view.state.doc.toString(),
@@ -1315,6 +1414,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     },
     scrollDOM: view.scrollDOM,
     destroy() {
+      disposeStaticTableCellPreview();
       disposeTableMenuI18n();
       view.destroy();
     },
