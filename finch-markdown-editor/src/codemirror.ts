@@ -1,5 +1,5 @@
 import { basicSetup, EditorView } from 'codemirror';
-import { markdown } from '@codemirror/lang-markdown';
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
 import { css } from '@codemirror/lang-css';
@@ -338,6 +338,7 @@ const markdownHighlight = HighlightStyle.define([
   { tag: tags.heading, color: 'var(--accent)', fontWeight: '700' },
   { tag: tags.strong, color: 'var(--text)', fontWeight: '700' },
   { tag: tags.emphasis, fontStyle: 'italic' },
+  { tag: tags.strikethrough, color: 'var(--muted)', textDecoration: 'line-through' },
   { tag: tags.monospace, color: 'var(--muted)', backgroundColor: 'color-mix(in srgb, var(--text) 8%, transparent)' },
   { tag: tags.link, color: 'var(--accent)' },
   { tag: tags.url, color: 'var(--muted)', textDecoration: 'underline' },
@@ -937,6 +938,11 @@ const markdownEditorKeymap = keymap.of([
 function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHandle {
   let suppressChange = false;
   const markdownSupport = markdown({
+    // Default base is plain CommonMark — it has NO GFM table parsing, so
+    // the syntax tree never grows `Table` nodes and the interactive table
+    // widget (and `collectTableLines`) would never fire. `markdownLanguage`
+    // is the GFM build (tables, task lists, strikethrough, autolinks).
+    base: markdownLanguage,
     codeLanguages: fencedCodeLanguages,
     // CommonMark's Setext heading rule silently promotes a plain line of
     // text into a bold, accent-colored H1/H2 whenever it's immediately
