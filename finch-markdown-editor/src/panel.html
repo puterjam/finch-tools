@@ -321,6 +321,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'status.pickerTimeout': '文件选择器长时间无响应，已切换为浏览器内选择器：请重新点击"打开"。',
       'status.externalUpdateSkipped': '检测到文件外部更新；为避免覆盖未保存内容，暂未载入。',
       'status.draftRestored': '已恢复上次未保存的编辑内容。',
+      'status.draftConflict': '检测到本地存有未保存草稿，但文件在别处已被修改保存；已加载最新文件内容，草稿仍保留在本地未丢弃。',
       'status.sourceMissing': '原文件已被移动或删除；当前内容仍保留在编辑器中，保存将在原路径重新创建文件。',
       'status.externalUpdateApplied': '检测到文件更新，已刷新。',
       'status.openingPicker': '正在打开文件选择器…',
@@ -450,6 +451,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'status.pickerTimeout': 'The file picker took too long to respond and switched to the in-browser picker — please click "Open" again.',
       'status.externalUpdateSkipped': 'Detected an external file update; not loaded yet to avoid overwriting unsaved changes.',
       'status.draftRestored': 'Restored your last unsaved edits.',
+      'status.draftConflict': 'A local unsaved draft exists, but the file was changed and saved elsewhere; loaded the latest file content — the draft is kept, not discarded.',
       'status.sourceMissing': 'The original file was moved or deleted; your content is still here — saving will recreate the file at its original path.',
       'status.externalUpdateApplied': 'Detected a file update and refreshed.',
       'status.openingPicker': 'Opening the file picker…',
@@ -1367,6 +1369,15 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   // meaningful once there's a real path to key the draft by. ----
   var draftTimer = 0;
   var draftPathSaved = ''; // path the pending/last-sent draft belongs to, so a document switch can't cross-write it
+  var draftLastSent = null; // content of the most recent saveDraft actually posted, to skip redundant re-sends
+
+  function postDraftSave(path) {
+    draftPathSaved = path;
+    draftLastSent = markdown;
+    // `base` = the last disk-confirmed content, so the backend can record
+    // a baseline and detect if the file changes elsewhere before we reopen.
+    api.postMessage({ type: 'saveDraft', path: path, markdown: markdown, base: savedMarkdown });
+  }
 
   function scheduleDraftSave() {
     if (!sourcePath || !api || !api.postMessage) return;
@@ -1375,8 +1386,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     draftTimer = setTimeout(function () {
       draftTimer = 0;
       if (path !== sourcePath) return; // switched documents while the timer was pending
-      draftPathSaved = path;
-      api.postMessage({ type: 'saveDraft', path: path, markdown: markdown });
+      postDraftSave(path);
     }, 1200);
   }
 
@@ -1384,10 +1394,33 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     if (draftTimer) { clearTimeout(draftTimer); draftTimer = 0; }
   }
 
+  // Debounce alone would lose the last <1.2s of edits when the tab is closed
+  // outright (Cmd/Ctrl+W on the panel, switching Sessions, etc.) rather than
+  // navigated away from in-page — nothing here gets to run *after* teardown,
+  // so any pending edits have to be flushed the instant we learn the panel
+  // may be going away, not on the debounce's own schedule. Skips the round
+  // trip entirely if nothing changed since the last flush (e.g. repeated
+  // window-blur while idle) or if we're not actually pointed at a saved file.
+  function flushDraftSave() {
+    if (!dirty || !sourcePath || !api || !api.postMessage) return;
+    cancelDraftSave();
+    if (draftPathSaved === sourcePath && draftLastSent === markdown) return;
+    postDraftSave(sourcePath);
+  }
+
   function discardDraftFor(path) {
     cancelDraftSave();
     if (path && api && api.postMessage) api.postMessage({ type: 'discardDraft', path: path });
   }
+
+  // visibilitychange fires reliably when a tab/panel is closed or hidden
+  // (unlike beforeunload, which host-embedded panels don't always get a
+  // chance to run); pagehide and window blur are added as extra safety nets
+  // since exactly which of these fire depends on how the host tears the
+  // panel down. All are cheap best-effort synchronous postMessage calls.
+  document.addEventListener('visibilitychange', function () { if (document.hidden) flushDraftSave(); });
+  window.addEventListener('pagehide', flushDraftSave);
+  window.addEventListener('blur', flushDraftSave);
 
   function setDirty(next, justSaved) {
     dirty = next;
@@ -2344,6 +2377,15 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
           // happened. No blocking prompt: it's just the user's own last edit.
           setDirty(true);
           setStatus(t('status.draftRestored'));
+        } else if (m.draftConflict) {
+          // A draft existed, but the file was saved elsewhere (another
+          // editor, an AI apply) after that draft was taken — loading the
+          // draft over that would silently discard someone else's confirmed
+          // save, and loading disk over the draft without saying anything
+          // would silently discard the user's own edit. Load disk (the only
+          // version anyone else can see) and say so plainly instead of
+          // guessing; the stale draft file itself is left alone on disk.
+          setStatus(t('status.draftConflict'), true);
         } else if (wasLoadingFromHome) {
           setStatus(t('status.opened', { file: fileName }));
         } else if (!isFirst) {
