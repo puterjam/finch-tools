@@ -202,12 +202,12 @@ const finchTheme = EditorView.theme({
   // instead of ballooning past body size the way a flat +0.1em/level did.
   // Kept deliberately compact for source editing: hierarchy comes mostly
   // from weight and Markdown's accent syntax, rather than oversized rows.
-  '.cm-line.cm-md-h1': { fontSize: '1.45em', fontWeight: '700', lineHeight: 'normal !important' },
-  '.cm-line.cm-md-h2': { fontSize: '1.3em', fontWeight: '700', lineHeight: 'normal !important' },
-  '.cm-line.cm-md-h3': { fontSize: '1.2em', fontWeight: '700', lineHeight: 'normal !important' },
-  '.cm-line.cm-md-h4': { fontSize: '1.1em', fontWeight: '700', lineHeight: 'normal !important' },
-  '.cm-line.cm-md-h5': { fontSize: '1.04em', fontWeight: '700', lineHeight: 'normal !important' },
-  '.cm-line.cm-md-h6': { fontSize: '1em', fontWeight: '700', lineHeight: 'normal !important' },
+  '.cm-line.cm-md-h1': { fontSize: '1.45em', fontWeight: '700', lineHeight: 'normal !important', paddingBottom: '0.6rem !important' },
+  '.cm-line.cm-md-h2': { fontSize: '1.3em', fontWeight: '700', lineHeight: 'normal !important' , paddingBottom: '0.5rem !important' },
+  '.cm-line.cm-md-h3': { fontSize: '1.2em', fontWeight: '700', lineHeight: 'normal !important' , paddingBottom: '0.5rem !important' },
+  '.cm-line.cm-md-h4': { fontSize: '1.1em', fontWeight: '700', lineHeight: 'normal !important' , paddingBottom: '0.3rem !important' },
+  '.cm-line.cm-md-h5': { fontSize: '1.04em', fontWeight: '700', lineHeight: 'normal !important' , paddingBottom: '0.3rem !important' },
+  '.cm-line.cm-md-h6': { fontSize: '1em', fontWeight: '700', lineHeight: 'normal !important' , paddingBottom: '0.2rem !important' },
   // Source-mode live preview: non-active Markdown delimiters collapse out of
   // sight; the cursor/selection line deliberately has no such decoration.
   '.cm-md-bullet': {
@@ -302,13 +302,13 @@ const finchTheme = EditorView.theme({
     // selection layer behind line content, so an opaque `var(--card)` mix
     // would cover the selection completely.
     backgroundColor: 'color-mix(in srgb, var(--text) 8%, transparent)',
-    lineHeight: '1.3rem',
+    lineHeight: '1.3rem !important',
     fontFamily: 'var(--finch-font-mono)',
-    paddingTop: '0',
-    paddingBottom: '0',
+    paddingTop: '0 !important',
+    paddingBottom: '0 !important',
     paddingLeft: '24px',
     paddingRight: '24px',
-    fontSize: '0.8em !important',
+    fontSize: '13px !important',
   },
 
   '.cm-line.cm-md-code-line span': {
@@ -321,6 +321,7 @@ const finchTheme = EditorView.theme({
     paddingTop: '2px',
     paddingLeft: '12px',
     paddingRight: '12px',
+    lineHeight: '1.5rem !important',
   },
   '.cm-line.cm-md-code-close': {
     fontSize: '12px',
@@ -404,7 +405,7 @@ const finchTheme = EditorView.theme({
   // gutter is a separate DOM tree from `.cm-content` and never inherits
   // classes from the content line decorations.
   '.cm-lineNumbers .cm-gutterElement.cm-gutter-code-line': {
-        lineHeight: '21px',
+        lineHeight: '22px',
   },
   '.cm-activeLine': {
     backgroundColor: 'color-mix(in srgb, var(--text) 7%, transparent)',
