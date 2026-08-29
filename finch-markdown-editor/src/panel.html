@@ -645,10 +645,12 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   // "让 AI 怎么改这段？" placeholder becomes "让 <assistant name> 怎么改这段？"
   // once the real assistant name arrives — same withAssistant/default split
   // as the tagline above, so the popup never claims to be a generic "AI"
-  // when it's actually this session's named assistant.
+  // when it's actually this session's named assistant. Fallback "Finch"
+  // mirrors the backend's own getAssistantName() default, so even the
+  // pre-handshake flash never says "AI".
   function updatePopupPlaceholder() {
     if (!popupInput) return;
-    popupInput.placeholder = t('popup.placeholder', { name: assistantName || 'AI' });
+    popupInput.placeholder = t('popup.placeholder', { name: assistantName || 'Finch' });
   }
 
   // OS-friendly display only — the raw absolute path is still what's sent
@@ -2140,7 +2142,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
           var nextIsZh = /^zh/i.test(m.locale);
           if (nextIsZh !== isZh) { isZh = nextIsZh; applyStaticI18n(); updatePopupPlaceholder(); }
         }
-        if (m.assistantName) { assistantName = m.assistantName; }
+        if (m.assistantName) { assistantName = m.assistantName; updatePopupPlaceholder(); }
         updateHomeTagline();
         if (m.homeDir) { homeDir = m.homeDir; renderHomeCwd(); }
         syncToolbar();
