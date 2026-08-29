@@ -47,6 +47,7 @@ interface MarkdownEditorHandle {
   layout(): void;
   setFontSize(size: number): void;
   setFontFamily(family: string): void;
+  setComfortWriting(on: boolean): void;
   scrollDOM: HTMLElement;
   destroy(): void;
 }
@@ -124,9 +125,14 @@ const finchTheme = EditorView.theme({
     width: CM_LINE_WIDTH,
     maxWidth: CM_LINE_MAX_WIDTH,
     marginInline: 'auto',
-    paddingTop: '2px',
-    paddingBottom: '2px',
-    lineHeight: '1.7rem',
+    // Line spacing comes from CSS tokens so the toolbar's comfortable-
+    // writing toggle can switch them without touching CodeMirror's managed
+    // classes: CM rebuilds view.dom.className on updates, which would wipe
+    // any hand-added class (e.g. cm-comfort-write). setComfortWriting()
+    // sets these two on view.dom.style instead — inline style, never wiped.
+    paddingTop: 'var(--md-line-pad-y, 2px)',
+    paddingBottom: 'var(--md-line-pad-y, 2px)',
+    lineHeight: 'var(--md-line-height, 1.7rem)',
   },
   // A block replacement leaves CodeMirror's source-line box immediately
   // before the widget. Collapse that empty box so the table occupies its
@@ -202,12 +208,12 @@ const finchTheme = EditorView.theme({
   // instead of ballooning past body size the way a flat +0.1em/level did.
   // Kept deliberately compact for source editing: hierarchy comes mostly
   // from weight and Markdown's accent syntax, rather than oversized rows.
-  '.cm-line.cm-md-h1': { fontSize: '1.45em', fontWeight: '700', lineHeight: 'normal !important', paddingBottom: '0.6rem !important' },
-  '.cm-line.cm-md-h2': { fontSize: '1.3em', fontWeight: '700', lineHeight: 'normal !important' , paddingBottom: '0.5rem !important' },
-  '.cm-line.cm-md-h3': { fontSize: '1.2em', fontWeight: '700', lineHeight: 'normal !important' , paddingBottom: '0.5rem !important' },
-  '.cm-line.cm-md-h4': { fontSize: '1.1em', fontWeight: '700', lineHeight: 'normal !important' , paddingBottom: '0.3rem !important' },
-  '.cm-line.cm-md-h5': { fontSize: '1.04em', fontWeight: '700', lineHeight: 'normal !important' , paddingBottom: '0.3rem !important' },
-  '.cm-line.cm-md-h6': { fontSize: '1em', fontWeight: '700', lineHeight: 'normal !important' , paddingBottom: '0.2rem !important' },
+  '.cm-line.cm-md-h1': { fontSize: '1.4em', fontWeight: '700', lineHeight: 'normal !important'},
+  '.cm-line.cm-md-h2': { fontSize: '1.2em', fontWeight: '700', lineHeight: 'normal !important'},
+  '.cm-line.cm-md-h3': { fontSize: '1.15em', fontWeight: '700', lineHeight: 'normal !important'},
+  '.cm-line.cm-md-h4': { fontSize: '1.1em', fontWeight: '700', lineHeight: 'normal !important'},
+  '.cm-line.cm-md-h5': { fontSize: '1.04em', fontWeight: '700', lineHeight: 'normal !important'},
+  '.cm-line.cm-md-h6': { fontSize: '1em', fontWeight: '700', lineHeight: 'normal !important'},
   // Source-mode live preview: non-active Markdown delimiters collapse out of
   // sight; the cursor/selection line deliberately has no such decoration.
   '.cm-md-bullet': {
@@ -216,6 +222,9 @@ const finchTheme = EditorView.theme({
     color: 'var(--accent)',
     fontWeight: '700',
     textAlign: 'center',
+    fontFamily: 'monospace',
+  },
+  '.ͼx':{
     fontFamily: 'monospace',
   },
   '.tbl-cell-view .cm-md-delimiter': { display: 'none' },
@@ -394,7 +403,7 @@ const finchTheme = EditorView.theme({
   // number glyphs.
   '.cm-lineNumbers .cm-gutterElement': {
         padding: '0 5px 0 8px',
-        lineHeight: '32px',
+        lineHeight: 'var(--md-gutter-line-height, 32px)',
         color: 'color-mix(in srgb, var(--muted) 35%, transparent)',
         fontFamily: 'var(--finch-font-mono)',
         fontSize: '12px',
@@ -1676,6 +1685,18 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     },
     setFontFamily(family) {
       view.dom.style.setProperty('--md-editor-font-family', family);
+      view.requestMeasure();
+    },
+    setComfortWriting(on) {
+      // CSS tokens on the root's inline style — CM's own class management
+      // rebuilds view.dom.className on updates, which would silently drop a
+      // hand-added class, so switching via tokens is the durable approach.
+      const writing = !!on;
+      view.dom.style.setProperty('--md-line-pad-y', writing ? '4px' : '2px');
+      view.dom.style.setProperty('--md-line-height', writing ? '2rem' : '1.7rem');
+      // Line-number gutter rows track the same rhythm (prose lines only;
+      // fenced-code gutter rows keep their own fixed 22px height).
+      view.dom.style.setProperty('--md-gutter-line-height', writing ? '40px' : '32px');
       view.requestMeasure();
     },
     scrollDOM: view.scrollDOM,
