@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>公众号文章预览</title>
+<title>Markdown Editor</title>
 <style>
 :root{
   --bg:var(--finch-bg-root,#f7f7f8);
@@ -141,54 +141,54 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       <div class="home">
         <header class="home-head">
           <div>
-            <h1>Markdown 编辑</h1>
-            <p id="homeTagline">打开一个 Markdown 文件开始编辑与预览，或新建一篇文章。</p>
+            <h1 data-i18n="home.title">Markdown Editor</h1>
+            <p id="homeTagline"></p>
           </div>
           <div class="home-cta">
             <button id="emptyOpen" class="home-btn ghost" type="button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>
-              打开文件
+              <span data-i18n="home.openFile">Open File</span>
             </button>
             <button id="emptyNew" class="home-btn" type="button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="M9 15h6"/></svg>
-              新建文档
+              <span data-i18n="home.newDoc">New Document</span>
             </button>
           </div>
         </header>
         <section id="homeRecent" class="home-recent" hidden>
-          <div class="home-section"><b>最近编辑</b><button id="homeCwd" type="button" class="home-cwd"></button></div>
+          <div class="home-section"><b data-i18n="home.recentLabel">Recent</b><button id="homeCwd" type="button" class="home-cwd"></button></div>
           <div id="homeGrid" class="home-grid"></div>
         </section>
-        <p id="homeHint" class="home-hint">打开一个 Markdown 文件，之后这里会列出最近编辑的文档。</p>
+        <p id="homeHint" class="home-hint" data-i18n="home.hintDefault">Open a Markdown file — recently edited documents will show up here.</p>
       </div>
     </div>
     <div id="editPane" class="pane">
       <div class="editor-wrap">
-        <div id="editor" aria-label="Markdown 编辑器"></div>
+        <div id="editor" data-i18n-aria="editor.ariaLabel" aria-label="Markdown editor"></div>
       </div>
     </div>
     <div id="previewPane" class="pane">
       <div class="preview-shell">
-        <iframe id="article" sandbox="allow-same-origin" title="公众号文章预览"></iframe>
+        <iframe id="article" sandbox="allow-same-origin" data-i18n-title="meta.title" title="Article Preview"></iframe>
         <div id="actions" class="actions" hidden>
-          <button id="actCopyWx" type="button" title="复制到公众号">
+          <button id="actCopyWx" type="button" data-i18n-title="actions.copyToWx" title="Copy for WeChat">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path stroke-linecap="round" d="M7 7h.009m5.982 0H13m4.991 7.5H18m-4 0h.009"/><path d="M10 16c0 2.761 2.686 5 6 5c.907 0 1.767-.168 2.538-.468c.189-.073.393-.1.592-.063L22 21l-.652-2.03a1.13 1.13 0 0 1 .11-.89A4.3 4.3 0 0 0 22 16c0-2.761-2.686-5-6-5s-6 2.239-6 5Z"/><path d="M17.873 11.249Q18 10.639 18 10c0-3.866-3.582-7-8-7s-8 3.134-8 7c0 1.112.297 2.164.824 3.098c.147.26.196.567.108.853L2 17l3.914-.76c.208-.041.422-.013.617.07a9 9 0 0 0 3.589.69"/></svg>
           </button>
           <span class="sep" data-collapsible></span>
-          <button id="actCopyImg" type="button" title="复制图片" data-collapsible>
+          <button id="actCopyImg" type="button" data-i18n-title="actions.copyImg" title="Copy image" data-collapsible>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
           </button>
-          <button id="actSaveImg" type="button" title="导出图片（下载）" data-collapsible>
+          <button id="actSaveImg" type="button" data-i18n-title="actions.exportImg" title="Export image (download)" data-collapsible>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6.3"/><path d="m2 16 5-5c.928-.893 2.072-.893 3 0l3 3"/><path d="m14 14 1-1c.928-.893 2.072-.893 3 0"/><path d="M19 16v6"/><path d="m22 19-3 3-3-3"/><circle cx="9" cy="9" r="2"/></svg>
           </button>
-          <button id="actSavePdf" type="button" title="导出 PDF" data-collapsible>
+          <button id="actSavePdf" type="button" data-i18n-title="actions.exportPdf" title="Export PDF" data-collapsible>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="m9 15 3 3 3-3"/></svg>
           </button>
           <span class="sep" data-collapsible></span>
-          <button id="actAiStyle" type="button" title="让 AI 设计排版" data-collapsible>
+          <button id="actAiStyle" type="button" data-i18n-title="actions.aiStyle" title="Ask AI to design layout" data-collapsible>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></svg>
           </button>
-          <button id="actToggle" type="button" class="act-toggle" title="展开/收起">
+          <button id="actToggle" type="button" class="act-toggle" data-i18n-title="actions.toggle" title="Expand/collapse">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
           </button>
         </div>
@@ -198,16 +198,16 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   <div id="status" class="status"></div>
 </main>
 <section id="popup" class="popup hidden">
-  <input id="popupInput" type="text" placeholder="让 AI 怎么改这段？">
-  <button id="popupSend">发送</button>
+  <input id="popupInput" type="text">
+  <button id="popupSend" data-i18n="popup.send">Send</button>
 </section>
 <div id="confirmOverlay" class="confirm-overlay" hidden>
   <div class="confirm-card">
     <p id="confirmMessage"></p>
     <div class="confirm-actions">
-      <button id="confirmCancel" class="ghost">取消</button>
-      <button id="confirmDiscard">不保存</button>
-      <button id="confirmSave" class="primary">保存并返回</button>
+      <button id="confirmCancel" class="ghost" data-i18n="confirm.cancel">Cancel</button>
+      <button id="confirmDiscard" data-i18n="confirm.discard">Don't save</button>
+      <button id="confirmSave" class="primary" data-i18n="confirm.save">Save and return</button>
     </div>
   </div>
 </div>
@@ -216,6 +216,294 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 (function () {
   'use strict';
   var api = window.finch;
+
+  // ---- i18n ----------------------------------------------------------
+  // This page is a standalone static document (loaded into a host webview,
+  // not a bundled app with its own build-time locale), so translation
+  // happens at runtime: guess from navigator.language immediately (so the
+  // very first paint isn't wrong-language), then reconcile against the
+  // host's real locale once it arrives in the 'ready' handshake message
+  // (ctx.i18n.locale, forwarded from index.ts). Only zh/non-zh is
+  // distinguished — bm.md's own rendered article content is unaffected,
+  // this only covers this panel's own chrome (labels/status/tooltips).
+  var isZh = /^zh/i.test(navigator.language || '');
+  var STR = {
+    zh: {
+      'meta.title': '公众号文章预览',
+      'home.title': 'Markdown 编辑',
+      'home.tagline.withAssistant': '你与{name}一起编排 Markdown 文件',
+      'home.tagline.default': '打开一个 Markdown 文件开始编辑与预览，或新建一篇文章。',
+      'home.openFile': '打开文件',
+      'home.newDoc': '新建文档',
+      'home.recentLabel': '最近编辑',
+      'home.hintScoped': '这个目录里还没有用编辑器打开过的 Markdown 文档。',
+      'home.hintDefault': '打开一个 Markdown 文件，之后这里会列出最近编辑的文档。',
+      'home.untitled': '未命名',
+      'home.emptyDoc': '（空文档）',
+      'home.cwdTitle': '在访达 / 文件资源管理器中打开：{path}',
+      'home.today': '今天 {clock}',
+      'home.yesterday': '昨天 {clock}',
+      'editor.ariaLabel': 'Markdown 编辑器',
+      'actions.copyToWx': '复制到公众号',
+      'actions.copyImg': '复制图片',
+      'actions.exportImg': '导出图片（下载）',
+      'actions.exportPdf': '导出 PDF',
+      'actions.aiStyle': '让 AI 设计排版',
+      'actions.toggle': '展开/收起',
+      'popup.placeholder': '让 {name} 怎么改这段？',
+      'popup.send': '发送',
+      'confirm.cancel': '取消',
+      'confirm.discard': '不保存',
+      'confirm.save': '保存并返回',
+      'confirm.message': '「{file}」还有未保存的改动，要保存后再返回首页吗？',
+      'common.markdownDocDefault': 'Markdown 文档',
+      'common.customStyleDefault': '自定义风格',
+      'toolbar.home.tooltip': '返回首页',
+      'toolbar.open.tooltipDefault': '打开 Markdown 文件',
+      'toolbar.save.label': '保存',
+      'toolbar.save.tooltipDefault': '保存（⌘/Ctrl+S）',
+      'toolbar.save.tooltipDirty': '有未保存的改动（⌘/Ctrl+S）',
+      'toolbar.save.labelSaved': '已保存',
+      'toolbar.save.tooltipSaved': '已保存',
+      'toolbar.annotate.label': '批注',
+      'toolbar.annotate.tooltipOn': '批注已开启：选中文字可发起 AI 修改',
+      'toolbar.annotate.tooltipOff': '开启批注：选中文字后可发起 AI 修改',
+      'toolbar.needDoc': '请先打开文档',
+      'toolbar.mode.label': '预览',
+      'toolbar.mode.tooltipToPreview': '切换到预览',
+      'toolbar.mode.tooltipToEdit': '切换到编辑',
+      'toolbar.style.tooltip': '排版风格',
+      'toolbar.style.tooltipNeedsPreview': '请先切换到预览',
+      'toolbar.style.customSlot': '自定义风格 {n} · {label}',
+      'toolbar.style.customSlotEmpty': '自定义风格 {n}（空）',
+      'toolbar.fontSize.tooltipPreview': '预览时不可更改字体',
+      'toolbar.fontSize.tooltipEdit': '编辑器字体大小',
+      'toolbar.fontSize.small': '小',
+      'toolbar.fontSize.medium': '中',
+      'toolbar.fontSize.large': '大',
+      'toolbar.fontFamily.default': '默认（无衬线）',
+      'toolbar.fontFamily.serif': '衬线体',
+      'toolbar.more.reload': '重新渲染',
+      'toolbar.more.about': '关于渲染',
+      'annotate.lineUnknown': '（未能精确定位对应行号，请以下方引用文本为准）',
+      'annotate.lineSingle': '第 {a} 行',
+      'annotate.lineRange': '第 {a}–{b} 行',
+      'annotate.lineCompactUnknown': '未定位',
+      'annotate.requirementWith': '要求：{comment}',
+      'annotate.requirementDefault': '让它更好',
+      'annotate.pathMissing': '（未关联本地文件，请让我先粘贴/保存全文）',
+      'annotate.promptText': '请改写这段公众号文章内容（Markdown 原文，位置：{lineLabel}），{requirement}：\n\n{text}\n\n请给出精确、可直接替换的 Markdown 片段。若我确认使用，请调用 markdown_editor_document 工具的 apply 动作，用替换后的完整文章更新源文件（path={path}）。',
+      'annotate.reminder': '仅给出改写建议，不要在未确认前直接写入源文件。',
+      'newdoc.needChat': '请在 Finch 对话中使用“新建文档”。',
+      'newdoc.label': '新建 Markdown 文档',
+      'newdoc.promptText': '我想新建一篇 Markdown 文档。请先根据我的要求确定标题、内容与一个尚不存在的绝对保存路径；信息不足时先问我。确认后调用 markdown_editor_document 的 create 动作，传入完整 Markdown 正文和绝对 path，并在编辑器中打开新文件。',
+      'newdoc.reminder': '新建文件时必须使用 markdown_editor_document 的 create 动作；不要覆盖已有文件。',
+      'newdoc.added': '已把新建文档引导加入输入框。',
+      'aiStyle.label': '根据 {file} 设计风格',
+      'aiStyle.note': 'AI 一键排版',
+      'aiStyle.baseNoteCustom': '当前基础风格是 kami（自定义 CSS 叠加其上）',
+      'aiStyle.baseNoteOther': '当前基础风格是 {style}',
+      'aiStyle.pathMissing': '（未关联本地文件）',
+      'aiStyle.promptText': '请为这篇公众号文章设计一套自定义排版 CSS。{baseNote}，你的 CSS 会叠加在基础风格之上。要求：只写普通 CSS 规则，选择器限定在 #bm-md 下的标签/结构（如 #bm-md h1、#bm-md p、#bm-md blockquote、#bm-md pre code、#bm-md a、#bm-md strong、#bm-md table 等），不要使用 class（bm.md 输出没有 class，只有内联样式），必要时用 !important 覆盖基础风格。可参考 bm.md 内置风格的设计语言：kami（暖色纸感）、bauhaus（几何撞色）、blueprint（技术蓝图网格）、botanical（清新绿意）、newsprint（报刊衬线）、retro（复古怀旧）、sketch（手绘风）、terminal（等宽暗色终端风）。文章路径：{path}。动手生成 CSS 前，先询问用户要覆盖「自定义风格 1、2、3」中的哪一个槽位；用户选择后，再调用 markdown_editor_document 的 set_style，必须传入 css、简短 label 和 slot（1/2/3）。该调用会覆盖并持久化那个槽位，同时立即应用预览。',
+      'aiStyle.reminder': '必须先询问槽位，不能自行猜测或覆盖；用户明确选定 1/2/3 后才调用 set_style。',
+      'aiStyle.requested': '已请求 AI 设计自定义排版。',
+      'status.saved': '已保存。',
+      'status.savedWithNewChanges': '已保存，编辑器中仍有新改动。',
+      'status.saveFailed': '保存失败：{err}',
+      'status.saving': '正在保存…',
+      'status.noSourceFile': '未关联本地文件：点击工具栏「打开」重新选择一次即可关联并启用保存。',
+      'status.pickerTimeout': '文件选择器长时间无响应，已切换为浏览器内选择器：请重新点击"打开"。',
+      'status.externalUpdateSkipped': '检测到文件外部更新；为避免覆盖未保存内容，暂未载入。',
+      'status.externalUpdateApplied': '检测到文件更新，已刷新。',
+      'status.openingPicker': '正在打开文件选择器…',
+      'status.opening': '正在打开…',
+      'status.opened': '已打开 {file}。',
+      'status.contentUpdated': '内容已更新。',
+      'status.pasteImageTimeout': '粘贴图片超时',
+      'status.pasteImageFailed': '粘贴图片失败：{msg}',
+      'status.clipboardPrepareTimeout': '准备公众号图片超时',
+      'status.pleaseOpenArticle': '请先打开文章。',
+      'status.copiedRich': '公众号富文本 HTML 已复制，可直接粘贴到公众号编辑器。',
+      'status.copiedPlainOnly': '仅复制到纯文本，格式未能带上，请重试一次。',
+      'status.copyFailed': '复制失败，请重试一次。',
+      'status.richCopyFailed': '富文本复制失败：{err}',
+      'status.clipboardUnsupported': '当前环境不支持复制图片，请改用「导出图片」。',
+      'status.generatingImage': '正在生成图片…',
+      'status.previewNotReady': '预览尚未就绪',
+      'status.imageCopied': '图片已复制到剪贴板。',
+      'status.copyImageFailed': '复制图片失败：{err}（可改用「导出图片」）',
+      'status.exportImageFailedGeneric': '导出图片失败：预览尚未就绪。',
+      'status.exportImageFailed': '导出图片失败：{err}',
+      'status.generatingPdf': '正在生成 PDF…',
+      'status.exportPdfFailedGeneric': '导出 PDF 失败：预览尚未就绪。',
+      'status.exportPdfFailed': '导出 PDF 失败：{err}',
+      'status.exported': '已导出：{path}',
+      'status.annotateOn': '批注已开启：选中文字可发起 AI 修改。',
+      'status.annotateOff': '批注已关闭。',
+      'status.saveFailedNoReturn': '保存失败，未返回首页。',
+      'status.rendererAbout': '渲染器：本机 bmmd CLI（bm.md，AGPL-3.0）。',
+      'status.appliedStyleSlot': '已应用「{label}」。',
+      'status.needCustomStyleFirst': '请先应用一个自定义/AI 设计的风格，再保存到槽位。',
+      'status.savedToSlot': '已保存到槽位 {slot}：{label}',
+      'status.rendering': '正在渲染…',
+      'status.serializeFailed': '无法序列化预览内容：{err}',
+      'status.imageConversionFailed': '预览内容无法转成图片（可能含有无法跨域读取的外部图片）',
+      'status.imageGenFailed': '生成图片数据失败',
+      'status.clipboardPrepareFailedDefault': '准备公众号图片失败',
+      'status.pasteImageFailedDefault': '粘贴图片失败',
+      'status.savedAppliedToSlot': '{labelPrefix}已保存并应用到自定义风格 {slot}。',
+    },
+    en: {
+      'meta.title': 'Article Preview',
+      'home.title': 'Markdown Editor',
+      'home.tagline.withAssistant': 'Write Markdown together with {name}',
+      'home.tagline.default': 'Open a Markdown file to start editing and previewing, or create a new article.',
+      'home.openFile': 'Open File',
+      'home.newDoc': 'New Document',
+      'home.recentLabel': 'Recent',
+      'home.hintScoped': 'No Markdown documents have been opened from this folder yet.',
+      'home.hintDefault': 'Open a Markdown file — recently edited documents will show up here.',
+      'home.untitled': 'Untitled',
+      'home.emptyDoc': '(Empty document)',
+      'home.cwdTitle': 'Open in Finder / File Explorer: {path}',
+      'home.today': 'Today {clock}',
+      'home.yesterday': 'Yesterday {clock}',
+      'editor.ariaLabel': 'Markdown editor',
+      'actions.copyToWx': 'Copy for WeChat',
+      'actions.copyImg': 'Copy image',
+      'actions.exportImg': 'Export image (download)',
+      'actions.exportPdf': 'Export PDF',
+      'actions.aiStyle': 'Ask AI to design layout',
+      'actions.toggle': 'Expand/collapse',
+      'popup.placeholder': 'How should {name} revise this?',
+      'popup.send': 'Send',
+      'confirm.cancel': 'Cancel',
+      'confirm.discard': "Don't save",
+      'confirm.save': 'Save and return',
+      'confirm.message': '\u201c{file}\u201d has unsaved changes. Save before returning to Home?',
+      'common.markdownDocDefault': 'Markdown document',
+      'common.customStyleDefault': 'Custom style',
+      'toolbar.home.tooltip': 'Back to Home',
+      'toolbar.open.tooltipDefault': 'Open Markdown file',
+      'toolbar.save.label': 'Save',
+      'toolbar.save.tooltipDefault': 'Save (\u2318/Ctrl+S)',
+      'toolbar.save.tooltipDirty': 'Unsaved changes (\u2318/Ctrl+S)',
+      'toolbar.save.labelSaved': 'Saved',
+      'toolbar.save.tooltipSaved': 'Saved',
+      'toolbar.annotate.label': 'Annotate',
+      'toolbar.annotate.tooltipOn': 'Annotate is on — select text to ask AI to revise it',
+      'toolbar.annotate.tooltipOff': 'Turn on Annotate: select text to ask AI to revise it',
+      'toolbar.needDoc': 'Open a document first',
+      'toolbar.mode.label': 'Preview',
+      'toolbar.mode.tooltipToPreview': 'Switch to preview',
+      'toolbar.mode.tooltipToEdit': 'Switch to edit',
+      'toolbar.style.tooltip': 'Layout style',
+      'toolbar.style.tooltipNeedsPreview': 'Switch to preview first',
+      'toolbar.style.customSlot': 'Custom style {n} · {label}',
+      'toolbar.style.customSlotEmpty': 'Custom style {n} (empty)',
+      'toolbar.fontSize.tooltipPreview': "Font can't be changed while previewing",
+      'toolbar.fontSize.tooltipEdit': 'Editor font size',
+      'toolbar.fontSize.small': 'Small',
+      'toolbar.fontSize.medium': 'Medium',
+      'toolbar.fontSize.large': 'Large',
+      'toolbar.fontFamily.default': 'Default (sans-serif)',
+      'toolbar.fontFamily.serif': 'Serif',
+      'toolbar.more.reload': 'Re-render',
+      'toolbar.more.about': 'About rendering',
+      'annotate.lineUnknown': "(Couldn't pinpoint the exact line — use the quoted text below as reference)",
+      'annotate.lineSingle': 'Line {a}',
+      'annotate.lineRange': 'Lines {a}\u2013{b}',
+      'annotate.lineCompactUnknown': 'Unlocated',
+      'annotate.requirementWith': 'Requirement: {comment}',
+      'annotate.requirementDefault': 'make it better',
+      'annotate.pathMissing': '(No local file linked — ask me to paste/save the full article first)',
+      'annotate.promptText': 'Please rewrite this passage of the WeChat article (Markdown source, location: {lineLabel}), {requirement}:\n\n{text}\n\nGive a precise, drop-in replacement Markdown snippet. If I approve it, call the markdown_editor_document tool\u2019s apply action to update the source file (path={path}) with the fully revised article.',
+      'annotate.reminder': "Only propose the rewrite — don't write to the source file before I confirm.",
+      'newdoc.needChat': 'Use \u201cNew Document\u201d from the Finch chat instead.',
+      'newdoc.label': 'New Markdown Document',
+      'newdoc.promptText': "I want to create a new Markdown document. First work out the title, content, and a not-yet-existing absolute save path from my request — ask me first if anything is missing. Once confirmed, call markdown_editor_document's create action with the full Markdown body and absolute path to write and open the new file.",
+      'newdoc.reminder': "Always use markdown_editor_document's create action for new files; never overwrite an existing file.",
+      'newdoc.added': 'Added the new-document prompt to the composer.',
+      'aiStyle.label': 'Design a layout based on {file}',
+      'aiStyle.note': 'One-click AI layout',
+      'aiStyle.baseNoteCustom': 'The current base style is kami (your custom CSS layers on top of it)',
+      'aiStyle.baseNoteOther': 'The current base style is {style}',
+      'aiStyle.pathMissing': '(No local file linked)',
+      'aiStyle.promptText': 'Please design a custom layout CSS for this WeChat article. {baseNote}, and your CSS will layer on top of the base style. Requirements: write plain CSS rules only, with selectors scoped to tags/structure under #bm-md (e.g. #bm-md h1, #bm-md p, #bm-md blockquote, #bm-md pre code, #bm-md a, #bm-md strong, #bm-md table); don\u2019t use classes (bm.md\u2019s output has no classes, only inline styles), and use !important where needed to override the base style. You can draw on bm.md\u2019s built-in style language: kami (warm paper feel), bauhaus (geometric color-blocking), blueprint (technical grid), botanical (fresh green), newsprint (editorial serif), retro (nostalgic), sketch (hand-drawn), terminal (monospace dark). Article path: {path}. Before generating any CSS, ask the user which of \u201cCustom style 1/2/3\u201d slots to overwrite; once they choose, call markdown_editor_document\u2019s set_style with css, a short label, and slot (1/2/3). That call overwrites and persists that slot and applies it to the preview immediately.',
+      'aiStyle.reminder': "Always ask which slot first — never guess or overwrite on your own; call set_style only after the user picks 1/2/3.",
+      'aiStyle.requested': 'Asked AI to design a custom layout.',
+      'status.saved': 'Saved.',
+      'status.savedWithNewChanges': "Saved — but the editor already has newer changes.",
+      'status.saveFailed': 'Save failed: {err}',
+      'status.saving': 'Saving…',
+      'status.noSourceFile': 'Not linked to a local file: click “Open” in the toolbar again to link it and enable saving.',
+      'status.pickerTimeout': 'The file picker took too long to respond and switched to the in-browser picker — please click "Open" again.',
+      'status.externalUpdateSkipped': 'Detected an external file update; not loaded yet to avoid overwriting unsaved changes.',
+      'status.externalUpdateApplied': 'Detected a file update and refreshed.',
+      'status.openingPicker': 'Opening the file picker…',
+      'status.opening': 'Opening…',
+      'status.opened': 'Opened {file}.',
+      'status.contentUpdated': 'Content updated.',
+      'status.pasteImageTimeout': 'Paste image timed out',
+      'status.pasteImageFailed': 'Paste image failed: {msg}',
+      'status.clipboardPrepareTimeout': 'Preparing WeChat images timed out',
+      'status.pleaseOpenArticle': 'Open an article first.',
+      'status.copiedRich': 'Rich HTML copied — paste it directly into the WeChat editor.',
+      'status.copiedPlainOnly': "Only plain text was copied; formatting didn't come through — please try again.",
+      'status.copyFailed': 'Copy failed — please try again.',
+      'status.richCopyFailed': 'Rich-text copy failed: {err}',
+      'status.clipboardUnsupported': 'Copying images isn\u2019t supported here — use \u201cExport Image\u201d instead.',
+      'status.generatingImage': 'Generating image…',
+      'status.previewNotReady': "Preview isn't ready yet",
+      'status.imageCopied': 'Image copied to the clipboard.',
+      'status.copyImageFailed': 'Copy image failed: {err} (try \u201cExport Image\u201d instead)',
+      'status.exportImageFailedGeneric': "Export image failed: preview isn't ready yet.",
+      'status.exportImageFailed': 'Export image failed: {err}',
+      'status.generatingPdf': 'Generating PDF…',
+      'status.exportPdfFailedGeneric': "Export PDF failed: preview isn't ready yet.",
+      'status.exportPdfFailed': 'Export PDF failed: {err}',
+      'status.exported': 'Exported: {path}',
+      'status.annotateOn': 'Annotate is on — select text to ask AI to revise it.',
+      'status.annotateOff': 'Annotate is off.',
+      'status.saveFailedNoReturn': 'Save failed — staying on this document.',
+      'status.rendererAbout': 'Renderer: local bmmd CLI (bm.md, AGPL-3.0).',
+      'status.appliedStyleSlot': 'Applied \u201c{label}\u201d.',
+      'status.needCustomStyleFirst': 'Apply a custom/AI-designed style first before saving it to a slot.',
+      'status.savedToSlot': 'Saved to slot {slot}: {label}',
+      'status.rendering': 'Rendering…',
+      'status.serializeFailed': 'Failed to serialize the preview content: {err}',
+      'status.imageConversionFailed': "The preview couldn't be converted to an image (it may contain external images that can't be read cross-origin)",
+      'status.imageGenFailed': 'Failed to generate image data',
+      'status.clipboardPrepareFailedDefault': 'Failed to prepare WeChat images',
+      'status.pasteImageFailedDefault': 'Paste image failed',
+      'status.savedAppliedToSlot': '{labelPrefix}Saved and applied to custom style {slot}.',
+    },
+  };
+  function t(key, vars) {
+    var dict = isZh ? STR.zh : STR.en;
+    var s = Object.prototype.hasOwnProperty.call(dict, key) ? dict[key]
+      : (Object.prototype.hasOwnProperty.call(STR.en, key) ? STR.en[key] : key);
+    if (vars) {
+      for (var k in vars) {
+        if (Object.prototype.hasOwnProperty.call(vars, k)) s = s.split('{' + k + '}').join(String(vars[k]));
+      }
+    }
+    return s;
+  }
+  function applyStaticI18n(root) {
+    var scope = root || document;
+    document.documentElement.lang = isZh ? 'zh-CN' : 'en';
+    document.title = t('meta.title');
+    Array.prototype.forEach.call(scope.querySelectorAll('[data-i18n]'), function (el) {
+      el.textContent = t(el.getAttribute('data-i18n'));
+    });
+    Array.prototype.forEach.call(scope.querySelectorAll('[data-i18n-title]'), function (el) {
+      el.title = t(el.getAttribute('data-i18n-title'));
+    });
+    Array.prototype.forEach.call(scope.querySelectorAll('[data-i18n-aria]'), function (el) {
+      el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria')));
+    });
+  }
 
   var empty = document.getElementById('empty');
   var emptyNew = document.getElementById('emptyNew');
@@ -314,17 +602,17 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 
   if (emptyNew) emptyNew.addEventListener('click', async function () {
     if (!api || !api.composer) {
-      setStatus('请在 Finch 对话中使用“新建文档”。', true);
+      setStatus(t('newdoc.needChat'), true);
       return;
     }
     try {
       await api.composer.addContexts([{
         type: 'annotation',
-        label: '新建 Markdown 文档',
-        promptText: '我想新建一篇 Markdown 文档。请先根据我的要求确定标题、内容与一个尚不存在的绝对保存路径；信息不足时先问我。确认后调用 markdown_editor_document 的 create 动作，传入完整 Markdown 正文和绝对 path，并在编辑器中打开新文件。',
-        reminder: '新建文件时必须使用 markdown_editor_document 的 create 动作；不要覆盖已有文件。',
+        label: t('newdoc.label'),
+        promptText: t('newdoc.promptText'),
+        reminder: t('newdoc.reminder'),
       }]);
-      setStatus('已把新建文档引导加入输入框。');
+      setStatus(t('newdoc.added'));
     } catch (e) {
       setStatus(String(e), true);
     }
@@ -350,8 +638,17 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   function updateHomeTagline() {
     if (!homeTagline) return;
     homeTagline.textContent = assistantName
-      ? '你与' + assistantName + '一起编排 Markdown 文件'
-      : '打开一个 Markdown 文件开始编辑与预览';
+      ? t('home.tagline.withAssistant', { name: assistantName })
+      : t('home.tagline.default');
+  }
+
+  // "让 AI 怎么改这段？" placeholder becomes "让 <assistant name> 怎么改这段？"
+  // once the real assistant name arrives — same withAssistant/default split
+  // as the tagline above, so the popup never claims to be a generic "AI"
+  // when it's actually this session's named assistant.
+  function updatePopupPlaceholder() {
+    if (!popupInput) return;
+    popupInput.placeholder = t('popup.placeholder', { name: assistantName || 'AI' });
   }
 
   // OS-friendly display only — the raw absolute path is still what's sent
@@ -386,7 +683,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   function renderHomeCwd() {
     if (!homeCwd) return;
     homeCwd.textContent = truncateFriendlyPath(formatFriendlyPath(envCwd));
-    homeCwd.title = envCwd ? '在访达 / 文件资源管理器中打开：' + envCwd : '';
+    homeCwd.title = envCwd ? t('home.cwdTitle', { path: envCwd }) : '';
     homeCwd.hidden = !envCwd;
   }
 
@@ -402,9 +699,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     var pad = function (n) { return n < 10 ? '0' + n : String(n); };
     var clock = pad(date.getHours()) + ':' + pad(date.getMinutes());
     var sameDay = date.toDateString() === now.toDateString();
-    if (sameDay) return '今天 ' + clock;
+    if (sameDay) return t('home.today', { clock: clock });
     var yesterday = new Date(now.getTime() - 86400000);
-    if (date.toDateString() === yesterday.toDateString()) return '昨天 ' + clock;
+    if (date.toDateString() === yesterday.toDateString()) return t('home.yesterday', { clock: clock });
     if (date.getFullYear() === now.getFullYear()) return pad(date.getMonth() + 1) + '-' + pad(date.getDate());
     return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
   }
@@ -422,17 +719,17 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       homeRecent.hidden = true;
       homeHint.hidden = false;
       homeHint.textContent = envCwd
-        ? '这个目录里还没有用编辑器打开过的 Markdown 文档。'
-        : '打开一个 Markdown 文件，之后这里会列出最近编辑的文档。';
+        ? t('home.hintScoped')
+        : t('home.hintDefault');
       return;
     }
     var cards = '';
     for (var i = 0; i < list.length; i++) {
       var doc = list[i] || {};
       cards += '<button class="doc-card" type="button" data-path="' + escapeHtml(doc.path || '') + '" title="' + escapeHtml(doc.path || '') + '">'
-        + '<div class="doc-preview">' + escapeHtml(doc.preview || '（空文档）') + '</div>'
+        + '<div class="doc-preview">' + escapeHtml(doc.preview || t('home.emptyDoc')) + '</div>'
         + '<div class="doc-foot">'
-        + '<div class="doc-title">' + escapeHtml(doc.title || doc.fileName || '未命名') + '</div>'
+        + '<div class="doc-title">' + escapeHtml(doc.title || doc.fileName || t('home.untitled')) + '</div>'
         + '<div class="doc-sub"><span class="doc-path">' + escapeHtml(doc.relativePath || doc.fileName || '') + '</span>'
         + '<span class="doc-time">' + escapeHtml(formatDocTime(doc.modifiedAt)) + '</span></div>'
         + '</div></button>';
@@ -454,7 +751,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     var docPath = card.getAttribute('data-path') || '';
     if (!docPath) return;
     loadingFromHome = true;
-    setStatus('正在打开…');
+    setStatus(t('status.opening'));
     api.postMessage({ type: 'loadPath', path: docPath });
   });
 
@@ -474,7 +771,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 
   function setPanelTitle(title) {
     if (!api || !api.panel || !api.panel.setTitle) return;
-    api.panel.setTitle(title || 'Markdown 编辑').catch(function () {});
+    api.panel.setTitle(title || t('home.title')).catch(function () {});
   }
 
   // 8 built-in presets, then a separator, then the 3 reusable AI-managed
@@ -496,8 +793,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     for (var i = 0; i < 3; i++) {
       var slot = styleSlots[i];
       items.push(slot
-        ? { id: 'style:slot-use:' + i, label: '自定义风格 ' + (i + 1) + ' · ' + slot.label }
-        : { id: 'style:slot-use:' + i, label: '自定义风格 ' + (i + 1) + '（空）', disabled: true });
+        ? { id: 'style:slot-use:' + i, label: t('toolbar.style.customSlot', { n: i + 1, label: slot.label }) }
+        : { id: 'style:slot-use:' + i, label: t('toolbar.style.customSlotEmpty', { n: i + 1 }), disabled: true });
     }
     return items;
   }
@@ -508,39 +805,39 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   // against the already-registered icon pack instead of racing it.
   function buildToolbar() {
     var saveIcon = 'ext:markdown-editor-icons/save';
-    var saveLabel = '保存', saveTooltip = '保存（⌘/Ctrl+S）';
+    var saveLabel = t('toolbar.save.label'), saveTooltip = t('toolbar.save.tooltipDefault');
     if (dirty) {
       // No extra "•" glyph — an enabled/highlighted save button already
       // signals "there's something to save" without adding visual noise.
-      saveLabel = '保存';
-      saveTooltip = '有未保存的改动（⌘/Ctrl+S）';
+      saveLabel = t('toolbar.save.label');
+      saveTooltip = t('toolbar.save.tooltipDirty');
     } else if (savedFlash) {
       saveIcon = 'ext:markdown-editor-icons/save-check';
-      saveLabel = '已保存';
-      saveTooltip = '已保存';
+      saveLabel = t('toolbar.save.labelSaved');
+      saveTooltip = t('toolbar.save.tooltipSaved');
     }
     var hasDoc = hasDocument();
     return [
       {
         // Always available — a one-click way back to the recent-documents
         // launch page, regardless of what's currently open.
-        id: 'home', icon: 'house', tooltip: '返回首页',
+        id: 'home', icon: 'house', tooltip: t('toolbar.home.tooltip'),
       },
       {
         // Icon-only: the open action is unambiguous from the folder icon,
         // and dropping the label keeps this crowded toolbar's left edge compact.
         id: 'open', icon: 'ext:markdown-editor-icons/folder-open',
-        tooltip: sourcePath || fileName || '打开 Markdown 文件', disabled: nativePickPending,
+        tooltip: sourcePath || fileName || t('toolbar.open.tooltipDefault'), disabled: nativePickPending,
       },
       { id: 'save', icon: saveIcon, label: saveLabel, tooltip: saveTooltip, disabled: !dirty },
       { type: 'separator' },
       {
         // Labeled, unlike 'open': annotate is a mode toggle (checked state)
-        // rather than a one-shot action, so a visible "批注" makes the
+        // rather than a one-shot action, so a visible label makes the
         // on/off state legible at a glance instead of relying on hover.
         // Both this and preview need an open document to mean anything.
-        id: 'annotate', icon: 'ext:markdown-editor-icons/file-pen-line', label: '批注',
-        tooltip: hasDoc ? (annotationsEnabled ? '批注已开启：选中文字可发起 AI 修改' : '开启批注：选中文字后可发起 AI 修改') : '请先打开文档',
+        id: 'annotate', icon: 'ext:markdown-editor-icons/file-pen-line', label: t('toolbar.annotate.label'),
+        tooltip: hasDoc ? (annotationsEnabled ? t('toolbar.annotate.tooltipOn') : t('toolbar.annotate.tooltipOff')) : t('toolbar.needDoc'),
         checked: annotationsEnabled, disabled: !hasDoc,
       },
       {
@@ -549,16 +846,16 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         // flipping the word itself between "预览"/"编辑" read as ambiguous
         // ("is this the mode I'm in, or the one I'm switching to?").
         id: 'mode', icon: mode === 'edit' ? 'toggle-left' : 'toggle-right',
-        label: '预览', tooltip: hasDoc ? (mode === 'edit' ? '切换到预览' : '切换到编辑') : '请先打开文档',
+        label: t('toolbar.mode.label'), tooltip: hasDoc ? (mode === 'edit' ? t('toolbar.mode.tooltipToPreview') : t('toolbar.mode.tooltipToEdit')) : t('toolbar.needDoc'),
         checked: mode === 'preview', disabled: !hasDoc,
       },
       {
-        type: 'menu', id: 'style', icon: 'palette', tooltip: mode === 'preview' ? '排版风格' : '请先切换到预览',
+        type: 'menu', id: 'style', icon: 'palette', tooltip: mode === 'preview' ? t('toolbar.style.tooltip') : t('toolbar.style.tooltipNeedsPreview'),
         disabled: mode !== 'preview',
         items: buildStyleMenuItems(),
       },
       { type: 'spacer' },
-      // NOTE: copy/export/AI 排版 deliberately do NOT live here. A host
+      // NOTE: copy/export/AI-layout deliberately do NOT live here. A host
       // toolbar click reaches this page as a postMessage, which carries no
       // user activation, so clipboard writes and composer.addContexts() were
       // both being rejected ("This action requires a user gesture") until
@@ -567,23 +864,23 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       // where a click is a real user gesture and they succeed on first try.
       {
         type: 'menu', id: 'font-size', icon: 'ext:markdown-editor-icons/type',
-        tooltip: !hasDoc ? '请先打开文档' : mode === 'preview' ? '预览时不可更改字体' : '编辑器字体大小',
+        tooltip: !hasDoc ? t('toolbar.needDoc') : mode === 'preview' ? t('toolbar.fontSize.tooltipPreview') : t('toolbar.fontSize.tooltipEdit'),
         disabled: !hasDoc || mode === 'preview',
         items: [
-          { id: 'font-size:14', label: '小', checked: editorFontSize === 14 },
-          { id: 'font-size:16', label: '中', checked: editorFontSize === 16 },
-          { id: 'font-size:18', label: '大', checked: editorFontSize === 18 },
+          { id: 'font-size:14', label: t('toolbar.fontSize.small'), checked: editorFontSize === 14 },
+          { id: 'font-size:16', label: t('toolbar.fontSize.medium'), checked: editorFontSize === 16 },
+          { id: 'font-size:18', label: t('toolbar.fontSize.large'), checked: editorFontSize === 18 },
           { id: 'font-sep', label: '', separator: true },
-          { id: 'font-family:rounded', label: '默认（无衬线）', checked: editorFont === 'rounded' },
-          { id: 'font-family:songti', label: '衬线体', checked: editorFont === 'songti' },
+          { id: 'font-family:rounded', label: t('toolbar.fontFamily.default'), checked: editorFont === 'rounded' },
+          { id: 'font-family:songti', label: t('toolbar.fontFamily.serif'), checked: editorFont === 'songti' },
         ],
       },
       {
         type: 'menu', id: 'more', icon: 'settings',
         items: [
-          { id: 'reload', label: '重新渲染', disabled: mode !== 'preview' },
+          { id: 'reload', label: t('toolbar.more.reload'), disabled: mode !== 'preview' },
           { id: 'more-sep', label: '', separator: true },
-          { id: 'about', label: '关于渲染' },
+          { id: 'about', label: t('toolbar.more.about') },
         ],
       },
     ];
@@ -619,7 +916,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         var id = ++pasteImageId;
         pendingPasteImages[id] = { resolve: resolve, reject: reject };
         setTimeout(function () {
-          if (pendingPasteImages[id]) { delete pendingPasteImages[id]; reject(new Error('粘贴图片超时')); }
+          if (pendingPasteImages[id]) { delete pendingPasteImages[id]; reject(new Error(t('status.pasteImageTimeout'))); }
         }, 15000);
         api.postMessage({ type: 'pasteImage', data: base64, mimeType: file.type, requestId: id });
       };
@@ -650,7 +947,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   function render() {
     if (!markdown || !api) return;
     var id = ++renderId;
-    setStatus('正在渲染…');
+    setStatus(t('status.rendering'));
     api.postMessage({
       type: 'renderBm',
       markdown: markdown,
@@ -942,13 +1239,13 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   window.addEventListener('resize', closePopup);
 
   function lineLabel() {
-    if (!selection.lines) return '（未能精确定位对应行号，请以下方引用文本为准）';
+    if (!selection.lines) return t('annotate.lineUnknown');
     var a = selection.lines.start, b = selection.lines.end;
-    return a === b ? ('第 ' + a + ' 行') : ('第 ' + a + '–' + b + ' 行');
+    return a === b ? t('annotate.lineSingle', { a: a }) : t('annotate.lineRange', { a: a, b: b });
   }
 
   function lineLabelCompact() {
-    if (!selection.lines) return '未定位';
+    if (!selection.lines) return t('annotate.lineCompactUnknown');
     return selection.lines.start + '-' + selection.lines.end;
   }
 
@@ -960,13 +1257,16 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         type: 'annotation',
         label: (fileName || 'Markdown') + ':' + lineLabelCompact(),
         note: comment || undefined,
-        promptText: '请改写这段公众号文章内容（Markdown 原文，位置：' + lineLabel() + '），' + (comment ? '要求：' + comment : '让它更好') +
-          '：\n\n' + selection.text + '\n\n请给出精确、可直接替换的 Markdown 片段。若我确认使用，请调用 markdown_editor_document 工具的 apply 动作，' +
-          '用替换后的完整文章更新源文件（path=' + (sourcePath || '（未关联本地文件，请让我先粘贴/保存全文）') + '）。',
-        reminder: '仅给出改写建议，不要在未确认前直接写入源文件。',
+        promptText: t('annotate.promptText', {
+          lineLabel: lineLabel(),
+          requirement: comment ? t('annotate.requirementWith', { comment: comment }) : t('annotate.requirementDefault'),
+          text: selection.text,
+          path: sourcePath || t('annotate.pathMissing'),
+        }),
+        reminder: t('annotate.reminder'),
       }]);
       closePopup(true);
-      setStatus('批注已加入输入框。');
+      setStatus(t('annotate.added'));
     } catch (e) {
       setStatus(String(e), true);
     }
@@ -1021,16 +1321,16 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         lastModified = (await fileHandle.getFile()).lastModified;
         savedMarkdown = content;
         setDirty(markdown !== content, markdown === content);
-        setStatus(markdown === content ? '已保存。' : '已保存，编辑器中仍有新改动。');
+        setStatus(markdown === content ? t('status.saved') : t('status.savedWithNewChanges'));
         return true;
       } catch (e) {
-        setStatus('保存失败：' + String(e), true);
+        setStatus(t('status.saveFailed', { err: String(e) }), true);
         return false;
       }
     }
     if (sourcePath) {
       var id = ++saveId;
-      setStatus('正在保存…');
+      setStatus(t('status.saving'));
       pendingSaveContents[id] = content;
       api.postMessage({ type: 'saveMarkdown', path: sourcePath, markdown: content, requestId: id });
       // The actual result arrives later as a 'savedMarkdown' (or 'error')
@@ -1038,7 +1338,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       // changes confirm) see the real outcome instead of an optimistic true.
       return new Promise(function (resolve) { pendingSaveResolvers[id] = resolve; });
     }
-    setStatus('未关联本地文件：点击工具栏「打开」重新选择一次即可关联并启用保存。', true);
+    setStatus(t('status.noSourceFile'), true);
     return false;
   }
 
@@ -1065,7 +1365,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 
   function applyDocument(nextMarkdown, nextName, nextPath, force) {
     if (!force && dirty && cm.hasFocus() && savedMarkdown !== null && nextMarkdown !== savedMarkdown) {
-      setStatus('检测到文件外部更新；为避免覆盖未保存内容，暂未载入。', true);
+      setStatus(t('status.externalUpdateSkipped'), true);
       return false;
     }
     markdown = nextMarkdown;
@@ -1107,7 +1407,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
           lastModified = next.lastModified;
           var text = await next.text();
           if (text !== savedMarkdown && applyDocument(text, name, sourcePath)) {
-            setStatus('检测到文件更新，已刷新。');
+            setStatus(t('status.externalUpdateApplied'));
           }
         }
       } catch (e) { /* ignore */ }
@@ -1141,7 +1441,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       nativePickPending = false;
       pickFileSupported = false; // stop trusting a bridge that just went silent this session
       syncToolbar();
-      setStatus('文件选择器长时间无响应，已切换为浏览器内选择器：请重新点击"打开"。', true);
+      setStatus(t('status.pickerTimeout'), true);
     }, 20000);
   }
 
@@ -1165,7 +1465,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       nativePickPending = true;
       armNativePickTimer();
       syncToolbar();
-      setStatus('正在打开文件选择器…');
+      setStatus(t('status.openingPicker'));
       api.postMessage({ type: 'requestOpen' });
       return;
     }
@@ -1249,7 +1549,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       var id = ++clipboardImageId;
       pendingClipboardImages[id] = { resolve: resolve, reject: reject, sourceHtml: sourceHtml };
       setTimeout(function () {
-        if (pendingClipboardImages[id]) { delete pendingClipboardImages[id]; reject(new Error('准备公众号图片超时')); }
+        if (pendingClipboardImages[id]) { delete pendingClipboardImages[id]; reject(new Error(t('status.clipboardPrepareTimeout'))); }
       }, 15000);
       api.postMessage({ type: 'readClipboardImages', urls: urls, requestId: id });
     });
@@ -1361,7 +1661,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   // converted into a data URL in the clipboard-only copy (see
   // prepareClipboardHtml); preview/source remain untouched.
   async function copyHtml() {
-    if (!html) { setStatus('请先打开文章。', true); return; }
+    if (!html) { setStatus(t('status.pleaseOpenArticle'), true); return; }
     try {
       var plain = frame.contentDocument && frame.contentDocument.body
         ? frame.contentDocument.body.innerText
@@ -1374,11 +1674,11 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         await new Promise(function (resolve) { setTimeout(resolve, 200); });
         result = await copyRichText(prepareClipboardHtml(html), plain);
       }
-      if (result === 'rich') setStatus('公众号富文本 HTML 已复制，可直接粘贴到公众号编辑器。');
-      else if (result === 'plain') setStatus('仅复制到纯文本，格式未能带上，请重试一次。', true);
-      else setStatus('复制失败，请重试一次。', true);
+      if (result === 'rich') setStatus(t('status.copiedRich'));
+      else if (result === 'plain') setStatus(t('status.copiedPlainOnly'), true);
+      else setStatus(t('status.copyFailed'), true);
     } catch (e) {
-      setStatus('富文本复制失败：' + String(e), true);
+      setStatus(t('status.richCopyFailed', { err: String(e) }), true);
     } finally {
       if (mode === 'edit') requestAnimationFrame(function () { cm.focus(); });
     }
@@ -1431,7 +1731,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     try {
       serialized = new XMLSerializer().serializeToString(clone);
     } catch (e) {
-      return Promise.reject(new Error('无法序列化预览内容：' + String(e)));
+      return Promise.reject(new Error(t('status.serializeFailed', { err: String(e) })));
     }
     var svgMarkup = '<svg xmlns="http://www.w3.org/2000/svg" width="' + info.width + '" height="' + info.height + '">' +
       '<foreignObject x="0" y="0" width="' + info.width + '" height="' + info.height + '">' +
@@ -1462,7 +1762,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         } catch (e) { reject(e); }
       };
       img.onerror = function () {
-        reject(new Error('预览内容无法转成图片（可能含有无法跨域读取的外部图片）'));
+        reject(new Error(t('status.imageConversionFailed')));
       };
       img.src = svgUrl;
     });
@@ -1471,7 +1771,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   function canvasToBlob(canvas, type, quality) {
     return new Promise(function (resolve, reject) {
       canvas.toBlob(function (blob) {
-        if (blob) resolve(blob); else reject(new Error('生成图片数据失败'));
+        if (blob) resolve(blob); else reject(new Error(t('status.imageGenFailed')));
       }, type, quality);
     });
   }
@@ -1486,24 +1786,24 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   }
 
   async function copyImage() {
-    if (!html) { setStatus('请先打开文章。', true); return; }
+    if (!html) { setStatus(t('status.pleaseOpenArticle'), true); return; }
     if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write) {
-      setStatus('当前环境不支持复制图片，请改用「导出图片」。', true);
+      setStatus(t('status.clipboardUnsupported'), true);
       return;
     }
-    setStatus('正在生成图片…');
+    setStatus(t('status.generatingImage'));
     // Hand ClipboardItem a *pending promise* rather than a finished Blob, so
     // clipboard.write() is invoked immediately while the click's transient
     // user activation is still fresh; the rasterization then resolves into
     // it. Awaiting the blob first would spend that activation on rendering
     // and can get the write rejected on slower/longer articles.
     var blobPromise = renderArticleCanvas().then(function (made) {
-      if (!made) throw new Error('预览尚未就绪');
+      if (!made) throw new Error(t('status.previewNotReady'));
       return canvasToBlob(made.canvas, 'image/png');
     });
     try {
       await navigator.clipboard.write([new ClipboardItem({ 'image/png': blobPromise })]);
-      setStatus('图片已复制到剪贴板。');
+      setStatus(t('status.imageCopied'));
       return;
     } catch (e) {
       // Some builds reject a promise-valued ClipboardItem — retry once with
@@ -1511,20 +1811,20 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       try {
         var blob = await blobPromise;
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        setStatus('图片已复制到剪贴板。');
+        setStatus(t('status.imageCopied'));
         return;
       } catch (e2) {
-        setStatus('复制图片失败：' + (e2 && e2.message ? e2.message : String(e2)) + '（可改用「导出图片」）', true);
+        setStatus(t('status.copyImageFailed', { err: e2 && e2.message ? e2.message : String(e2) }), true);
       }
     }
   }
 
   async function exportImage() {
-    if (!html) { setStatus('请先打开文章。', true); return; }
+    if (!html) { setStatus(t('status.pleaseOpenArticle'), true); return; }
     try {
-      setStatus('正在生成图片…');
+      setStatus(t('status.generatingImage'));
       var made = await renderArticleCanvas();
-      if (!made) { setStatus('导出图片失败：预览尚未就绪。', true); return; }
+      if (!made) { setStatus(t('status.exportImageFailedGeneric'), true); return; }
       var blob = await canvasToBlob(made.canvas, 'image/png');
       var buf = await blob.arrayBuffer();
       var base64 = bytesToBase64(new Uint8Array(buf));
@@ -1532,7 +1832,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         api.postMessage({ type: 'exportFile', data: base64, ext: 'png', path: sourcePath, fileName: fileName, markdown: markdown });
       }
     } catch (e) {
-      setStatus('导出图片失败：' + String(e), true);
+      setStatus(t('status.exportImageFailed', { err: String(e) }), true);
     }
   }
 
@@ -1591,11 +1891,11 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   }
 
   async function exportPdf() {
-    if (!html) { setStatus('请先打开文章。', true); return; }
+    if (!html) { setStatus(t('status.pleaseOpenArticle'), true); return; }
     try {
-      setStatus('正在生成 PDF…');
+      setStatus(t('status.generatingPdf'));
       var made = await renderArticleCanvas();
-      if (!made) { setStatus('导出 PDF 失败：预览尚未就绪。', true); return; }
+      if (!made) { setStatus(t('status.exportPdfFailedGeneric'), true); return; }
       var blob = await canvasToBlob(made.canvas, 'image/jpeg', 0.92);
       var buf = await blob.arrayBuffer();
       var jpegBytes = new Uint8Array(buf);
@@ -1607,7 +1907,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         api.postMessage({ type: 'exportFile', data: base64, ext: 'pdf', path: sourcePath, fileName: fileName, markdown: markdown });
       }
     } catch (e) {
-      setStatus('导出 PDF 失败：' + String(e), true);
+      setStatus(t('status.exportPdfFailed', { err: String(e) }), true);
     }
   }
 
@@ -1655,22 +1955,20 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   }
 
   async function askAiStyle() {
-    if (!markdown || !api || !api.composer) { setStatus('请先打开文章。', true); return; }
-    var baseNote = style === 'custom' ? '当前基础风格是 kami（自定义 CSS 叠加其上）' : ('当前基础风格是 ' + style);
+    if (!markdown || !api || !api.composer) { setStatus(t('status.pleaseOpenArticle'), true); return; }
+    var baseNote = style === 'custom' ? t('aiStyle.baseNoteCustom') : t('aiStyle.baseNoteOther', { style: style });
     try {
       await api.composer.addContexts([{
         type: 'annotation',
-        label: '根据 ' + (fileName || 'Markdown 文档') + ' 设计风格',
-        note: 'AI 一键排版',
-        promptText: '请为这篇公众号文章设计一套自定义排版 CSS。' + baseNote + '，你的 CSS 会叠加在基础风格之上。' +
-          '要求：只写普通 CSS 规则，选择器限定在 #bm-md 下的标签/结构（如 #bm-md h1、#bm-md p、#bm-md blockquote、#bm-md pre code、#bm-md a、#bm-md strong、#bm-md table 等），' +
-          '不要使用 class（bm.md 输出没有 class，只有内联样式），必要时用 !important 覆盖基础风格。' +
-          '可参考 bm.md 内置风格的设计语言：kami（暖色纸感）、bauhaus（几何撞色）、blueprint（技术蓝图网格）、botanical（清新绿意）、newsprint（报刊衬线）、retro（复古怀旧）、sketch（手绘风）、terminal（等宽暗色终端风）。' +
-          '文章路径：' + (sourcePath || '（未关联本地文件）') + '。' +
-          '动手生成 CSS 前，先询问用户要覆盖「自定义风格 1、2、3」中的哪一个槽位；用户选择后，再调用 markdown_editor_document 的 set_style，必须传入 css、简短 label 和 slot（1/2/3）。该调用会覆盖并持久化那个槽位，同时立即应用预览。',
-        reminder: '必须先询问槽位，不能自行猜测或覆盖；用户明确选定 1/2/3 后才调用 set_style。',
+        label: t('aiStyle.label', { file: fileName || t('common.markdownDocDefault') }),
+        note: t('aiStyle.note'),
+        promptText: t('aiStyle.promptText', {
+          baseNote: baseNote,
+          path: sourcePath || t('aiStyle.pathMissing'),
+        }),
+        reminder: t('aiStyle.reminder'),
       }]);
-      setStatus('已请求 AI 设计自定义排版。');
+      setStatus(t('aiStyle.requested'));
     } catch (e) {
       setStatus(String(e), true);
     }
@@ -1703,7 +2001,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     annotationsEnabled = !annotationsEnabled;
     if (!annotationsEnabled) closePopup();
     syncToolbar();
-    setStatus(annotationsEnabled ? '批注已开启：选中文字可发起 AI 修改。' : '批注已关闭。');
+    setStatus(annotationsEnabled ? t('status.annotateOn') : t('status.annotateOff'));
   }
 
   // Simple 3-way confirm ("保存并返回" / "不保存" / "取消") resolved as
@@ -1752,7 +2050,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     annotationsEnabled = false;
     mode = 'edit';
     if (cm) cm.setValue('');
-    setPanelTitle('Markdown 编辑');
+    setPanelTitle(t('home.title'));
     showHtml('');
     if (api && api.postMessage) api.postMessage({ type: 'goHome' });
     updateEmptyState();
@@ -1768,7 +2066,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   // gesture the Bridge dialog could rely on.
   async function goHome() {
     if (dirty) {
-      var choice = await askUnsavedConfirm('「' + (fileName || 'Markdown 文档') + '」还有未保存的改动，要保存后再返回首页吗？');
+      var choice = await askUnsavedConfirm(t('confirm.message', { file: fileName || t('common.markdownDocDefault') }));
       if (choice === 'cancel') return;
       // The user has committed to leaving (save-then-leave or discard-then-
       // leave) — tell the backend to stop watching *before* the save write
@@ -1778,7 +2076,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       if (api && api.postMessage) api.postMessage({ type: 'goHome' });
       if (choice === 'save') {
         var saved = await saveNowAndWait();
-        if (!saved) { setStatus('保存失败，未返回首页。', true); return; }
+        if (!saved) { setStatus(t('status.saveFailedNoReturn'), true); return; }
       }
       // choice === 'discard' falls through and leaves without saving.
     }
@@ -1795,7 +2093,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     if (itemId === 'reload') { render(); return; }
     if (itemId && itemId.indexOf('font-size:') === 0) { setEditorFontSize(Number(itemId.slice('font-size:'.length))); return; }
     if (itemId && itemId.indexOf('font-family:') === 0) { setEditorFont(itemId.slice('font-family:'.length)); return; }
-    if (itemId === 'about') { setStatus('渲染器：本机 bmmd CLI（bm.md，AGPL-3.0）。'); return; }
+    if (itemId === 'about') { setStatus(t('status.rendererAbout')); return; }
     // These two must be checked before the generic 'style:' fallback below,
     // since both also start with the literal prefix "style:".
     if (itemId && itemId.indexOf('style:slot-use:') === 0) { applyStyleSlot(+itemId.slice('style:slot-use:'.length)); return; }
@@ -1809,17 +2107,17 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     customCss = slot.css;
     customStyleLabel = slot.label;
     style = 'custom';
-    setStatus('已应用「' + slot.label + '」。');
+    setStatus(t('status.appliedStyleSlot', { label: slot.label }));
     if (mode === 'preview') render(); else setMode('preview');
     syncToolbar();
   }
 
   function saveStyleSlot(index) {
     if (style !== 'custom' || !customCss) {
-      setStatus('请先应用一个自定义/AI 设计的风格，再保存到槽位。', true);
+      setStatus(t('status.needCustomStyleFirst'), true);
       return;
     }
-    var label = customStyleLabel || '自定义风格';
+    var label = customStyleLabel || t('common.customStyleDefault');
     if (api && api.postMessage) {
       api.postMessage({ type: 'saveStyleSlot', slot: index, css: customCss, label: label });
     }
@@ -1833,7 +2131,17 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       if (m.type === 'ready') {
         pickFileSupported = !!m.pickFileSupported;
         styleSlots = Array.isArray(m.styleSlots) ? m.styleSlots : [null, null, null];
-        if (m.assistantName) { assistantName = m.assistantName; updateHomeTagline(); }
+        // Reconcile the navigator.language guess (used for the very first,
+        // synchronous paint) against the host's real locale (ctx.i18n.locale,
+        // forwarded from index.ts). Only re-render if it actually flips zh/en
+        // — this arrives early enough that the recent-documents grid and
+        // toolbar haven't rendered with the wrong language yet in practice.
+        if (typeof m.locale === 'string' && m.locale) {
+          var nextIsZh = /^zh/i.test(m.locale);
+          if (nextIsZh !== isZh) { isZh = nextIsZh; applyStaticI18n(); updatePopupPlaceholder(); }
+        }
+        if (m.assistantName) { assistantName = m.assistantName; }
+        updateHomeTagline();
         if (m.homeDir) { homeDir = m.homeDir; renderHomeCwd(); }
         syncToolbar();
         return;
@@ -1841,7 +2149,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       if (m.type === 'styleSlots') {
         styleSlots = Array.isArray(m.styleSlots) ? m.styleSlots : [null, null, null];
         if (typeof m.savedSlot === 'number' && styleSlots[m.savedSlot]) {
-          setStatus('已保存到槽位 ' + (m.savedSlot + 1) + '：' + styleSlots[m.savedSlot].label);
+          setStatus(t('status.savedToSlot', { slot: m.savedSlot + 1, label: styleSlots[m.savedSlot].label }));
         }
         syncToolbar();
         return;
@@ -1861,7 +2169,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       }
       if (m.type === 'clipboardImagesError') {
         var pendingClipboardErr = pendingClipboardImages[m.requestId];
-        if (pendingClipboardErr) { delete pendingClipboardImages[m.requestId]; pendingClipboardErr.reject(new Error(m.message || '准备公众号图片失败')); }
+        if (pendingClipboardErr) { delete pendingClipboardImages[m.requestId]; pendingClipboardErr.reject(new Error(m.message || t('status.clipboardPrepareFailedDefault'))); }
         return;
       }
       if (m.type === 'pastedImage') {
@@ -1871,8 +2179,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       }
       if (m.type === 'pasteImageError') {
         var pendingPasteErr = pendingPasteImages[m.requestId];
-        if (pendingPasteErr) { delete pendingPasteImages[m.requestId]; pendingPasteErr.reject(new Error(m.message || '粘贴图片失败')); }
-        setStatus('粘贴图片失败：' + (m.message || ''));
+        if (pendingPasteErr) { delete pendingPasteImages[m.requestId]; pendingPasteErr.reject(new Error(m.message || t('status.pasteImageFailedDefault'))); }
+        setStatus(t('status.pasteImageFailed', { msg: m.message || '' }));
         return;
       }
       if (m.type === 'finch:env') {
@@ -1912,10 +2220,10 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         var isFirst = savedMarkdown === null;
         var wasLoadingFromHome = loadingFromHome;
         loadingFromHome = false;
-        var applied = applyDocument(incoming, m.title || 'Markdown 文档', m.path || sourcePath, openedFromPicker || isFirst || isDifferentDocument);
+        var applied = applyDocument(incoming, m.title || t('common.markdownDocDefault'), m.path || sourcePath, openedFromPicker || isFirst || isDifferentDocument);
         if (!applied) syncToolbar(); // still clear the "open" button's pending/disabled state
-        if (applied && wasLoadingFromHome) setStatus('已打开 ' + fileName + '。');
-        else if (applied && !isFirst) setStatus('内容已更新。');
+        if (applied && wasLoadingFromHome) setStatus(t('status.opened', { file: fileName }));
+        else if (applied && !isFirst) setStatus(t('status.contentUpdated'));
         return;
       }
       if (m.type === 'bmRendered') {
@@ -1937,21 +2245,24 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         }
         savedMarkdown = savedContent;
         setDirty(markdown !== savedContent, markdown === savedContent);
-        setStatus(markdown === savedContent ? '已保存。' : '已保存，编辑器中仍有新改动。');
+        setStatus(markdown === savedContent ? t('status.saved') : t('status.savedWithNewChanges'));
         if (saveResolve) saveResolve(true);
         return;
       }
       if (m.type === 'customStyleSet') {
         customCss = m.css || '';
-        customStyleLabel = m.label || '自定义风格';
+        customStyleLabel = m.label || t('common.customStyleDefault');
         style = 'custom';
         styleSlots = Array.isArray(m.styleSlots) ? m.styleSlots : styleSlots;
-        setStatus((m.label ? m.label + ' · ' : '') + '已保存并应用到自定义风格 ' + (typeof m.savedSlot === 'number' ? m.savedSlot + 1 : '') + '。');
+        setStatus(t('status.savedAppliedToSlot', {
+          labelPrefix: m.label ? m.label + ' · ' : '',
+          slot: typeof m.savedSlot === 'number' ? m.savedSlot + 1 : '',
+        }));
         if (mode === 'preview') render(); else setMode('preview');
         syncToolbar();
         return;
       }
-      if (m.type === 'exported') { setStatus('已导出：' + m.path); return; }
+      if (m.type === 'exported') { setStatus(t('status.exported', { path: m.path })); return; }
       if (m.type === 'watchStarted') { return; }
       if (m.type === 'pickCancelled') {
         // User closed the native picker without choosing a file — clear the
@@ -2009,6 +2320,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     if (!recentRequested) requestRecentDocuments();
   }, 400);
 
+  applyStaticI18n();
+  updateHomeTagline();
+  updatePopupPlaceholder();
   updateEmptyState();
   showPane();
 })();
