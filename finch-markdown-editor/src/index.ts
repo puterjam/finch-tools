@@ -472,6 +472,29 @@ async function sendDocument(panel: finch.AppPanel, state: DocumentState): Promis
   await panel.postMessage({ type: 'document', ...state });
 }
 
+/** Sends whatever this panel currently has cached in memory — but re-reads
+ * it through `readFileWithDraft` first when it points at a real file. The
+ * cache exists to survive a page reload/rebind racing an AI's `open`/
+ * `create` push landing on this very panel before `panelReady` arrives; by
+ * the time this panel *reconnects* (rather than freshly loads), our own
+ * draft-write debounce or an external edit may well have moved on from
+ * whatever markdown was cached at push time, so blindly resending the
+ * cached copy could paper right over an unsaved draft that exists now.
+ * A document with no `path` yet (unsaved, brand new) has nothing to
+ * re-read and is sent as-is. */
+async function sendLiveDocument(ctx: finch.MiniToolContext, panel: finch.AppPanel, liveDocument: DocumentState): Promise<void> {
+  if (liveDocument.path && path.isAbsolute(liveDocument.path)) {
+    try {
+      const { markdown, draftRestored, draftConflict } = await readFileWithDraft(ctx, liveDocument.path);
+      await sendDocument(panel, { ...liveDocument, markdown, title: documentTitle(markdown, liveDocument.path), draftRestored, draftConflict });
+      return;
+    } catch (error) {
+      ctx.logger.warn(`Could not re-read ${liveDocument.path} for a reconnecting panel, resending cached copy: ${String(error)}`);
+    }
+  }
+  await sendDocument(panel, liveDocument);
+}
+
 function payloadPath(panel: finch.AppPanel): string | undefined {
   const payload = panel.payload;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
@@ -716,7 +739,7 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       await sendReady(ctx, panel);
       const liveDocument = livePanelDocuments.get(panel.id);
       if (liveDocument) {
-        await sendDocument(panel, liveDocument);
+        await sendLiveDocument(ctx, panel, liveDocument);
       } else if (!await restoreDocument(ctx, panel)) {
         await panel.postMessage({ type: 'lastFileUnavailable' });
       }
@@ -824,7 +847,7 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       // reply raced a page navigation/rebind.
       const liveDocument = livePanelDocuments.get(panel.id);
       if (liveDocument) {
-        await sendDocument(panel, liveDocument);
+        await sendLiveDocument(ctx, panel, liveDocument);
       } else if (!await restoreDocument(ctx, panel)) {
         await panel.postMessage({ type: 'lastFileUnavailable' });
       }
