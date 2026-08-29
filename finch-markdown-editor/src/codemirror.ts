@@ -112,7 +112,11 @@ const finchTheme = EditorView.theme({
   // search layers paint edge-to-edge. A responsive inner gutter leaves the
   // readable text column at most 750px wide on wide panes, but collapses to
   // 24px on either side on narrow panes — no fixed line width, no overflow.
-  '.cm-line': {
+  // The `:not()` guard is load-bearing: a selected table cell mounts an
+  // embedded CodeMirror that inherits this editor's theme classes, so
+  // without it the 40rem reading-column width would leak into every cell,
+  // inflate the cell's min-content, and grow the whole table on selection.
+  '.cm-line:not(.tbl-table-widget .cm-line)': {
     // '--md-line-pad': 'max(24px, calc((100% - 750px) / 2))',
     boxSizing: 'border-box',
     width: CM_LINE_WIDTH,
@@ -1057,13 +1061,19 @@ function completeOpeningCodeFence(view: EditorView): boolean {
   const line = view.state.doc.lineAt(selection.head);
   if (selection.head !== line.to || !FENCE_RE.test(line.text)) return false;
 
-  let precedingFences = 0;
-  for (let lineNo = 1; lineNo < line.number; lineNo++) {
-    if (FENCE_RE.test(view.state.doc.line(lineNo).text)) precedingFences++;
+  let fenceIndex = 0;
+  let fenceTotal = 0;
+  for (let lineNo = 1; lineNo <= view.state.doc.lines; lineNo++) {
+    if (!FENCE_RE.test(view.state.doc.line(lineNo).text)) continue;
+    fenceTotal++;
+    if (lineNo === line.number) fenceIndex = fenceTotal;
   }
-  // An odd number of preceding fences means this one already closes an
-  // existing block, so regular Enter behavior is correct.
-  if (precedingFences % 2 !== 0) return false;
+  // Fences pair sequentially: the 1st, 3rd, 5th… open blocks. This line
+  // needs a closing fence only when it opens a block AND no fence follows
+  // it in the document — the 3rd-backtick handler already inserts one, and
+  // counting only the lines above (the old check) made Enter insert a
+  // second closing fence into an already-complete block.
+  if (fenceIndex % 2 !== 1 || fenceIndex !== fenceTotal) return false;
 
   const opening = /^(\s*)(`{3,})/.exec(line.text);
   if (!opening) return false;
