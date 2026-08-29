@@ -288,8 +288,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'toolbar.fontSize.large': '大',
       'toolbar.fontFamily.default': '默认（无衬线）',
       'toolbar.fontFamily.serif': '衬线体',
-      'toolbar.comfort.read': '舒适阅读',
-      'toolbar.comfort.write': '舒适书写',
+      'toolbar.comfort.read': '紧凑',
+      'toolbar.comfort.write': '舒适',
       'toolbar.more.reload': '重新渲染',
       'toolbar.more.reveal': '在文件管理器中定位',
       'toolbar.more.about': '关于渲染',
@@ -351,8 +351,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'status.exported': '已导出：{path}',
       'status.annotateOn': '批注已开启：选中文字可发起 AI 修改。',
       'status.annotateOff': '批注已关闭。',
-      'status.comfortWrite': '已切换为舒适书写（行距加宽，适合写作）。',
-      'status.comfortRead': '已切换为舒适阅读。',
+      'status.comfortWrite': '已切换为舒适模式（行距加宽）。',
+      'status.comfortRead': '已切换为紧凑模式。',
       'status.saveFailedNoReturn': '保存失败，未返回首页。',
       'status.rendererAbout': '渲染器：本机 bmmd CLI（bm.md，AGPL-3.0）。',
       'status.appliedStyleSlot': '已应用「{label}」。',
@@ -422,8 +422,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'toolbar.fontSize.large': 'Large',
       'toolbar.fontFamily.default': 'Default (sans-serif)',
       'toolbar.fontFamily.serif': 'Serif',
-      'toolbar.comfort.read': 'Comfortable reading',
-      'toolbar.comfort.write': 'Comfortable writing',
+      'toolbar.comfort.read': 'Compact',
+      'toolbar.comfort.write': 'Comfortable',
       'toolbar.more.reload': 'Re-render',
       'toolbar.more.reveal': 'Show in file manager',
       'toolbar.more.about': 'About rendering',
@@ -485,8 +485,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'status.exported': 'Exported: {path}',
       'status.annotateOn': 'Annotate is on — select text to ask AI to revise it.',
       'status.annotateOff': 'Annotate is off.',
-      'status.comfortWrite': 'Comfortable writing is on — roomier line spacing.',
-      'status.comfortRead': 'Comfortable reading is on.',
+      'status.comfortWrite': 'Comfortable mode is on — roomier line spacing.',
+      'status.comfortRead': 'Compact mode is on.',
       'status.saveFailedNoReturn': 'Save failed — staying on this document.',
       'status.rendererAbout': 'Renderer: local bmmd CLI (bm.md, AGPL-3.0).',
       'status.appliedStyleSlot': 'Applied \u201c{label}\u201d.',
@@ -575,8 +575,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   };
   var editorFontSize = 14;
   var editorFont = 'rounded';
-  // Comfortable-writing mode: roomier line spacing while composing. Default
-  // off (comfortable reading keeps the compact 2px/1.7rem layout).
+  // Comfortable mode: roomier line spacing while composing. Default off
+  // (compact mode keeps the tighter 2px/1.7rem layout).
   var comfortWriting = false;
   try {
     // Only the three menu tiers are valid; anything else (missing, corrupt,

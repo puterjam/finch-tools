@@ -240,6 +240,8 @@ const finchTheme = EditorView.theme({
     backgroundColor: 'color-mix(in srgb, var(--text) 9%, transparent)',
     fontFamily: 'var(--finch-font-mono)',
     fontSize: '0.8em',
+    position: 'relative',
+    top: '-0.1em',
   },
   // Image source is replaced inside its own `.cm-line`, rather than becoming
   // a separate CodeMirror block. The widget and image therefore inherit the
@@ -433,6 +435,115 @@ const finchTheme = EditorView.theme({
   '.cm-panels': {
     color: 'var(--text)',
     backgroundColor: 'var(--card)',
+    borderTop: 'none',
+  },
+  // Search / replace panel (Cmd/Ctrl-F, Cmd-Option-F). The default chrome
+  // keeps browser-styled inputs/buttons and a bare `×` close, so restyle
+  // the whole thing to match the editor: card background, bordered inputs
+  // with accent focus, and quiet buttons. The panel is inline-flow (the
+  // `<br>` between rows is load-bearing), so children stay inline-block.
+  '.cm-panel.cm-search': {
+    padding: '6px 30px 7px 8px',
+    fontSize: '12px',
+    color: 'var(--text)',
+    backgroundColor: 'var(--card)',
+    borderBottom: '1px solid var(--border)',
+    boxShadow: '0 2px 10px rgba(0,0,0,.14)',
+  },
+  '.cm-panel.cm-search .cm-textfield': {
+    width: '140px',
+    marginRight: '6px',
+    padding: '3px 7px',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    backgroundColor: 'var(--bg)',
+    color: 'var(--text)',
+    fontFamily: 'var(--finch-font-mono, monospace)',
+    fontSize: '12px',
+    outline: 'none',
+    transition: 'border-color .12s ease, box-shadow .12s ease',
+  },
+  '.cm-panel.cm-search .cm-textfield:focus': {
+    borderColor: 'var(--accent)',
+    boxShadow: '0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent)',
+  },
+  '.cm-panel.cm-search .cm-textfield::placeholder': {
+    color: 'color-mix(in srgb, var(--muted) 65%, transparent)',
+  },
+  '.cm-panel.cm-search .cm-button': {
+    marginRight: '4px',
+    padding: '3px 9px',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    // The base theme styles .cm-button with a light/dark gradient via
+    // `backgroundImage` plus a hardcoded `border: 1px solid #888`, both of
+    // which win over any `backgroundColor`/border override below. Kill the
+    // gradient explicitly so our quiet solid background actually shows.
+    backgroundImage: 'none',
+    backgroundColor: 'color-mix(in srgb, var(--text) 4%, transparent)',
+    color: 'var(--text)',
+    fontSize: '12px',
+    fontWeight: '500',
+    cursor: 'pointer',
+    transition: 'background-color .12s ease, border-color .12s ease',
+  },
+  '.cm-panel.cm-search .cm-button:hover': {
+    backgroundImage: 'none',
+    backgroundColor: 'color-mix(in srgb, var(--text) 9%, transparent)',
+    borderColor: 'color-mix(in srgb, var(--text) 22%, transparent)',
+  },
+  '.cm-panel.cm-search .cm-button:active': {
+    backgroundImage: 'none',
+    backgroundColor: 'color-mix(in srgb, var(--accent) 18%, transparent)',
+    borderColor: 'var(--accent)',
+  },
+  '.cm-panel.cm-search label': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    marginRight: '10px',
+    color: 'var(--muted)',
+    fontSize: '11.5px',
+    whiteSpace: 'nowrap',
+    cursor: 'pointer',
+  },
+  '.cm-panel.cm-search input[type=checkbox]': {
+    width: '13px',
+    height: '13px',
+    margin: '0',
+    accentColor: 'var(--accent)',
+    cursor: 'pointer',
+  },
+  '.cm-panel.cm-search [name=close]': {
+    position: 'absolute',
+    top: '5px',
+    right: '6px',
+    width: '20px',
+    height: '20px',
+    lineHeight: '1',
+    padding: '0',
+    border: '1px solid transparent',
+    borderRadius: '5px',
+    backgroundColor: 'transparent',
+    color: 'var(--muted)',
+    fontSize: '15px',
+    cursor: 'pointer',
+  },
+  '.cm-panel.cm-search [name=close]:hover': {
+    color: 'var(--text)',
+    backgroundColor: 'color-mix(in srgb, var(--text) 8%, transparent)',
+    borderColor: 'var(--border)',
+  },
+  // Match highlighting: unselected matches get a quiet accent wash, the
+  // currently-selected match (Enter/Shift-Enter cycling) stands out.
+  '.cm-editor .cm-content .cm-searchMatch': {
+    backgroundColor: 'color-mix(in srgb, var(--accent) 26%, transparent)',
+    outline: '1px solid color-mix(in srgb, var(--accent) 38%, transparent)',
+    borderRadius: '2px',
+  },
+  '.cm-editor .cm-content .cm-searchMatch.cm-searchMatch-selected': {
+    backgroundColor: 'color-mix(in srgb, var(--accent) 48%, transparent)',
+    outline: '1px solid var(--accent)',
   },
   '.cm-tooltip': {
     color: 'var(--text)',
@@ -1557,6 +1668,33 @@ function installStaticTableCellPreview(root: HTMLElement): () => void {
   };
 }
 
+// Localization for CodeMirror's built-in search panel (Cmd/Ctrl-F,
+// Cmd-Option-F). The `@codemirror/search` extension hardcodes English labels
+// for its buttons/checkboxes, but renders them through `state.phrase(...)`,
+// which looks translations up in the `EditorState.phrases` facet. Injecting
+// this map via `EditorState.phrases.of(...)` localizes Find/Replace, the
+// next/previous/all buttons, the case/regexp/word checkboxes, the × close,
+// and the "Go to line" dialog without touching the library.
+const searchPhrases = {
+  'Find': '查找',
+  'Replace': '替换',
+  'next': '下一个',
+  'previous': '上一个',
+  'all': '全部',
+  'replace': '替换',
+  'replace all': '全部替换',
+  'match case': '区分大小写',
+  'regexp': '正则',
+  'by word': '全词匹配',
+  'close': '关闭',
+  'Go to line': '跳转到行',
+  'go': '跳转',
+  'current match': '当前匹配',
+  'replaced $ matches': '已替换 $ 处匹配',
+  'replaced match on line $': '已在第 $ 行替换匹配',
+  'on line': '位于第',
+};
+
 const markdownEditorKeymap = keymap.of([
   { key: '`', run: handleFenceTriggerBacktick },
   { key: 'Enter', run: completeOpeningCodeFence },
@@ -1595,6 +1733,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     extensions: [
       markdownEditorKeymap,
       basicSetup,
+      EditorState.phrases.of(searchPhrases),
       codeGutterLineHighlighter,
       markdownSupport,
       // Typing `|` on an empty line pops a table-size picker (2x2/3x3/4x4)
@@ -1693,7 +1832,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       // hand-added class, so switching via tokens is the durable approach.
       const writing = !!on;
       view.dom.style.setProperty('--md-line-pad-y', writing ? '4px' : '2px');
-      view.dom.style.setProperty('--md-line-height', writing ? '2rem' : '1.7rem');
+      view.dom.style.setProperty('--md-line-height', writing ? '2em' : '1.7rem');
       // Line-number gutter rows track the same rhythm (prose lines only;
       // fenced-code gutter rows keep their own fixed 22px height).
       view.dom.style.setProperty('--md-gutter-line-height', writing ? '40px' : '32px');
