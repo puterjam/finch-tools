@@ -290,6 +290,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'toolbar.fontFamily.serif': '衬线体',
       'toolbar.comfort.read': '紧凑',
       'toolbar.comfort.write': '舒适',
+      'toolbar.focus.tooltipOn': '专注已开启：非当前行半透明',
+      'toolbar.focus.tooltipOff': '开启专注：非当前行半透明',
       'toolbar.more.reload': '重新渲染',
       'toolbar.more.reveal': '在文件管理器中定位',
       'toolbar.more.about': '关于渲染',
@@ -353,6 +355,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'status.annotateOff': '批注已关闭。',
       'status.comfortWrite': '已切换为舒适模式（行距加宽）。',
       'status.comfortRead': '已切换为紧凑模式。',
+      'status.focusOn': '专注已开启：非当前行半透明。',
+      'status.focusOff': '专注已关闭。',
       'status.saveFailedNoReturn': '保存失败，未返回首页。',
       'status.rendererAbout': '渲染器：本机 bmmd CLI（bm.md，AGPL-3.0）。',
       'status.appliedStyleSlot': '已应用「{label}」。',
@@ -424,6 +428,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'toolbar.fontFamily.serif': 'Serif',
       'toolbar.comfort.read': 'Compact',
       'toolbar.comfort.write': 'Comfortable',
+      'toolbar.focus.tooltipOn': 'Focus mode is on — inactive lines are dimmed',
+      'toolbar.focus.tooltipOff': 'Turn on focus mode: dim inactive lines',
       'toolbar.more.reload': 'Re-render',
       'toolbar.more.reveal': 'Show in file manager',
       'toolbar.more.about': 'About rendering',
@@ -487,6 +493,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'status.annotateOff': 'Annotate is off.',
       'status.comfortWrite': 'Comfortable mode is on — roomier line spacing.',
       'status.comfortRead': 'Compact mode is on.',
+      'status.focusOn': 'Focus mode is on — inactive lines are dimmed.',
+      'status.focusOff': 'Focus mode is off.',
       'status.saveFailedNoReturn': 'Save failed — staying on this document.',
       'status.rendererAbout': 'Renderer: local bmmd CLI (bm.md, AGPL-3.0).',
       'status.appliedStyleSlot': 'Applied \u201c{label}\u201d.',
@@ -578,6 +586,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   // Comfortable mode: roomier line spacing while composing. Default off
   // (compact mode keeps the tighter 2px/1.7rem layout).
   var comfortWriting = false;
+  // Focus mode ("专注"): dims every line except the cursor's own line.
+  var focusMode = false;
   try {
     // Only the three menu tiers are valid; anything else (missing, corrupt,
     // or from an older tier set) falls back to the default 14px tier.
@@ -587,6 +597,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     if (EDITOR_FONTS[savedEditorFont]) editorFont = savedEditorFont;
     else if (savedEditorFont) localStorage.removeItem('md-editor-font-family');
     comfortWriting = localStorage.getItem('md-editor-comfort-writing') === '1';
+    focusMode = localStorage.getItem('md-editor-focus-mode') === '1';
   } catch (e) {}
   var markdown = '';
   var name = '';
@@ -918,6 +929,14 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       // in the in-page floating bar over the preview (see `.actions` above),
       // where a click is a real user gesture and they succeed on first try.
       {
+        // Focus mode ("专注"): dims every line except the cursor's own, a
+        // checked toggle like annotate. Editing-only; preview has no lines.
+        // Icon-only like `open` — the tooltip explains what it does.
+        id: 'focus', icon: 'ext:markdown-editor-icons/feather',
+        tooltip: hasDoc ? (focusMode ? t('toolbar.focus.tooltipOn') : t('toolbar.focus.tooltipOff')) : t('toolbar.needDoc'),
+        checked: focusMode, disabled: !hasDoc || mode === 'preview',
+      },
+      {
         type: 'menu', id: 'font-size', icon: 'ext:markdown-editor-icons/type',
         tooltip: !hasDoc ? t('toolbar.needDoc') : mode === 'preview' ? t('toolbar.fontSize.tooltipPreview') : t('toolbar.fontSize.tooltipEdit'),
         disabled: !hasDoc || mode === 'preview',
@@ -1016,6 +1035,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   cm.setFontSize(editorFontSize);
   cm.setFontFamily(EDITOR_FONTS[editorFont]);
   cm.setComfortWriting(comfortWriting);
+  cm.setFocusMode(focusMode);
   cm.scrollDOM.addEventListener('scroll', closePopup);
 
   // ---- Markdown <-> bm.md rendering ----
@@ -2180,6 +2200,14 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     setStatus(comfortWriting ? t('status.comfortWrite') : t('status.comfortRead'));
   }
 
+  function toggleFocusMode() {
+    focusMode = !focusMode;
+    cm.setFocusMode(focusMode);
+    try { localStorage.setItem('md-editor-focus-mode', focusMode ? '1' : '0'); } catch (e) {}
+    syncToolbar();
+    setStatus(focusMode ? t('status.focusOn') : t('status.focusOff'));
+  }
+
   function toggleAnnotations() {
     annotationsEnabled = !annotationsEnabled;
     if (!annotationsEnabled) closePopup();
@@ -2283,6 +2311,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     if (itemId && itemId.indexOf('font-family:') === 0) { setEditorFont(itemId.slice('font-family:'.length)); return; }
     if (itemId === 'comfort:read') { setComfortWriting(false); return; }
     if (itemId === 'comfort:write') { setComfortWriting(true); return; }
+    if (itemId === 'focus') { toggleFocusMode(); return; }
     if (itemId === 'about') { setStatus(t('status.rendererAbout')); return; }
     // These two must be checked before the generic 'style:' fallback below,
     // since both also start with the literal prefix "style:".

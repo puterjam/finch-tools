@@ -48,6 +48,7 @@ interface MarkdownEditorHandle {
   setFontSize(size: number): void;
   setFontFamily(family: string): void;
   setComfortWriting(on: boolean): void;
+  setFocusMode(on: boolean): void;
   scrollDOM: HTMLElement;
   destroy(): void;
 }
@@ -428,6 +429,16 @@ const finchTheme = EditorView.theme({
   '.cm-activeLineGutter': {
     color: 'var(--text) !important',
     backgroundColor: 'color-mix(in srgb, var(--text) 7%, transparent)',
+  },
+  // Focus mode ("专注" toolbar toggle): non-active lines fade to 70% so the
+  // cursor's line stands out while writing. Driven by a CSS token on the
+  // editor root (set by setFocusMode) rather than a hand-added class —
+  // CM rebuilds view.dom.className on updates, which would drop the class.
+  // The `:not(.cm-activeLine)` guard keeps the current line fully opaque;
+  // `.tbl-table-widget` cells and the code-fence/heading rows still follow
+  // the token since they are ordinary `.cm-line`s.
+  '.cm-line:not(.cm-activeLine)': {
+    opacity: 'var(--md-focus-opacity, 1)',
   },
   '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground': {
     backgroundColor: 'color-mix(in srgb, var(--accent) 34%, transparent)',
@@ -1727,6 +1738,26 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
   };
   const markdownSupport = markdown({ ...markdownConfig, codeLanguages: fencedCodeLanguages });
   const cellMarkdownSupport = markdown(markdownConfig);
+
+  // Focus mode ("专注"): when on, the cursor's line is kept vertically
+  // centered in the window using the browser's native smooth scrolling
+  // (scrollIntoView), so the eye never has to chase the caret. Deliberately
+  // NOT via CM's scrollIntoView effect — that one snaps instantly and also
+  // fights CM's own minimal-scroll behavior. The double rAF waits for CM's
+  // post-update measure to settle first, otherwise the two scroll
+  // authorities (CM's cursor-preserving scroll and ours) yank the window.
+  let focusModeEnabled = false;
+  let centerLineRaf = 0;
+  function centerActiveLine() {
+    centerLineRaf = 0;
+    if (!focusModeEnabled) return;
+    const line = view.dom.querySelector('.cm-activeLine');
+    if (line) line.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+  function scheduleCenterActiveLine() {
+    if (!focusModeEnabled || centerLineRaf) return;
+    centerLineRaf = requestAnimationFrame(() => requestAnimationFrame(centerActiveLine));
+  }
   const view = new EditorView({
     doc: options.value ?? '',
     parent: options.parent,
@@ -1776,6 +1807,9 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       }),
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !suppressChange) options.onChange(update.state.doc.toString());
+        // Focus mode: keep the caret's line centered as the user types or
+        // moves the cursor (native smooth scrollIntoView, see above).
+        if ((update.selectionSet || update.docChanged) && focusModeEnabled) scheduleCenterActiveLine();
       }),
     ],
   });
@@ -1838,8 +1872,18 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       view.dom.style.setProperty('--md-gutter-line-height', writing ? '40px' : '32px');
       view.requestMeasure();
     },
+    setFocusMode(on) {
+      // Same token approach as setComfortWriting: non-active lines fade to
+      // 70% (see the `.cm-line:not(.cm-activeLine)` theme rule). `1` keeps
+      // the rule inert when focus mode is off.
+      focusModeEnabled = !!on;
+      view.dom.style.setProperty('--md-focus-opacity', on ? '0.5' : '1');
+      if (on) scheduleCenterActiveLine();
+      view.requestMeasure();
+    },
     scrollDOM: view.scrollDOM,
     destroy() {
+      if (centerLineRaf) { cancelAnimationFrame(centerLineRaf); centerLineRaf = 0; }
       disposeStaticTableCellPreview();
       disposeTableMenuI18n();
       view.destroy();
