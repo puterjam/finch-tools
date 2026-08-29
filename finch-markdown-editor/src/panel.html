@@ -36,6 +36,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .preview-shell{position:absolute;inset:0;padding:32px 20px 20px;background:var(--bg);overflow:hidden}
 #article{display:block;width:100%;height:100%;border:0;border-radius:10px;background:var(--card)}
 .empty{position:absolute;z-index:5;inset:0;background:var(--card);color:var(--muted);display:flex;align-items:center;justify-content:center;text-align:center;padding:40px;font-size:14px;line-height:1.7}
+.empty-copy p{margin:0 0 14px;white-space:nowrap}
+.empty-new{appearance:none;border:1px solid var(--accent);border-radius:8px;background:var(--accent);color:#fff;padding:7px 12px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.empty-new:hover{filter:brightness(1.06)}
 .empty[hidden]{display:none}
 .status{font-size:12px;color:var(--muted);padding:5px 10px;text-align:center;border-top:1px solid var(--border);background:var(--bg)}
 .status.error{color:#c54232}
@@ -57,8 +60,14 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .actions[hidden]{display:none}
 .actions button{position:relative;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--text);font:inherit;cursor:pointer;white-space:nowrap}
 .actions button:hover:not(:disabled){background:var(--bg)}
-.actions button[title]::after{content:attr(title);position:absolute;right:0;bottom:calc(100% + 8px);z-index:20;padding:6px 8px;border:1px solid var(--border);border-radius:7px;background:linear-gradient(135deg,color-mix(in srgb,var(--card) 96%,#fff),var(--bg));box-shadow:0 5px 16px rgba(0,0,0,.2);color:var(--text);font-size:12px;line-height:1;white-space:nowrap;pointer-events:none;opacity:0;transform:translateY(3px);transition:opacity .16s ease,transform .16s ease}
-.actions button[title]:hover::after{opacity:1;transform:translateY(0)}
+.actions button[title]::after{content:attr(title);position:absolute;left:50%;bottom:calc(100% + 8px);z-index:20;padding:6px 8px;border:1px solid var(--border);border-radius:7px;background:linear-gradient(135deg,color-mix(in srgb,var(--card) 96%,#fff),var(--bg));box-shadow:0 5px 16px rgba(0,0,0,.2);color:var(--text);font-size:12px;line-height:1;white-space:nowrap;pointer-events:none;opacity:0;transform:translate(-50%,3px);transition:opacity .16s ease,transform .16s ease}
+.actions button[title]:hover::after{opacity:1;transform:translate(-50%,0)}
+/* Center tooltips over ordinary buttons; at either end of the floating bar,
+   grow them inward instead of letting a long label escape the panel. */
+.actions button:first-child[title]::after{left:0;transform:translateY(3px)}
+.actions button:first-child[title]:hover::after{transform:translateY(0)}
+.actions button:last-child[title]::after{left:auto;right:0;transform:translateY(3px)}
+.actions button:last-child[title]:hover::after{transform:translateY(0)}
 .actions button:disabled{opacity:.45;cursor:default}
 .actions .sep{width:1px;height:18px;background:var(--border);margin:0 3px}
 .actions svg{width:16px;height:16px;flex:none}
@@ -77,7 +86,12 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 <body>
 <main class="app">
   <div class="stage">
-    <div id="empty" class="empty">点击工具栏「打开文章」，选择一个 Markdown 文件开始编辑与预览。</div>
+    <div id="empty" class="empty">
+      <div class="empty-copy">
+        <p>打开一个 Markdown 文件开始编辑与预览，或新建一篇文章。</p>
+        <button id="emptyNew" class="empty-new" type="button">新建文档</button>
+      </div>
+    </div>
     <div id="editPane" class="pane">
       <div class="editor-wrap">
         <div id="editor" aria-label="Markdown 编辑器"></div>
@@ -124,6 +138,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   var api = window.finch;
 
   var empty = document.getElementById('empty');
+  var emptyNew = document.getElementById('emptyNew');
   var editPane = document.getElementById('editPane');
   var previewPane = document.getElementById('previewPane');
   var editor = document.getElementById('editor');
@@ -154,16 +169,16 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   // Editor-only preferences. The font stacks are system-first: no webfont
   // downloads, while macOS/Windows/Linux each get a native matching face.
   var EDITOR_FONTS = {
-    mono: 'ui-monospace, SFMono-Regular, Menlo, Cascadia Mono, Consolas, monospace',
-    kaiti: 'Kaiti SC, STKaiti, KaiTi, KaiTi_GB2312, serif',
     songti: 'Songti SC, STSong, SimSun, Noto Serif CJK SC, serif',
     rounded: 'PingFang SC, Microsoft YaHei, Noto Sans CJK SC, sans-serif'
   };
   var editorFontSize = 16;
-  var editorFont = 'mono';
+  var editorFont = 'rounded';
   try {
     editorFontSize = Number(localStorage.getItem('md-editor-font-size')) || 16;
-    if (EDITOR_FONTS[localStorage.getItem('md-editor-font-family')]) editorFont = localStorage.getItem('md-editor-font-family');
+    var savedEditorFont = localStorage.getItem('md-editor-font-family');
+    if (EDITOR_FONTS[savedEditorFont]) editorFont = savedEditorFont;
+    else if (savedEditorFont) localStorage.removeItem('md-editor-font-family');
   } catch (e) {}
   var markdown = '';
   var name = '';
@@ -192,6 +207,24 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   }
 
   function hasDocument() { return !!markdown || !!sourcePath; }
+
+  if (emptyNew) emptyNew.addEventListener('click', async function () {
+    if (!api || !api.composer) {
+      setStatus('请在 Finch 对话中使用“新建文档”。', true);
+      return;
+    }
+    try {
+      await api.composer.addContexts([{
+        type: 'annotation',
+        label: '新建 Markdown 文档',
+        promptText: '我想新建一篇 Markdown 文档。请先根据我的要求确定标题、内容与一个尚不存在的绝对保存路径；信息不足时先问我。确认后调用 markdown_editor_document 的 create 动作，传入完整 Markdown 正文和绝对 path，并在编辑器中打开新文件。',
+        reminder: '新建文件时必须使用 markdown_editor_document 的 create 动作；不要覆盖已有文件。',
+      }]);
+      setStatus('已把新建文档引导加入输入框。');
+    } catch (e) {
+      setStatus(String(e), true);
+    }
+  });
 
   function updateEmptyState() {
     empty.hidden = hasDocument();
@@ -297,8 +330,6 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
           { id: 'font-sep', label: '', separator: true },
           { id: 'font-family:rounded', label: '默认（无衬线）', checked: editorFont === 'rounded' },
           { id: 'font-family:songti', label: '衬线体', checked: editorFont === 'songti' },
-          { id: 'font-family:kaiti', label: '楷体书写', checked: editorFont === 'kaiti' },
-          { id: 'font-family:mono', label: '等宽', checked: editorFont === 'mono' },
         ],
       },
       { id: 'save', icon: saveIcon, label: saveLabel, tooltip: saveTooltip, disabled: !dirty },
@@ -1377,7 +1408,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     try {
       await api.composer.addContexts([{
         type: 'annotation',
-        label: fileName || 'Markdown 排版',
+        label: '根据 ' + (fileName || 'Markdown 文档') + ' 设计风格',
         note: 'AI 一键排版',
         promptText: '请为这篇公众号文章设计一套自定义排版 CSS。' + baseNote + '，你的 CSS 会叠加在基础风格之上。' +
           '要求：只写普通 CSS 规则，选择器限定在 #bm-md 下的标签/结构（如 #bm-md h1、#bm-md p、#bm-md blockquote、#bm-md pre code、#bm-md a、#bm-md strong、#bm-md table 等），' +
@@ -1518,9 +1549,16 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         nativePickPending = false;
         clearNativePickTimer();
         var incoming = m.markdown || '';
-        if (incoming === savedMarkdown) { syncToolbar(); return; } // echo of our own save
+        var incomingPath = m.path || '';
+        // A different absolute path means this is a genuine "switch to
+        // another document" push (e.g. the AI just created/opened a second
+        // file while this panel already had one loaded) — not an echo of our
+        // own save, and not an external edit of the file we're currently
+        // looking at, so neither of the two guards below should apply to it.
+        var isDifferentDocument = !!incomingPath && !!sourcePath && incomingPath !== sourcePath;
+        if (!isDifferentDocument && incoming === savedMarkdown) { syncToolbar(); return; } // echo of our own save
         var isFirst = savedMarkdown === null;
-        var applied = applyDocument(incoming, m.title || 'Markdown 文档', m.path || sourcePath, openedFromPicker || isFirst);
+        var applied = applyDocument(incoming, m.title || 'Markdown 文档', m.path || sourcePath, openedFromPicker || isFirst || isDifferentDocument);
         if (!applied) syncToolbar(); // still clear the "open" button's pending/disabled state
         if (applied && !isFirst) setStatus('内容已更新。');
         return;

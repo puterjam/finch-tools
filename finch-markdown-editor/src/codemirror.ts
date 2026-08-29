@@ -94,9 +94,10 @@ const finchTheme = EditorView.theme({
   // '&:not(.cm-focused) .cm-scroller': { color: 'var(--muted)' },
   '.cm-scroller': {
     fontFamily: 'var(--md-editor-font-family, var(--finch-font-mono))',
-    // lineHeight: '2rem',
-    overflow: 'auto',
-    // color: 'var(--muted)',
+    // CodeMirror's lineWrapping extension handles long prose, URLs and code;
+    // never expose a second horizontal scrollbar in the editor pane.
+    overflowX: 'hidden',
+    overflowY: 'auto',
     // Body text = the root size itself (14px), i.e. this is the reference
     // "14px" the human eye actually reads while typing.
     fontSize: '0.9em',
@@ -105,24 +106,22 @@ const finchTheme = EditorView.theme({
     padding: '20px 0',
     caretColor: 'var(--text)',
     minHeight: '100%',
+    // Let the content flex down with a narrow panel instead of retaining the
+    // intrinsic width of its longest line.
+    minWidth: '0',
   },
-  // Keep `.cm-line` FULL-WIDTH: CodeMirror paints active-line, selection,
-  // search and syntax backgrounds on this element, so constraining it with
-  // max-width visibly chops those backgrounds into a narrow centre strip.
-  // Instead, only grow its left/right padding. `max(24px, …)` preserves the
-  // 24px minimum on narrow panes; past 798px, the excess becomes symmetric
-  // padding, leaving an editable/content column no wider than 750px while
-  // every CodeMirror highlight still spans the full available line width.
+  // Keep `.cm-line` full-width so CodeMirror's active-line, selection and
+  // search layers paint edge-to-edge. A responsive inner gutter leaves the
+  // readable text column at most 750px wide on wide panes, but collapses to
+  // 24px on either side on narrow panes — no fixed line width, no overflow.
   '.cm-line': {
-    '--max-width': '88%',
-    '--line-width': '40rem',
+    // '--md-line-pad': 'max(24px, calc((100% - 750px) / 2))',
+    boxSizing: 'border-box',
+    width: '40rem',
+    maxWidth: '88%',
+    marginInline: 'auto',
     paddingTop: '2px',
     paddingBottom: '2px',
-    // paddingLeft: 'var(--md-line-pad)',
-    // paddingRight: 'var(--md-line-pad)',
-    maxWidth: 'var(--max-width)',
-    width: 'var(--line-width)',
-    marginInline: 'auto',
     lineHeight: '1.7rem',
   },
   // Headings get a distinct size per level (h1 largest down to h6), like the
@@ -176,7 +175,10 @@ const finchTheme = EditorView.theme({
     backgroundColor: 'color-mix(in srgb, var(--text) 8%, transparent)',
     lineHeight: '1.3rem',
     fontFamily: 'var(--finch-font-mono)',
-    padding: "0 12px",
+    paddingTop: '0',
+    paddingBottom: '0',
+    paddingLeft: '12px',
+    paddingRight: '12px',
     fontSize: '12px !important',
   },
 
@@ -790,7 +792,37 @@ function moveIntoSkippedDelimiterLine(view: EditorView, direction: -1 | 1): bool
   return true;
 }
 
+// Pressing Enter on an unmatched opening fence completes the block before
+// prose can accidentally become code. Do this on Enter (rather than as soon
+// as the third backtick is typed) so ` ```ts` / ` ```python` remain natural
+// to type. The cursor lands on the empty code line between the two fences.
+function completeOpeningCodeFence(view: EditorView): boolean {
+  const selection = view.state.selection.main;
+  if (!selection.empty) return false;
+  const line = view.state.doc.lineAt(selection.head);
+  if (selection.head !== line.to || !FENCE_RE.test(line.text)) return false;
+
+  let precedingFences = 0;
+  for (let lineNo = 1; lineNo < line.number; lineNo++) {
+    if (FENCE_RE.test(view.state.doc.line(lineNo).text)) precedingFences++;
+  }
+  // An odd number of preceding fences means this one already closes an
+  // existing block, so regular Enter behavior is correct.
+  if (precedingFences % 2 !== 0) return false;
+
+  const opening = /^(\s*)(`{3,})/.exec(line.text);
+  if (!opening) return false;
+  const closing = `${opening[1]}${opening[2]}`;
+  view.dispatch({
+    changes: { from: selection.head, insert: `\n\n${closing}` },
+    selection: { anchor: selection.head + 1 },
+    scrollIntoView: true,
+  });
+  return true;
+}
+
 const markdownEditorKeymap = keymap.of([
+  { key: 'Enter', run: completeOpeningCodeFence },
   { key: 'ArrowUp', run: (view) => moveIntoSkippedDelimiterLine(view, -1) },
   { key: 'ArrowDown', run: (view) => moveIntoSkippedDelimiterLine(view, 1) },
   { key: 'Tab', run: (view) => selectionStartsOnListItem(view) && indentMore(view) },

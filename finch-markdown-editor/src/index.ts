@@ -96,11 +96,6 @@ function documentTitle(markdown: string, filePath?: string): string {
   return heading || (filePath ? path.basename(filePath, path.extname(filePath)) : 'Untitled article');
 }
 
-function snapshotPath(ctx: finch.MiniToolContext, sourcePath: string): string {
-  const digest = createHash('sha256').update(sourcePath).digest('hex').slice(0, 12);
-  return path.join(ctx.storagePath, 'snapshots', `${digest}-before.md`);
-}
-
 // Remember the last successfully opened file, so the user doesn't have to
 // re-open it by hand every time. The primary key is panel.id: each Panel scope
 // gets its own stable instance, including different Space Home scopes, and a
@@ -202,7 +197,14 @@ async function readLastPath(ctx: finch.MiniToolContext, panel: finch.AppPanel): 
   return undefined;
 }
 
+// The document currently being delivered to each live Panel. This is
+// deliberately in-memory only: Home must start document-neutral on a later
+// open, but a Home panel that is still loading/rebinding must not lose a
+// document an AI just created or opened before the page announced `panelReady`.
+const livePanelDocuments = new Map<string, DocumentState>();
+
 async function sendDocument(panel: finch.AppPanel, state: DocumentState): Promise<void> {
+  livePanelDocuments.set(panel.id, state);
   await panel.postMessage({ type: 'document', ...state });
 }
 
@@ -217,6 +219,10 @@ function payloadPath(panel: finch.AppPanel): string | undefined {
  * installed. Prefer persisted per-Panel state; the retained opening payload
  * covers a tool's first-open race before persistence completes. */
 async function restoreDocument(ctx: finch.MiniToolContext, panel: finch.AppPanel): Promise<boolean> {
+  // Home is a document-neutral launch point: it must always show the empty
+  // state and let the user explicitly open a file or ask the AI to create
+  // one. Only Session-scoped panels may restore their last working document.
+  if (!panel.sessionId) return false;
   // Persisted state wins after the user opens a different file from inside an
   // existing single-instance panel; payload is the first-open race fallback.
   const sourcePath = await readLastPath(ctx, panel) ?? payloadPath(panel);
@@ -374,10 +380,15 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
     }
     case 'panelReady': {
       // Authoritative handshake: visibility/open events can precede guest
-      // listener installation. Reply only after the page tells us it is ready,
-      // then restore a complete current document snapshot on the same channel.
+      // listener installation. First replay a document that was sent while
+      // this very panel was loading; only otherwise fall back to persisted
+      // Session state. Home therefore stays empty on a later open, while an
+      // AI-created Home document reliably reaches a freshly loaded panel.
       await sendReady(ctx, panel);
-      if (!await restoreDocument(ctx, panel)) {
+      const liveDocument = livePanelDocuments.get(panel.id);
+      if (liveDocument) {
+        await sendDocument(panel, liveDocument);
+      } else if (!await restoreDocument(ctx, panel)) {
         await panel.postMessage({ type: 'lastFileUnavailable' });
       }
       return;
@@ -450,7 +461,12 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       return;
     }
     case 'requestLastFile': {
-      if (!await restoreDocument(ctx, panel)) {
+      // Covers the panel's delayed retry too, in case the first `panelReady`
+      // reply raced a page navigation/rebind.
+      const liveDocument = livePanelDocuments.get(panel.id);
+      if (liveDocument) {
+        await sendDocument(panel, liveDocument);
+      } else if (!await restoreDocument(ctx, panel)) {
         await panel.postMessage({ type: 'lastFileUnavailable' });
       }
       return;
@@ -504,13 +520,10 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
         return;
       }
       try {
-        const before = await readFile(sourcePath, 'utf8');
-        await mkdir(path.dirname(snapshotPath(ctx, sourcePath)), { recursive: true });
-        const beforePath = snapshotPath(ctx, sourcePath);
-        await writeFile(beforePath, before, 'utf8');
+        // No `openDiff` here on purpose — see the matching comment on the
+        // `apply` tool action below.
         await writeFile(sourcePath, markdown, 'utf8');
         await panel.postMessage({ type: 'applied', path: sourcePath, title: documentTitle(markdown, sourcePath) });
-        await ctx.ui.openDiff({ type: 'files', leftPath: beforePath, rightPath: sourcePath, title: 'Markdown Editor revision' });
       } catch (error) {
         await panel.postMessage({ type: 'error', message: `Could not apply revision: ${error instanceof Error ? error.message : String(error)}` });
       }
@@ -645,6 +658,7 @@ export function activate(ctx: finch.MiniToolContext): void {
     }));
     ctx.subscriptions.push(panel.onDidDispose(() => {
       stopWatching(panel.id);
+      livePanelDocuments.delete(panel.id);
       if (lastPanel === panel) lastPanel = undefined;
     }));
     // Best-effort immediate push: page-originated `panelReady` is the
@@ -659,7 +673,7 @@ export function activate(ctx: finch.MiniToolContext): void {
 action:
   open — read an absolute local Markdown path and open it as an editable WeChat article preview
   create — write brand-new Markdown content to an absolute path that does not exist yet, then open it in Markdown Editor. Use this whenever the user asks to create/draft a new Markdown file (Markdown Editor's own UI has no "new file" button on purpose — this tool action is the intended way to start a new document)
-  apply — replace a source document with reviewed Markdown and open a native Diff (requires path and markdown)
+  apply — replace a source document with reviewed Markdown (requires path and markdown); the open panel refreshes in place, no Diff window
   set_style — apply an AI-designed custom CSS layout to the currently open Markdown Editor preview (requires css). Write plain CSS scoped under #bm-md using tag/id selectors (no classes), use !important where needed to override the base style, and take inspiration from bm.md's built-in styles: kami (warm paper), bauhaus (geometric primary colors), blueprint (technical grid), botanical (soft green), newsprint (editorial serif), retro (nostalgic), sketch (hand-drawn), terminal (monospace dark).`,
     inputSchema: {
       type: 'object',
@@ -712,13 +726,15 @@ action:
         const markdown = String(input.markdown ?? '');
         if (!markdown) return result('`apply` requires non-empty `markdown`.', true);
         try {
-          await mkdir(path.dirname(snapshotPath(ctx, sourcePath)), { recursive: true });
-          const before = await readFile(sourcePath, 'utf8');
-          const beforePath = snapshotPath(ctx, sourcePath);
-          await writeFile(beforePath, before, 'utf8');
+          // Deliberately no `ctx.ui.openDiff` here: this action is meant to
+          // land an already-reviewed revision straight into the document
+          // (and, if a panel for this path is open, straight onto the
+          // screen via `watchSource`'s fs.watch push) — popping a native
+          // Diff window on every single edit was surprising/unwanted, since
+          // the user typically reviews the change directly in the editor or
+          // preview, not in a separate Diff dialog.
           await writeFile(sourcePath, markdown, 'utf8');
-          await ctx.ui.openDiff({ type: 'files', leftPath: beforePath, rightPath: sourcePath, title: 'Markdown Editor revision' });
-          return result(`Applied reviewed Markdown to ${path.basename(sourcePath)} and opened a Diff.`);
+          return result(`Applied reviewed Markdown to ${path.basename(sourcePath)}.`);
         } catch (error) {
           return result(`Could not apply revision: ${error instanceof Error ? error.message : String(error)}`, true);
         }
