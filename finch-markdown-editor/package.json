@@ -64,9 +64,20 @@
         },
         "toolbar": [
           {
+            "id": "home",
+            "icon": "house",
+            "tooltip": "Back to home"
+          },
+          {
             "id": "open",
             "icon": "ext:markdown-editor-icons/folder-open",
             "tooltip": "Open Markdown file"
+          },
+          {
+            "id": "save",
+            "icon": "ext:markdown-editor-icons/save",
+            "label": "Save",
+            "tooltip": "Save (Cmd/Ctrl+S)"
           },
           {
             "type": "separator"
@@ -135,12 +146,6 @@
           },
           {
             "type": "spacer"
-          },
-          {
-            "id": "save",
-            "icon": "ext:markdown-editor-icons/save",
-            "label": "Save",
-            "tooltip": "Save (Cmd/Ctrl+S)"
           },
           {
             "type": "menu",

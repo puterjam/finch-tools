@@ -12,6 +12,15 @@ interface DocumentState {
   title: string;
 }
 
+interface RecentDocument {
+  path: string;
+  relativePath: string;
+  fileName: string;
+  title: string;
+  preview: string;
+  modifiedAt: number;
+}
+
 interface PanelMessage {
   type: string;
   path?: string;
@@ -32,6 +41,7 @@ interface PanelMessage {
   label?: string;
   mimeType?: string;
   urls?: string[];
+  cwd?: string;
 }
 
 // Pasted-image extension → file extension. Kept tiny and explicit rather
@@ -102,6 +112,8 @@ function documentTitle(markdown: string, filePath?: string): string {
 // Home → Session relocation preserves the same id. Older session/global keys
 // remain readable for migration.
 interface LastPathState {
+  /** Files explicitly opened/created in the editor, deduplicated newest-first. */
+  recentPaths?: string[];
   /** Per-Panel last-opened path. A Panel id stays stable for its scope and also follows Home → Session relocation. */
   panels?: Record<string, string>;
   /** @deprecated Pre-0.8 per-Session state, retained as a read fallback. */
@@ -172,6 +184,10 @@ async function rememberLastPath(ctx: finch.MiniToolContext, panel: finch.AppPane
   try {
     await mkdir(ctx.storagePath, { recursive: true });
     const state = await readLastPathState(ctx);
+    const legacyPaths = [...Object.values(state.panels ?? {}), ...Object.values(state.sessions ?? {})];
+    state.recentPaths = [sourcePath, ...(state.recentPaths ?? []), ...legacyPaths]
+      .filter((value, index, values) => path.isAbsolute(value) && values.indexOf(value) === index)
+      .slice(0, 100);
     state.panels = { ...state.panels, [panel.id]: sourcePath };
     // Keep the previous shape warm for downgrade compatibility, but always
     // prefer the Panel id on reads so Home scopes in different Spaces cannot
@@ -195,6 +211,95 @@ async function readLastPath(ctx: finch.MiniToolContext, panel: finch.AppPanel): 
   // value doesn't leak into an unrelated Session.
   if (key === '__global__' && typeof state.lastPath === 'string') return state.lastPath;
   return undefined;
+}
+
+const RECENT_LIMIT = 12;
+const RECENT_PREVIEW_CHARS = 220;
+
+function isMarkdownPath(filePath: string): boolean {
+  return /\.(md|markdown|mdown|mkd)$/i.test(filePath);
+}
+
+function isInsideDirectory(filePath: string, directory: string): boolean {
+  const relative = path.relative(directory, filePath);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+/** First ATX heading, else first non-empty line, as the card title. */
+function deriveTitle(markdown: string, fallback: string): string {
+  for (const line of markdown.split('\n', 60)) {
+    const heading = line.match(/^\s{0,3}#{1,6}\s+(.*\S)\s*$/);
+    if (heading) return heading[1].slice(0, 80);
+  }
+  for (const line of markdown.split('\n', 60)) {
+    const text = line.trim();
+    if (text) return text.replace(/^[>*\-+\s]+/, '').slice(0, 80) || fallback;
+  }
+  return fallback;
+}
+
+/** Plain-ish excerpt for the card body — enough to recognize the document. */
+function derivePreview(markdown: string): string {
+  return markdown
+    .replace(/^---\n[\s\S]*?\n---\n/, '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/[*_`>~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, RECENT_PREVIEW_CHARS);
+}
+
+/**
+ * Markdown files this editor has actually opened or created, narrowed to the
+ * panel's own working directory and ordered by the file's current mtime — so
+ * the Home card list doubles as "where I left off", and a document edited
+ * elsewhere still floats back to the top.
+ */
+async function collectRecentDocuments(ctx: finch.MiniToolContext, cwd: string): Promise<RecentDocument[]> {
+  if (!cwd || !path.isAbsolute(cwd)) return [];
+  const state = await readLastPathState(ctx);
+  const candidates = [
+    ...(state.recentPaths ?? []),
+    ...Object.values(state.panels ?? {}),
+    ...Object.values(state.sessions ?? {}),
+  ].filter(
+    (value, index, values) =>
+      typeof value === 'string' &&
+      path.isAbsolute(value) &&
+      isMarkdownPath(value) &&
+      isInsideDirectory(value, cwd) &&
+      values.indexOf(value) === index,
+  );
+
+  const documents = await Promise.all(
+    candidates.map(async (filePath): Promise<RecentDocument | undefined> => {
+      try {
+        const info = await stat(filePath);
+        if (!info.isFile()) return undefined;
+        const markdown = await readFile(filePath, 'utf8');
+        const fileName = path.basename(filePath);
+        return {
+          path: filePath,
+          relativePath: path.relative(cwd, filePath),
+          fileName,
+          title: deriveTitle(markdown, fileName.replace(/\.[^.]+$/, '')),
+          preview: derivePreview(markdown),
+          modifiedAt: info.mtimeMs,
+        };
+      } catch {
+        // Deleted, renamed or unreadable — silently drop from the list.
+        return undefined;
+      }
+    }),
+  );
+
+  return documents
+    .filter((entry): entry is RecentDocument => Boolean(entry))
+    .sort((a, b) => b.modifiedAt - a.modifiedAt)
+    .slice(0, RECENT_LIMIT);
 }
 
 // The document currently being delivered to each live Panel. This is
@@ -362,11 +467,45 @@ function watchSource(ctx: finch.MiniToolContext, panel: finch.AppPanel, sourcePa
   }
 }
 
+// The user's Finch assistant name ("帕亚", or the default "Finch"). Resolved
+// once and reused for every `ready` payload so the empty-state copy can
+// greet the user by their assistant's actual name without a round trip.
+let cachedAssistantName: string | undefined;
+async function getAssistantName(ctx: finch.MiniToolContext): Promise<string> {
+  if (cachedAssistantName) return cachedAssistantName;
+  try {
+    cachedAssistantName = (await ctx.app.getInfo()).assistantName || 'Finch';
+  } catch (error) {
+    ctx.logger.warn(`Failed to resolve assistant name: ${String(error)}`);
+    cachedAssistantName = 'Finch';
+  }
+  return cachedAssistantName;
+}
+
 async function sendReady(ctx: finch.MiniToolContext, panel: finch.AppPanel): Promise<void> {
   const pickFileSupported = ctx.api.supports('ui.pickFile');
   const styleSlots = await readStyleSlots(ctx);
+  const assistantName = await getAssistantName(ctx);
   ctx.logger.info(`sending ready to panel; pickFileSupported = ${pickFileSupported}`);
-  await panel.postMessage({ type: 'ready', locale: ctx.i18n.locale, pickFileSupported, styleSlots });
+  await panel.postMessage({
+    type: 'ready', locale: ctx.i18n.locale, pickFileSupported, styleSlots, assistantName,
+    // So the page can render `cwd` the OS-friendly way (`~/…`) without a
+    // round trip — it never needs the raw value for anything but display.
+    homeDir: os.homedir(),
+  });
+}
+
+/** Reveal a directory in the OS file manager (Finder / Explorer / the default
+ * file manager on Linux). Best-effort: a missing/unsupported platform tool
+ * just logs a warning, it never surfaces as a page-facing error. */
+function revealInFileManager(ctx: finch.MiniToolContext, directory: string): void {
+  try {
+    if (process.platform === 'darwin') spawn('open', [directory], { stdio: 'ignore', detached: true }).unref();
+    else if (process.platform === 'win32') spawn('explorer', [directory], { stdio: 'ignore', detached: true }).unref();
+    else spawn('xdg-open', [directory], { stdio: 'ignore', detached: true }).unref();
+  } catch (error) {
+    ctx.logger.warn(`Could not open file manager for ${directory}: ${String(error)}`);
+  }
 }
 
 async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, raw: unknown): Promise<void> {
@@ -405,7 +544,7 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       ctx.logger.info('requestOpen received; calling ctx.ui.pickFile()');
       try {
         const handle = ctx.ui.pickFile({
-          title: 'Open article',
+          title: '选择Markdown文件',
           filter: { extensions: ['.md', '.markdown'] },
         });
         ctx.logger.info('ctx.ui.pickFile() call returned a handle, awaiting resolution…');
@@ -468,6 +607,32 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
         await sendDocument(panel, liveDocument);
       } else if (!await restoreDocument(ctx, panel)) {
         await panel.postMessage({ type: 'lastFileUnavailable' });
+      }
+      return;
+    }
+    case 'openPath': {
+      const targetPath = String(message.path ?? '').trim();
+      if (targetPath && path.isAbsolute(targetPath)) revealInFileManager(ctx, targetPath);
+      return;
+    }
+    case 'goHome': {
+      // User explicitly navigated back to the launch page: stop watching the
+      // now-unopened file and drop the in-memory cache so a stray watcher
+      // tick or a delayed `requestLastFile` retry can't silently pull the
+      // document back onto the screen from under them.
+      stopWatching(panel.id);
+      livePanelDocuments.delete(panel.id);
+      return;
+    }
+    case 'requestRecentDocuments': {
+      // The page owns the cwd (it arrives with `finch:env`), so it tells us
+      // which directory to scope the list to instead of us guessing per panel.
+      const cwd = String(message.cwd ?? '').trim();
+      try {
+        await panel.postMessage({ type: 'recentDocuments', cwd, documents: await collectRecentDocuments(ctx, cwd) });
+      } catch (error) {
+        ctx.logger.warn(`Could not collect recent documents: ${String(error)}`);
+        await panel.postMessage({ type: 'recentDocuments', cwd, documents: [] });
       }
       return;
     }

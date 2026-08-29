@@ -35,11 +35,43 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .fake-sel{position:fixed;z-index:15;border-radius:2px;background:rgba(63,107,86,.35);background:color-mix(in srgb,var(--accent) 34%,transparent);pointer-events:none}
 .preview-shell{position:absolute;inset:0;padding:32px 20px 20px;background:var(--bg);overflow:hidden}
 #article{display:block;width:100%;height:100%;border:0;border-radius:10px;background:var(--card)}
-.empty{position:absolute;z-index:5;inset:0;background:var(--card);color:var(--muted);display:flex;align-items:center;justify-content:center;text-align:center;padding:40px;font-size:14px;line-height:1.7}
-.empty-copy p{margin:0 0 14px;white-space:nowrap}
-.empty-new{appearance:none;border:1px solid var(--accent);border-radius:8px;background:var(--accent);color:#fff;padding:7px 12px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
-.empty-new:hover{filter:brightness(1.06)}
+/* Home / empty state: a launch page rather than a placeholder — headline plus
+   the Markdown files this editor recently touched in the current working
+   directory, newest-modified first, so a session can be resumed in one click. */
+.empty{position:absolute;z-index:5;inset:0;background:var(--card);color:var(--muted);display:block;overflow:auto;padding:30px 26px 34px;font-size:14px;line-height:1.7}
 .empty[hidden]{display:none}
+.home{max-width:860px;margin:0 auto}
+.home-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:22px}
+.home-head h1{margin:0 0 3px;font-size:19px;font-weight:650;line-height:1.3;color:var(--text);letter-spacing:-.01em}
+.home-head p{margin:0;font-size:12.5px;line-height:1.5;color:var(--muted)}
+.home-cta{display:flex;gap:8px;flex:none}
+.home-btn{appearance:none;display:inline-flex;align-items:center;gap:5px;border:1px solid var(--accent);border-radius:8px;background:var(--accent);color:#fff;padding:7px 12px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+.home-btn:hover{filter:brightness(1.06)}
+.home-btn.ghost{background:transparent;border-color:var(--border);color:var(--text);font-weight:500}
+.home-btn.ghost:hover{filter:none;background:var(--bg)}
+.home-btn svg{width:14px;height:14px;flex:none}
+.home-section{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 0 10px;font-size:12px;color:var(--muted)}
+.home-section b{font-size:12.5px;font-weight:600;color:var(--text);flex:none}
+/* flex:0 1 auto (not flex:1) so the button hugs its own text — the blank
+   space next to a short path stays unclickable. Front-truncation (the "…"
+   prefix) happens in JS, not via a direction:rtl CSS trick: mixing a plain
+   "~" with rtl reordered the whole string visually ("finch-tools/~" instead
+   of "~/finch-tools"), so this box now renders left-to-right like normal. */
+.home-section .home-cwd{flex:0 1 auto;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.75;cursor:pointer;background:none;border:0;padding:0;font:inherit;color:inherit}
+.home-section .home-cwd:hover{opacity:1;color:var(--accent);text-decoration:underline}
+.home-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:12px}
+.doc-card{position:relative;display:flex;flex-direction:column;height:138px;padding:0;text-align:left;border:1px solid var(--border);border-radius:11px;background:var(--bg);color:var(--text);font:inherit;cursor:pointer;overflow:hidden;transition:border-color .15s ease,box-shadow .15s ease,transform .1s ease}
+.doc-card:hover{border-color:var(--accent);box-shadow:0 5px 16px rgba(0,0,0,.1)}
+.doc-card:active{transform:scale(.99)}
+.doc-preview{position:relative;flex:1;min-height:0;padding:11px 12px 0;font-size:11.5px;line-height:1.6;color:var(--muted);overflow:hidden;word-break:break-word}
+.doc-preview::after{content:'';position:absolute;left:0;right:0;bottom:0;height:34px;background:linear-gradient(to bottom,transparent,var(--bg))}
+.doc-foot{flex:none;padding:8px 12px 10px;border-top:1px solid var(--border);background:var(--card)}
+.doc-title{font-size:13px;font-weight:600;line-height:1.35;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-sub{margin-top:2px;display:flex;gap:6px;font-size:11px;line-height:1.4;color:var(--muted)}
+.doc-sub .doc-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.doc-sub .doc-time{flex:none;opacity:.8}
+.home-hint{margin:0;padding:22px 0;text-align:center;font-size:12.5px;color:var(--muted)}
+.home-hint[hidden],.home-recent[hidden]{display:none}
 .status{font-size:12px;color:var(--muted);padding:5px 10px;text-align:center;border-top:1px solid var(--border);background:var(--bg)}
 .status.error{color:#c54232}
 .status:empty{padding:0;border-top:0}
@@ -50,6 +82,25 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .popup input{width:220px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:4px 6px}
 .popup button{font:inherit;border:0;background:var(--accent);color:#fff;border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap}
 .popup button:hover{opacity:.9}
+/* Unsaved-changes confirm, deliberately a plain in-page overlay rather than
+   `window.finch.ui.confirm()`: the only entry point that can trigger it is
+   the toolbar's "home" button, which reaches this page as a `finch:menu`
+   postMessage — not a real user gesture — so the same Bridge action that
+   requires one (see `.actions` comment above) could not be trusted to fire
+   reliably from there. A plain DOM overlay has no such gesture requirement. */
+.confirm-overlay{position:fixed;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.32);animation:confirm-fade .12s ease}
+.confirm-overlay[hidden]{display:none}
+@keyframes confirm-fade{from{opacity:0}to{opacity:1}}
+.confirm-card{width:300px;max-width:calc(100% - 40px);background:var(--card);border:1px solid var(--border);border-radius:12px;box-shadow:0 16px 40px rgba(0,0,0,.3);padding:16px;animation:confirm-in .16s cubic-bezier(.2,.8,.2,1)}
+@keyframes confirm-in{from{opacity:0;transform:translateY(6px) scale(.97)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media (prefers-reduced-motion:reduce){.confirm-overlay,.confirm-card{animation:none}}
+.confirm-card p{margin:0 0 16px;font-size:13px;line-height:1.6;color:var(--text)}
+.confirm-actions{display:flex;justify-content:flex-end;gap:8px}
+.confirm-actions button{font:inherit;font-size:13px;border:1px solid var(--border);background:transparent;color:var(--text);border-radius:7px;padding:6px 12px;cursor:pointer}
+.confirm-actions button:hover{background:var(--bg)}
+.confirm-actions button.primary{border-color:var(--accent);background:var(--accent);color:#fff}
+.confirm-actions button.primary:hover{filter:brightness(1.06)}
+.confirm-actions button.ghost{border-color:transparent}
 /* Floating copy/export bar, deliberately living INSIDE this page rather than
    in the host toolbar: a host toolbar click arrives here as a postMessage,
    which is not a user activation for this document, so the async Clipboard
@@ -87,9 +138,28 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 <main class="app">
   <div class="stage">
     <div id="empty" class="empty">
-      <div class="empty-copy">
-        <p>打开一个 Markdown 文件开始编辑与预览，或新建一篇文章。</p>
-        <button id="emptyNew" class="empty-new" type="button">新建文档</button>
+      <div class="home">
+        <header class="home-head">
+          <div>
+            <h1>Markdown 编辑</h1>
+            <p id="homeTagline">打开一个 Markdown 文件开始编辑与预览，或新建一篇文章。</p>
+          </div>
+          <div class="home-cta">
+            <button id="emptyOpen" class="home-btn ghost" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>
+              打开文件
+            </button>
+            <button id="emptyNew" class="home-btn" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="M9 15h6"/></svg>
+              新建文档
+            </button>
+          </div>
+        </header>
+        <section id="homeRecent" class="home-recent" hidden>
+          <div class="home-section"><b>最近编辑</b><button id="homeCwd" type="button" class="home-cwd"></button></div>
+          <div id="homeGrid" class="home-grid"></div>
+        </section>
+        <p id="homeHint" class="home-hint">打开一个 Markdown 文件，之后这里会列出最近编辑的文档。</p>
       </div>
     </div>
     <div id="editPane" class="pane">
@@ -131,6 +201,16 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   <input id="popupInput" type="text" placeholder="让 AI 怎么改这段？">
   <button id="popupSend">发送</button>
 </section>
+<div id="confirmOverlay" class="confirm-overlay" hidden>
+  <div class="confirm-card">
+    <p id="confirmMessage"></p>
+    <div class="confirm-actions">
+      <button id="confirmCancel" class="ghost">取消</button>
+      <button id="confirmDiscard">不保存</button>
+      <button id="confirmSave" class="primary">保存并返回</button>
+    </div>
+  </div>
+</div>
 <script src="codemirror.js"></script>
 <script>
 (function () {
@@ -139,6 +219,12 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 
   var empty = document.getElementById('empty');
   var emptyNew = document.getElementById('emptyNew');
+  var emptyOpen = document.getElementById('emptyOpen');
+  var homeRecent = document.getElementById('homeRecent');
+  var homeGrid = document.getElementById('homeGrid');
+  var homeCwd = document.getElementById('homeCwd');
+  var homeHint = document.getElementById('homeHint');
+  var homeTagline = document.getElementById('homeTagline');
   var editPane = document.getElementById('editPane');
   var previewPane = document.getElementById('previewPane');
   var editor = document.getElementById('editor');
@@ -154,6 +240,11 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   var actSavePdf = document.getElementById('actSavePdf');
   var actAiStyle = document.getElementById('actAiStyle');
   var actToggle = document.getElementById('actToggle');
+  var confirmOverlay = document.getElementById('confirmOverlay');
+  var confirmMessage = document.getElementById('confirmMessage');
+  var confirmCancel = document.getElementById('confirmCancel');
+  var confirmDiscard = document.getElementById('confirmDiscard');
+  var confirmSave = document.getElementById('confirmSave');
 
   var pickFileSupported = false; // set from the backend 'ready' message
   var annotationsEnabled = false; // off by default; toggled from the toolbar "annotate" button
@@ -190,6 +281,10 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   var renderId = 0;
   var saveId = 0;
   var pendingSaveContents = {};
+  // Resolvers for callers that need to *await* a save round-trip (the
+  // unsaved-changes confirm below) rather than fire-and-forget like the
+  // Save button / Cmd+S. Keyed by the same saveId as pendingSaveContents.
+  var pendingSaveResolvers = {};
   var pasteImageId = 0;
   var pendingPasteImages = {};
   var clipboardImageId = 0;
@@ -201,9 +296,18 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   var watchBusy = false;
   var selection = { text: '' };
 
+  var statusHideTimer = 0;
   function setStatus(text, isError) {
+    if (statusHideTimer) { clearTimeout(statusHideTimer); statusHideTimer = 0; }
     statusEl.textContent = text || '';
     statusEl.className = 'status' + (isError ? ' error' : '');
+    // Auto-clear after 5s so a stale "已保存"/error message doesn't linger
+    // in the footer forever; an empty message needs no timer at all.
+    if (text) statusHideTimer = setTimeout(function () {
+      statusHideTimer = 0;
+      statusEl.textContent = '';
+      statusEl.className = 'status';
+    }, 5000);
   }
 
   function hasDocument() { return !!markdown || !!sourcePath; }
@@ -226,9 +330,140 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     }
   });
 
+  if (emptyOpen) emptyOpen.addEventListener('click', function () { openFile(); });
+
+  // ── Home: recent documents ────────────────────────────────────────────
+  // The working directory arrives with the platform's own `finch:env` push;
+  // the backend scopes its recent-file list to whatever we hand back, so a
+  // panel in another Space never shows this Space's documents.
+  var envCwd = '';
+  var recentRequested = false;
+  var assistantName = '';
+  var homeDir = '';
+
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"]/g, function (ch) {
+      return ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : '&quot;';
+    });
+  }
+
+  function updateHomeTagline() {
+    if (!homeTagline) return;
+    homeTagline.textContent = assistantName
+      ? '你与' + assistantName + '一起编排 Markdown 文件'
+      : '打开一个 Markdown 文件开始编辑与预览';
+  }
+
+  // OS-friendly display only — the raw absolute path is still what's sent
+  // to the backend for the "reveal in file manager" click. homeDir arrives
+  // with the platform's own separator (Windows: "C:\Users\name", so check
+  // both '/' and '\\' — a plain '/'-only check would never match there and
+  // Windows paths would simply show in full, unabbreviated, which is fine).
+  function formatFriendlyPath(absPath) {
+    if (!absPath) return '';
+    if (homeDir && absPath === homeDir) return '~';
+    if (homeDir && (absPath.indexOf(homeDir + '/') === 0 || absPath.indexOf(homeDir + '\\') === 0)) {
+      return '~' + absPath.slice(homeDir.length);
+    }
+    return absPath;
+  }
+
+  // Manual front-truncation ("…/end/of/path") instead of CSS text-overflow
+  // (which trims the end, hiding the most useful — innermost — folder name).
+  // Character-count based rather than pixel-measured: good enough for a
+  // secondary label, and the CSS ellipsis on .home-cwd still backstops any
+  // panel narrower than this budget assumes.
+  function truncateFriendlyPath(text) {
+    var MAX = 46;
+    if (!text || text.length <= MAX) return text;
+    var sep = text.indexOf('/') === -1 && text.indexOf('\\') !== -1 ? '\\' : '/';
+    var tail = text.slice(-(MAX - 1));
+    var sepIdx = tail.indexOf(sep);
+    if (sepIdx > 0 && sepIdx < 10) tail = tail.slice(sepIdx);
+    return '…' + tail;
+  }
+
+  function renderHomeCwd() {
+    if (!homeCwd) return;
+    homeCwd.textContent = truncateFriendlyPath(formatFriendlyPath(envCwd));
+    homeCwd.title = envCwd ? '在访达 / 文件资源管理器中打开：' + envCwd : '';
+    homeCwd.hidden = !envCwd;
+  }
+
+  if (homeCwd) homeCwd.addEventListener('click', function () {
+    if (!envCwd || !api || !api.postMessage) return;
+    api.postMessage({ type: 'openPath', path: envCwd });
+  });
+
+  function formatDocTime(ts) {
+    var date = new Date(ts);
+    if (!ts || isNaN(date.getTime())) return '';
+    var now = new Date();
+    var pad = function (n) { return n < 10 ? '0' + n : String(n); };
+    var clock = pad(date.getHours()) + ':' + pad(date.getMinutes());
+    var sameDay = date.toDateString() === now.toDateString();
+    if (sameDay) return '今天 ' + clock;
+    var yesterday = new Date(now.getTime() - 86400000);
+    if (date.toDateString() === yesterday.toDateString()) return '昨天 ' + clock;
+    if (date.getFullYear() === now.getFullYear()) return pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+    return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+  }
+
+  function requestRecentDocuments() {
+    if (!api || !api.postMessage || !envCwd) return;
+    recentRequested = true;
+    api.postMessage({ type: 'requestRecentDocuments', cwd: envCwd });
+  }
+
+  function renderRecentDocuments(documents) {
+    if (!homeGrid || !homeRecent || !homeHint) return;
+    var list = Array.isArray(documents) ? documents : [];
+    if (list.length === 0) {
+      homeRecent.hidden = true;
+      homeHint.hidden = false;
+      homeHint.textContent = envCwd
+        ? '这个目录里还没有用编辑器打开过的 Markdown 文档。'
+        : '打开一个 Markdown 文件，之后这里会列出最近编辑的文档。';
+      return;
+    }
+    var cards = '';
+    for (var i = 0; i < list.length; i++) {
+      var doc = list[i] || {};
+      cards += '<button class="doc-card" type="button" data-path="' + escapeHtml(doc.path || '') + '" title="' + escapeHtml(doc.path || '') + '">'
+        + '<div class="doc-preview">' + escapeHtml(doc.preview || '（空文档）') + '</div>'
+        + '<div class="doc-foot">'
+        + '<div class="doc-title">' + escapeHtml(doc.title || doc.fileName || '未命名') + '</div>'
+        + '<div class="doc-sub"><span class="doc-path">' + escapeHtml(doc.relativePath || doc.fileName || '') + '</span>'
+        + '<span class="doc-time">' + escapeHtml(formatDocTime(doc.modifiedAt)) + '</span></div>'
+        + '</div></button>';
+    }
+    homeGrid.innerHTML = cards;
+    homeRecent.hidden = false;
+    homeHint.hidden = true;
+  }
+
+  // Set while a Home-card click is in flight, so the `document` reply below
+  // can turn "正在打开…" into a completion message instead of leaving it
+  // to linger (or getting silently swallowed by the "isFirst" branch, which
+  // otherwise prints nothing at all for the very first document a panel loads).
+  var loadingFromHome = false;
+
+  if (homeGrid) homeGrid.addEventListener('click', function (event) {
+    var card = event.target && event.target.closest ? event.target.closest('.doc-card') : null;
+    if (!card || !api || !api.postMessage) return;
+    var docPath = card.getAttribute('data-path') || '';
+    if (!docPath) return;
+    loadingFromHome = true;
+    setStatus('正在打开…');
+    api.postMessage({ type: 'loadPath', path: docPath });
+  });
+
   function updateEmptyState() {
     empty.hidden = hasDocument();
     if (actions) actions.hidden = !html;
+    // Refresh whenever the home page comes back into view: mtimes change while
+    // a document is open, and a file may have been created since last render.
+    if (!empty.hidden && envCwd) requestRecentDocuments();
   }
 
   function showPane() {
@@ -275,28 +510,38 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     var saveIcon = 'ext:markdown-editor-icons/save';
     var saveLabel = '保存', saveTooltip = '保存（⌘/Ctrl+S）';
     if (dirty) {
-      saveLabel = '保存 •';
+      // No extra "•" glyph — an enabled/highlighted save button already
+      // signals "there's something to save" without adding visual noise.
+      saveLabel = '保存';
       saveTooltip = '有未保存的改动（⌘/Ctrl+S）';
     } else if (savedFlash) {
       saveIcon = 'ext:markdown-editor-icons/save-check';
       saveLabel = '已保存';
       saveTooltip = '已保存';
     }
+    var hasDoc = hasDocument();
     return [
+      {
+        // Always available — a one-click way back to the recent-documents
+        // launch page, regardless of what's currently open.
+        id: 'home', icon: 'house', tooltip: '返回首页',
+      },
       {
         // Icon-only: the open action is unambiguous from the folder icon,
         // and dropping the label keeps this crowded toolbar's left edge compact.
         id: 'open', icon: 'ext:markdown-editor-icons/folder-open',
         tooltip: sourcePath || fileName || '打开 Markdown 文件', disabled: nativePickPending,
       },
+      { id: 'save', icon: saveIcon, label: saveLabel, tooltip: saveTooltip, disabled: !dirty },
       { type: 'separator' },
       {
         // Labeled, unlike 'open': annotate is a mode toggle (checked state)
         // rather than a one-shot action, so a visible "批注" makes the
         // on/off state legible at a glance instead of relying on hover.
+        // Both this and preview need an open document to mean anything.
         id: 'annotate', icon: 'ext:markdown-editor-icons/file-pen-line', label: '批注',
-        tooltip: annotationsEnabled ? '批注已开启：选中文字可发起 AI 修改' : '开启批注：选中文字后可发起 AI 修改',
-        checked: annotationsEnabled,
+        tooltip: hasDoc ? (annotationsEnabled ? '批注已开启：选中文字可发起 AI 修改' : '开启批注：选中文字后可发起 AI 修改') : '请先打开文档',
+        checked: annotationsEnabled, disabled: !hasDoc,
       },
       {
         // Label stays "预览" no matter which mode is active — the icon
@@ -304,11 +549,11 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         // flipping the word itself between "预览"/"编辑" read as ambiguous
         // ("is this the mode I'm in, or the one I'm switching to?").
         id: 'mode', icon: mode === 'edit' ? 'toggle-left' : 'toggle-right',
-        label: '预览', tooltip: mode === 'edit' ? '切换到预览' : '切换到编辑',
-        checked: mode === 'preview',
+        label: '预览', tooltip: hasDoc ? (mode === 'edit' ? '切换到预览' : '切换到编辑') : '请先打开文档',
+        checked: mode === 'preview', disabled: !hasDoc,
       },
       {
-        type: 'menu', id: 'style', icon: 'palette', tooltip: mode === 'preview' ? '排版风格' : '请先打开预览',
+        type: 'menu', id: 'style', icon: 'palette', tooltip: mode === 'preview' ? '排版风格' : '请先切换到预览',
         disabled: mode !== 'preview',
         items: buildStyleMenuItems(),
       },
@@ -321,8 +566,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       // in the in-page floating bar over the preview (see `.actions` above),
       // where a click is a real user gesture and they succeed on first try.
       {
-        type: 'menu', id: 'font-size', icon: 'ext:markdown-editor-icons/type', tooltip: mode === 'preview' ? '预览时不可更改字体' : '编辑器字体大小',
-        disabled: mode === 'preview',
+        type: 'menu', id: 'font-size', icon: 'ext:markdown-editor-icons/type',
+        tooltip: !hasDoc ? '请先打开文档' : mode === 'preview' ? '预览时不可更改字体' : '编辑器字体大小',
+        disabled: !hasDoc || mode === 'preview',
         items: [
           { id: 'font-size:14', label: '小', checked: editorFontSize === 14 },
           { id: 'font-size:16', label: '中', checked: editorFontSize === 16 },
@@ -332,11 +578,10 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
           { id: 'font-family:songti', label: '衬线体', checked: editorFont === 'songti' },
         ],
       },
-      { id: 'save', icon: saveIcon, label: saveLabel, tooltip: saveTooltip, disabled: !dirty },
       {
         type: 'menu', id: 'more', icon: 'settings',
         items: [
-          { id: 'reload', label: '重新渲染' },
+          { id: 'reload', label: '重新渲染', disabled: mode !== 'preview' },
           { id: 'more-sep', label: '', separator: true },
           { id: 'about', label: '关于渲染' },
         ],
@@ -784,7 +1029,10 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       setStatus('正在保存…');
       pendingSaveContents[id] = content;
       api.postMessage({ type: 'saveMarkdown', path: sourcePath, markdown: content, requestId: id });
-      return true;
+      // The actual result arrives later as a 'savedMarkdown' (or 'error')
+      // message; resolve this promise then so awaiters (e.g. the unsaved-
+      // changes confirm) see the real outcome instead of an optimistic true.
+      return new Promise(function (resolve) { pendingSaveResolvers[id] = resolve; });
     }
     setStatus('未关联本地文件：点击工具栏「打开」重新选择一次即可关联并启用保存。', true);
     return false;
@@ -1454,8 +1702,82 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     setStatus(annotationsEnabled ? '批注已开启：选中文字可发起 AI 修改。' : '批注已关闭。');
   }
 
+  // Simple 3-way confirm ("保存并返回" / "不保存" / "取消") resolved as
+  // 'save' | 'discard' | 'cancel'. Backdrop click and Escape both count as
+  // cancel — staying put is the safe default when in doubt.
+  var confirmResolve = null;
+  function closeConfirm(result) {
+    confirmOverlay.hidden = true;
+    var resolve = confirmResolve;
+    confirmResolve = null;
+    if (resolve) resolve(result);
+  }
+  function askUnsavedConfirm(message) {
+    return new Promise(function (resolve) {
+      confirmResolve = resolve;
+      confirmMessage.textContent = message;
+      confirmOverlay.hidden = false;
+      confirmSave.focus();
+    });
+  }
+  if (confirmCancel) confirmCancel.addEventListener('click', function () { closeConfirm('cancel'); });
+  if (confirmDiscard) confirmDiscard.addEventListener('click', function () { closeConfirm('discard'); });
+  if (confirmSave) confirmSave.addEventListener('click', function () { closeConfirm('save'); });
+  if (confirmOverlay) confirmOverlay.addEventListener('click', function (e) { if (e.target === confirmOverlay) closeConfirm('cancel'); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && confirmResolve) closeConfirm('cancel');
+  });
+
+  // Waits for a save round-trip to finish (unlike the fire-and-forget
+  // saveNow()/Cmd+S path) so callers can safely navigate away afterward.
+  async function saveNowAndWait() {
+    return await writeToDisk(markdown);
+  }
+
+  // Actually resets the in-page document state (not the file on disk) and
+  // tells the backend to stop watching it, then shows the launch page again.
+  function resetToHome() {
+    stopWatching();
+    closePopup();
+    markdown = '';
+    name = '';
+    fileName = '';
+    sourcePath = '';
+    savedMarkdown = null;
+    html = '';
+    annotationsEnabled = false;
+    mode = 'edit';
+    if (cm) cm.setValue('');
+    setPanelTitle('Markdown 编辑');
+    showHtml('');
+    if (api && api.postMessage) api.postMessage({ type: 'goHome' });
+    updateEmptyState();
+    showPane();
+    syncToolbar();
+    setStatus('');
+  }
+
+  // Manual "back to home" navigation. If there are unsaved edits, ask first —
+  // deliberately a plain in-page overlay (see .confirm-overlay CSS comment)
+  // rather than window.finch.ui.confirm(), since the "home" toolbar button is
+  // the only way to trigger this and it arrives here without a real user
+  // gesture the Bridge dialog could rely on.
+  async function goHome() {
+    if (dirty) {
+      var choice = await askUnsavedConfirm('「' + (fileName || 'Markdown 文档') + '」还有未保存的改动，要保存后再返回首页吗？');
+      if (choice === 'cancel') return;
+      if (choice === 'save') {
+        var saved = await saveNowAndWait();
+        if (!saved) { setStatus('保存失败，未返回首页。', true); return; }
+      }
+      // choice === 'discard' falls through and leaves without saving.
+    }
+    resetToHome();
+  }
+
   function handleMenu(itemId) {
     if (api && api.postMessage) api.postMessage({ type: 'clientLog', message: 'finch:menu received, itemId=' + itemId });
+    if (itemId === 'home') { goHome(); return; }
     if (itemId === 'open') { openFile(); return; }
     if (itemId === 'annotate') { toggleAnnotations(); return; }
     if (itemId === 'mode') { setMode(mode === 'edit' ? 'preview' : 'edit'); return; }
@@ -1501,6 +1823,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       if (m.type === 'ready') {
         pickFileSupported = !!m.pickFileSupported;
         styleSlots = Array.isArray(m.styleSlots) ? m.styleSlots : [null, null, null];
+        if (m.assistantName) { assistantName = m.assistantName; updateHomeTagline(); }
+        if (m.homeDir) { homeDir = m.homeDir; renderHomeCwd(); }
         syncToolbar();
         return;
       }
@@ -1541,6 +1865,24 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         setStatus('粘贴图片失败：' + (m.message || ''));
         return;
       }
+      if (m.type === 'finch:env') {
+        // Panel scope changed (first open, or Home → Session relocation): rescope
+        // the recent list to this panel's own working directory.
+        var incomingCwd = m.cwd || '';
+        if (incomingCwd !== envCwd) {
+          envCwd = incomingCwd;
+          renderHomeCwd();
+          renderRecentDocuments([]);
+        }
+        if (!empty.hidden) requestRecentDocuments();
+        return;
+      }
+      if (m.type === 'recentDocuments') {
+        // Ignore a late reply for a directory we no longer belong to.
+        if ((m.cwd || '') !== envCwd) return;
+        renderRecentDocuments(m.documents);
+        return;
+      }
       if (m.type === 'status') { setStatus(m.message); return; }
       if (m.type === 'lastFileUnavailable') { return; }
       if (m.type === 'finch:menu') { handleMenu(m.itemId); return; }
@@ -1558,9 +1900,12 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         var isDifferentDocument = !!incomingPath && !!sourcePath && incomingPath !== sourcePath;
         if (!isDifferentDocument && incoming === savedMarkdown) { syncToolbar(); return; } // echo of our own save
         var isFirst = savedMarkdown === null;
+        var wasLoadingFromHome = loadingFromHome;
+        loadingFromHome = false;
         var applied = applyDocument(incoming, m.title || 'Markdown 文档', m.path || sourcePath, openedFromPicker || isFirst || isDifferentDocument);
         if (!applied) syncToolbar(); // still clear the "open" button's pending/disabled state
-        if (applied && !isFirst) setStatus('内容已更新。');
+        if (applied && wasLoadingFromHome) setStatus('已打开 ' + fileName + '。');
+        else if (applied && !isFirst) setStatus('内容已更新。');
         return;
       }
       if (m.type === 'bmRendered') {
@@ -1574,10 +1919,16 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       if (m.type === 'savedMarkdown') {
         var savedContent = pendingSaveContents[m.requestId];
         delete pendingSaveContents[m.requestId];
-        if (m.requestId !== saveId || typeof savedContent !== 'string') return;
+        var saveResolve = pendingSaveResolvers[m.requestId];
+        delete pendingSaveResolvers[m.requestId];
+        if (m.requestId !== saveId || typeof savedContent !== 'string') {
+          if (saveResolve) saveResolve(false);
+          return;
+        }
         savedMarkdown = savedContent;
         setDirty(markdown !== savedContent, markdown === savedContent);
         setStatus(markdown === savedContent ? '已保存。' : '已保存，编辑器中仍有新改动。');
+        if (saveResolve) saveResolve(true);
         return;
       }
       if (m.type === 'customStyleSet') {
@@ -1603,6 +1954,15 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         return;
       }
       if (m.type === 'error') {
+        loadingFromHome = false; // don't let a stale flag mislabel the next unrelated document push
+        // A save failure surfaces here (no matching 'savedMarkdown' will ever
+        // arrive for that requestId) — resolve any awaiter as failed so the
+        // unsaved-changes confirm doesn't hang forever waiting on it.
+        Object.keys(pendingSaveResolvers).forEach(function (id) {
+          var resolve = pendingSaveResolvers[id];
+          delete pendingSaveResolvers[id];
+          if (resolve) resolve(false);
+        });
         // A `fallback` error means the native picker timed out or errored on the
         // backend. We cannot silently re-trigger the OS file dialog here — Chromium
         // only allows showOpenFilePicker()/<input>.click() inside a real, still-fresh
@@ -1634,6 +1994,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   // opened path so the user doesn't have to reopen it by hand every time.
   setTimeout(function () {
     if (!hasDocument() && api && api.postMessage) api.postMessage({ type: 'requestLastFile' });
+    // `finch:env` normally lands before this; the retry covers a page rebind
+    // that missed the push, so Home still fills in its recent documents.
+    if (!recentRequested) requestRecentDocuments();
   }, 400);
 
   updateEmptyState();

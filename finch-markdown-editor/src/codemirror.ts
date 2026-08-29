@@ -188,10 +188,13 @@ const finchTheme = EditorView.theme({
   '.cm-line.cm-md-code-open': {
     fontSize: '12px',
     borderRadius: '8px 8px 0 0',
+    height: '22px',
+    paddingTop: '2px',
   },
   '.cm-line.cm-md-code-close': {
     fontSize: '12px',
     borderRadius: '0 0 8px 8px',
+    height: '22px',
   },
   '.cm-md-code-fence-empty': { opacity: '0' },
   '.cm-md-code-copy': {
