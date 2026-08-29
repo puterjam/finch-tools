@@ -1170,15 +1170,15 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     });
   }
 
-  // Anchors the popup to the upper-left of the selection's end (cursor)
-  // position: its right edge lines up with the cursor x and it opens above
-  // when there's room, so it reads as "attached to where you stopped
-  // selecting" rather than floating centered over the whole selection.
+  // Anchors the popup to the end-top of the selection (cursor) position:
+  // its left edge lines up with the cursor x and it opens above when
+  // there's room, so the popup sits above-right of where you stopped
+  // selecting, not floating centered over (or to the left of) it.
   function positionPopup(top, bottom, cursorX) {
     var margin = 8;
     var w = popup.offsetWidth || 300;
     var h = popup.offsetHeight || 44;
-    var left = Math.max(margin, Math.min(cursorX - w, window.innerWidth - w - margin));
+    var left = Math.max(margin, Math.min(cursorX, window.innerWidth - w - margin));
     var y = (top - margin >= h + 10) ? (top - h - 10) : (bottom + 10);
     y = Math.max(margin, Math.min(y, window.innerHeight - h - margin));
     popup.style.left = left + 'px';
