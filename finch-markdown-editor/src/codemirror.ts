@@ -55,6 +55,8 @@ interface MarkdownEditorOptions {
   parent: HTMLElement;
   value?: string;
   onChange(value: string): void;
+  /** Ask the mini tool host to open a web URL in Finch's Browser Panel. */
+  onOpenLink?(href: string): void;
   /** Host bridge for a pasted image: given the File, resolve the Markdown
    * image target URL to insert (typically a `finch-file://` URL after the
    * host writes it to disk). Omit to fall back to embedding a data: URL
@@ -491,10 +493,11 @@ interface LinkPreviewResult {
 
 // Links opened from the editor must never execute script/data URLs. Relative
 // destinations remain literal Markdown because resolving them against the
-// extension panel URL would be misleading; web/mail links are unambiguous.
+// extension panel URL would be misleading. Finch's Browser API accepts only
+// explicit HTTP(S) destinations, so mailto links remain literal too.
 function safeClickableHref(raw: string): string | null {
   const href = raw.trim();
-  return /^(?:https?:\/\/|mailto:)/i.test(href) ? href : null;
+  return /^https?:\/\//i.test(href) ? href : null;
 }
 
 function clickableLinkMark(href: string): Decoration {
@@ -593,12 +596,12 @@ function handleMarkdownLinkMouseDown(event: MouseEvent): boolean {
   return true;
 }
 
-function handleMarkdownLinkClick(event: MouseEvent): boolean {
+function handleMarkdownLinkClick(event: MouseEvent, onOpenLink?: (href: string) => void): boolean {
   const href = markdownLinkFromEvent(event)?.dataset.mdHref;
   if (!href) return false;
   event.preventDefault();
   event.stopPropagation();
-  window.open(href, '_blank', 'noopener,noreferrer');
+  onOpenLink?.(href);
   return true;
 }
 
@@ -1233,7 +1236,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       livePreviewMarkdownPlugin,
       EditorView.domEventHandlers({
         mousedown: (event) => handleMarkdownLinkMouseDown(event),
-        click: (event) => handleMarkdownLinkClick(event),
+        click: (event) => handleMarkdownLinkClick(event, options.onOpenLink),
         paste: (event, dispatchView) => imagePasteHandler(dispatchView, event, options.onPasteImage),
         drop: (event, dispatchView) => imageDropHandler(dispatchView, event, options.onPasteImage),
       }),

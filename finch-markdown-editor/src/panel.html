@@ -936,6 +936,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       updateEmptyState();
       setDirty(true);
     },
+    onOpenLink: function (url) {
+      if (api && api.postMessage) api.postMessage({ type: 'openLink', url: url });
+    },
     onPasteImage: pasteImageToHost,
   });
   cm.setFontSize(editorFontSize);

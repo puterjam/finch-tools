@@ -41,6 +41,7 @@ interface PanelMessage {
   label?: string;
   mimeType?: string;
   urls?: string[];
+  url?: string;
   cwd?: string;
 }
 
@@ -541,6 +542,25 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       } else if (!await restoreDocument(ctx, panel)) {
         await panel.postMessage({ type: 'lastFileUnavailable' });
       }
+      return;
+    }
+    case 'openLink': {
+      const rawUrl = String(message.url ?? '').trim();
+      let target: URL;
+      try {
+        target = new URL(rawUrl);
+      } catch {
+        ctx.logger.warn(`Ignored invalid Markdown link: ${rawUrl}`);
+        return;
+      }
+      // `ctx.browser.open()` accepts only explicit web URLs. Validate again on
+      // the trusted side even though CodeMirror already filters decorations,
+      // because Panel messages are untrusted input.
+      if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+        ctx.logger.warn(`Ignored unsupported Markdown link protocol: ${target.protocol}`);
+        return;
+      }
+      await ctx.browser.open(target.href);
       return;
     }
     case 'requestOpen': {
