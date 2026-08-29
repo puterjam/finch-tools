@@ -167,6 +167,16 @@ const finchTheme = EditorView.theme({
     backgroundColor: 'color-mix(in srgb, var(--text) 9%, transparent)',
     fontFamily: 'var(--finch-font-mono)',
   },
+  '.cm-md-link': {
+    color: 'var(--accent) !important',
+    textDecoration: 'underline',
+    textDecorationColor: 'color-mix(in srgb, var(--accent) 55%, transparent)',
+    textUnderlineOffset: '0.16em',
+    cursor: 'pointer',
+  },
+  '.cm-md-link:hover': {
+    textDecorationColor: 'var(--accent)',
+  },
   '.cm-line.cm-md-quote': {
     borderLeft: '2px solid var(--border)',
     paddingLeft: '8px',
@@ -423,6 +433,124 @@ const QUOTE_RE = /^(\s*>\s?)/;
 const hiddenMarkdownDelimiter = Decoration.replace({});
 const inlineCodeDecoration = Decoration.mark({ class: 'cm-md-inline-code' });
 
+interface LinkPreviewResult {
+  decorations: any[];
+  urlRanges: Array<{ from: number; to: number }>;
+}
+
+// Links opened from the editor must never execute script/data URLs. Relative
+// destinations remain literal Markdown because resolving them against the
+// extension panel URL would be misleading; web/mail links are unambiguous.
+function safeClickableHref(raw: string): string | null {
+  const href = raw.trim();
+  return /^(?:https?:\/\/|mailto:)/i.test(href) ? href : null;
+}
+
+function clickableLinkMark(href: string): Decoration {
+  return Decoration.mark({
+    class: 'cm-md-link',
+    attributes: {
+      'data-md-href': href,
+      role: 'link',
+      title: href,
+    },
+  });
+}
+
+// Render inline links from the GFM syntax tree rather than a regex, so nested
+// punctuation and image syntax stay correct:
+//   [title](url) -> clickable "title"
+//   <https://…>  -> clickable URL (angle brackets hidden)
+//   https://…    -> clickable URL
+// Entering/selecting a link restores its full source for editing.
+function collectLinkPreview(view: EditorView): LinkPreviewResult {
+  const decorations: any[] = [];
+  const urlRanges: Array<{ from: number; to: number }> = [];
+  const tree = syntaxTree(view.state);
+
+  // Protect every parsed URL from the generic emphasis/code regex pass below
+  // (`_` inside a URL must never disappear as if it were Markdown emphasis).
+  tree.iterate({
+    enter: (ref) => {
+      if (ref.name === 'URL') urlRanges.push({ from: ref.from, to: ref.to });
+    },
+  });
+
+  tree.iterate({
+    enter: (ref) => {
+      if (ref.name === 'Table' || ref.name === 'Image') return false;
+
+      if (ref.name === 'Link') {
+        const url = ref.node.getChild('URL');
+        const marks = ref.node.getChildren('LinkMark');
+        // Reference links have no inline URL; leave them literal until a
+        // reference resolver is added rather than making a fake local link.
+        if (!url || marks.length < 4 || selectionTouchesDelimiter(view, ref.from, ref.to)) return false;
+        const href = safeClickableHref(view.state.sliceDoc(url.from, url.to));
+        const labelOpen = marks[0];
+        const labelClose = marks[1];
+        if (!href || labelOpen.to >= labelClose.from) return false;
+        decorations.push(hiddenMarkdownDelimiter.range(labelOpen.from, labelOpen.to));
+        decorations.push(clickableLinkMark(href).range(labelOpen.to, labelClose.from));
+        // Collapse `](destination)` as one range. This also handles an
+        // optional Markdown link title after the URL without extra parsing.
+        decorations.push(hiddenMarkdownDelimiter.range(labelClose.from, ref.to));
+        return false;
+      }
+
+      if (ref.name === 'Autolink') {
+        const url = ref.node.getChild('URL');
+        const marks = ref.node.getChildren('LinkMark');
+        if (!url || marks.length < 2 || selectionTouchesDelimiter(view, ref.from, ref.to)) return false;
+        const href = safeClickableHref(view.state.sliceDoc(url.from, url.to));
+        if (!href) return false;
+        decorations.push(hiddenMarkdownDelimiter.range(marks[0].from, marks[0].to));
+        decorations.push(clickableLinkMark(href).range(url.from, url.to));
+        decorations.push(hiddenMarkdownDelimiter.range(marks[marks.length - 1].from, marks[marks.length - 1].to));
+        return false;
+      }
+
+      if (ref.name === 'URL') {
+        // URL children of Link/Autolink/Image were skipped with their parent;
+        // reaching here means a GFM bare URL or a reference-definition URL.
+        if (selectionTouchesDelimiter(view, ref.from, ref.to)) return undefined;
+        const href = safeClickableHref(view.state.sliceDoc(ref.from, ref.to));
+        if (href) decorations.push(clickableLinkMark(href).range(ref.from, ref.to));
+      }
+      return undefined;
+    },
+  });
+
+  return { decorations, urlRanges };
+}
+
+function overlapsRanges(from: number, to: number, ranges: Array<{ from: number; to: number }>): boolean {
+  return ranges.some((range) => from < range.to && to > range.from);
+}
+
+function markdownLinkFromEvent(event: MouseEvent): HTMLElement | null {
+  if (event.button !== 0 || !(event.target instanceof Element)) return null;
+  return event.target.closest<HTMLElement>('.cm-md-link[data-md-href]');
+}
+
+function handleMarkdownLinkMouseDown(event: MouseEvent): boolean {
+  if (!markdownLinkFromEvent(event)) return false;
+  // Keep CodeMirror from moving the cursor and removing the link decoration
+  // before the subsequent click event can activate it.
+  event.preventDefault();
+  event.stopPropagation();
+  return true;
+}
+
+function handleMarkdownLinkClick(event: MouseEvent): boolean {
+  const href = markdownLinkFromEvent(event)?.dataset.mdHref;
+  if (!href) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  window.open(href, '_blank', 'noopener,noreferrer');
+  return true;
+}
+
 // Gutter rows live in a DOM tree separate from `.cm-content`, so a line
 // decoration on the content side (`cm-md-code-line`) never reaches the
 // number gutter. `gutterLineClass` is the CM6 mechanism for styling gutter
@@ -606,6 +734,8 @@ function computeMarkdownLivePreview(view: EditorView): DecorationSet {
   const doc = view.state.doc;
   const codeLines = collectCodeLines(view);
   const tableLines = collectTableLines(view);
+  const linkPreview = collectLinkPreview(view);
+  ranges.push(...linkPreview.decorations);
   for (let lineNo = 1; lineNo <= doc.lines; lineNo++) {
     const line = doc.line(lineNo);
     if (tableLines.has(lineNo)) continue;
@@ -668,7 +798,7 @@ function computeMarkdownLivePreview(view: EditorView): DecorationSet {
       const from = line.from + delimiter.index;
       const to = from + delimiter[0].length;
       const markerLength = delimiter[1].length;
-      if (!selectionTouchesDelimiter(view, from, to)) {
+      if (!overlapsRanges(from, to, linkPreview.urlRanges) && !selectionTouchesDelimiter(view, from, to)) {
         ranges.push(hiddenMarkdownDelimiter.range(from, from + markerLength));
         ranges.push(hiddenMarkdownDelimiter.range(to - markerLength, to));
       }
@@ -679,6 +809,7 @@ function computeMarkdownLivePreview(view: EditorView): DecorationSet {
     while ((inlineCode = INLINE_CODE_RE.exec(line.text))) {
       const from = line.from + inlineCode.index;
       const to = from + inlineCode[0].length;
+      if (overlapsRanges(from, to, linkPreview.urlRanges)) continue;
       ranges.push(inlineCodeDecoration.range(from + 1, to - 1));
       if (!selectionTouchesDelimiter(view, from, to)) {
         ranges.push(hiddenMarkdownDelimiter.range(from, from + 1));
@@ -987,6 +1118,8 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       blockSpacingPlugin,
       livePreviewMarkdownPlugin,
       EditorView.domEventHandlers({
+        mousedown: (event) => handleMarkdownLinkMouseDown(event),
+        click: (event) => handleMarkdownLinkClick(event),
         paste: (event, dispatchView) => imagePasteHandler(dispatchView, event, options.onPasteImage),
         drop: (event, dispatchView) => imageDropHandler(dispatchView, event, options.onPasteImage),
       }),
