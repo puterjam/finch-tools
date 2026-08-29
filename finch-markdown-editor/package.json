@@ -34,7 +34,7 @@
   "finch": {
     "manifestVersion": 1,
     "minVersion": "1.6.0",
-    "name": "MD Editor",
+    "name": "写作",
     "description": "Edit Markdown and preview it as a WeChat Official Account article. Select text for AI edits, or ask AI to design a custom style.",
     "systemPrompt": "When the user wants to edit or preview a local Markdown file, call markdown_editor_document with action 'open' and its absolute path. When the user asks to create/draft a brand-new Markdown document, write the full Markdown yourself and call action 'create' with an absolute path that does not exist yet plus the markdown content — this writes the file and opens it in Markdown Editor in one step (Markdown Editor's own UI intentionally has no 'new file' button). When the user asks to revise a passage selected in Markdown Editor, propose precise replacement Markdown and, once approved, call action 'apply' with the full updated Markdown. When the user asks for a custom/AI-designed WeChat layout style, write plain CSS scoped under #bm-md (tag/id selectors only, use !important where needed to override the base style) inspired by bm.md's built-in styles (kami, bauhaus, blueprint, botanical, newsprint, retro, sketch, terminal), then call action 'set_style' with that css and a short label — it applies immediately in the open preview.",
     "main": "dist/index.js",
@@ -50,7 +50,7 @@
       "iconPacks": [
         {
           "id": "markdown-editor-icons",
-          "label": "Markdown Editor Icons"
+          "label": "写作图标"
         }
       ],
       "appPanel": {
