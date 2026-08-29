@@ -85,20 +85,6 @@ const finchTheme = EditorView.theme({
     backgroundColor: 'var(--card)',
     fontSize: `${CM_ROOT_PX}px`,
   },
-  // CodeMirror marks Markdown code ranges with this generated class. Keep
-  // their face explicitly monospace so the editor font menu only changes
-  // prose, never inline/fenced code.
-  '.ͼs':{
-    padding: '0.08em 0.28em',
-    borderRadius: '5px',
-    background: 'none !important',
-    fontSize: '14px',
-    fontFamily: 'var(--finch-font-mono) !important',
-  },
-  '.ͼw':{
-    fontFamily: 'monospace',
-  },
-
   '.cm-foldGutter':{display:'none !important'},
   '&.cm-focused': { outline: 'none' },
   // Dim unselected/inactive editor text so attention stays on the currently
@@ -402,7 +388,9 @@ const markdownHighlight = HighlightStyle.define([
   { tag: tags.strong, color: 'var(--text)', fontWeight: '700' },
   { tag: tags.emphasis, fontStyle: 'italic' },
   { tag: tags.strikethrough, color: 'var(--muted)', textDecoration: 'line-through' },
-  { tag: tags.monospace, color: 'var(--muted)', backgroundColor: 'color-mix(in srgb, var(--text) 8%, transparent)' },
+  // Background/padding belong solely to semantic `.cm-md-inline-code` below.
+  // Keeping them here too paints nested CodeText/InlineCode spans twice.
+  { tag: tags.monospace, color: 'var(--muted)' },
   { tag: tags.link, color: 'var(--accent)' },
   { tag: tags.url, color: 'var(--muted)', textDecoration: 'underline' },
   { tag: tags.quote, color: 'var(--muted)' },
@@ -474,7 +462,6 @@ const blockSpacingPlugin = ViewPlugin.fromClass(
 // Obsidian-style source live preview. Each block type gets an explicit
 // rendering rule. A cursor/selection touching a line always reveals that
 // line's literal Markdown for predictable editing.
-const INLINE_DELIMITER_RE = /(\*\*|__|~~|_)([^\n]*?)\1/g;
 const INLINE_CODE_RE = /`([^`\n]+)`/g;
 const FENCE_RE = /^\s*```+\s*([^\s`]*)?\s*$/;
 const HR_RE = /^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/;
@@ -576,6 +563,33 @@ function collectLinkPreview(view: EditorView): LinkPreviewResult {
   });
 
   return { decorations, urlRanges };
+}
+
+// Hide only delimiter nodes that the GFM parser recognizes as real inline
+// formatting. This covers `*text*`, `_text_`, strong emphasis, nested `***`,
+// and strikethrough without mistaking list bullets, horizontal rules, or
+// literal asterisks for formatting syntax.
+function collectInlineFormatPreview(view: EditorView): any[] {
+  const decorations: any[] = [];
+  syntaxTree(view.state).iterate({
+    enter: (ref) => {
+      if (ref.name === 'Table' || ref.name === 'Image') return false;
+      const markName = ref.name === 'Strikethrough'
+        ? 'StrikethroughMark'
+        : ref.name === 'Emphasis' || ref.name === 'StrongEmphasis'
+          ? 'EmphasisMark'
+          : undefined;
+      if (!markName) return undefined;
+      // Reveal the whole formatting unit while editing it. Returning false
+      // also keeps nested markers (for example `***text***`) visible together.
+      if (selectionTouchesDelimiter(view, ref.from, ref.to)) return false;
+      for (const mark of ref.node.getChildren(markName)) {
+        decorations.push(hiddenMarkdownDelimiter.range(mark.from, mark.to));
+      }
+      return undefined;
+    },
+  });
+  return decorations;
 }
 
 function overlapsRanges(from: number, to: number, ranges: Array<{ from: number; to: number }>): boolean {
@@ -789,7 +803,7 @@ function computeMarkdownLivePreview(view: EditorView): DecorationSet {
   const codeLines = collectCodeLines(view);
   const tableLines = collectTableLines(view);
   const linkPreview = collectLinkPreview(view);
-  ranges.push(...linkPreview.decorations);
+  ranges.push(...linkPreview.decorations, ...collectInlineFormatPreview(view));
   for (let lineNo = 1; lineNo <= doc.lines; lineNo++) {
     const line = doc.line(lineNo);
     if (tableLines.has(lineNo)) continue;
@@ -842,20 +856,6 @@ function computeMarkdownLivePreview(view: EditorView): DecorationSet {
       const heading = /^(#{1,6}\s+)/.exec(line.text);
       if (heading) ranges.push(hiddenMarkdownDelimiter.range(line.from, line.from + heading[0].length));
 
-    }
-
-    // An inline format span reveals its paired markers together, rather than
-    // revealing every Markdown marker on the line.
-    INLINE_DELIMITER_RE.lastIndex = 0;
-    let delimiter: RegExpExecArray | null;
-    while ((delimiter = INLINE_DELIMITER_RE.exec(line.text))) {
-      const from = line.from + delimiter.index;
-      const to = from + delimiter[0].length;
-      const markerLength = delimiter[1].length;
-      if (!overlapsRanges(from, to, linkPreview.urlRanges) && !selectionTouchesDelimiter(view, from, to)) {
-        ranges.push(hiddenMarkdownDelimiter.range(from, from + markerLength));
-        ranges.push(hiddenMarkdownDelimiter.range(to - markerLength, to));
-      }
     }
 
     INLINE_CODE_RE.lastIndex = 0;
