@@ -19,6 +19,14 @@ interface DocumentState {
    * current disk content, not the draft, and the stale draft was kept
    * on disk rather than silently applied or discarded. */
   draftConflict?: boolean;
+  /** The file's *actual* on-disk content, only meaningfully different from
+   * `markdown` when `draftRestored` is true. The panel must track this
+   * (not the restored draft it's displaying) as its "last disk-confirmed"
+   * baseline — otherwise the next draft it mirrors back would record its
+   * `baseHash` against the *draft*, not disk, so a later reopen would see
+   * disk still sitting at the true baseline and wrongly report an
+   * external-edit conflict that never happened. */
+  diskMarkdown?: string;
 }
 
 interface RecentDocument {
@@ -317,13 +325,13 @@ function cancelPendingDraftWrite(panelId: string): void {
 async function readFileWithDraft(
   ctx: finch.MiniToolContext,
   sourcePath: string,
-): Promise<{ markdown: string; draftRestored: boolean; draftConflict: boolean }> {
-  const markdown = await readFile(sourcePath, 'utf8');
+): Promise<{ markdown: string; diskMarkdown: string; draftRestored: boolean; draftConflict: boolean }> {
+  const diskMarkdown = await readFile(sourcePath, 'utf8');
   const draft = await readDraft(ctx, sourcePath);
-  if (!draft || draft.markdown === markdown) return { markdown, draftRestored: false, draftConflict: false };
-  const diskMatchesBaseline = draft.baseHash === undefined || draft.baseHash === hashText(markdown);
-  if (diskMatchesBaseline) return { markdown: draft.markdown, draftRestored: true, draftConflict: false };
-  return { markdown, draftRestored: false, draftConflict: true };
+  if (!draft || draft.markdown === diskMarkdown) return { markdown: diskMarkdown, diskMarkdown, draftRestored: false, draftConflict: false };
+  const diskMatchesBaseline = draft.baseHash === undefined || draft.baseHash === hashText(diskMarkdown);
+  if (diskMatchesBaseline) return { markdown: draft.markdown, diskMarkdown, draftRestored: true, draftConflict: false };
+  return { markdown: diskMarkdown, diskMarkdown, draftRestored: false, draftConflict: true };
 }
 
 function sessionBucketKey(panel: finch.AppPanel): string {
@@ -485,8 +493,8 @@ async function sendDocument(panel: finch.AppPanel, state: DocumentState): Promis
 async function sendLiveDocument(ctx: finch.MiniToolContext, panel: finch.AppPanel, liveDocument: DocumentState): Promise<void> {
   if (liveDocument.path && path.isAbsolute(liveDocument.path)) {
     try {
-      const { markdown, draftRestored, draftConflict } = await readFileWithDraft(ctx, liveDocument.path);
-      await sendDocument(panel, { ...liveDocument, markdown, title: documentTitle(markdown, liveDocument.path), draftRestored, draftConflict });
+      const { markdown, diskMarkdown, draftRestored, draftConflict } = await readFileWithDraft(ctx, liveDocument.path);
+      await sendDocument(panel, { ...liveDocument, markdown, title: documentTitle(markdown, liveDocument.path), draftRestored, draftConflict, diskMarkdown });
       return;
     } catch (error) {
       ctx.logger.warn(`Could not re-read ${liveDocument.path} for a reconnecting panel, resending cached copy: ${String(error)}`);
@@ -515,10 +523,10 @@ async function restoreDocument(ctx: finch.MiniToolContext, panel: finch.AppPanel
   const sourcePath = await readLastPath(ctx, panel) ?? payloadPath(panel);
   if (!sourcePath) return false;
   try {
-    const { markdown, draftRestored, draftConflict } = await readFileWithDraft(ctx, sourcePath);
+    const { markdown, diskMarkdown, draftRestored, draftConflict } = await readFileWithDraft(ctx, sourcePath);
     watchSource(ctx, panel, sourcePath);
     await rememberLastPath(ctx, panel, sourcePath);
-    await sendDocument(panel, { path: sourcePath, markdown, title: documentTitle(markdown, sourcePath), draftRestored, draftConflict });
+    await sendDocument(panel, { path: sourcePath, markdown, title: documentTitle(markdown, sourcePath), draftRestored, draftConflict, diskMarkdown });
     return true;
   } catch (error) {
     ctx.logger.warn(`Could not restore ${sourcePath}: ${String(error)}`);
@@ -804,10 +812,10 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
           return;
         }
         const sourcePath = picked.files[0].path;
-        const { markdown, draftRestored, draftConflict } = await readFileWithDraft(ctx, sourcePath);
+        const { markdown, diskMarkdown, draftRestored, draftConflict } = await readFileWithDraft(ctx, sourcePath);
         watchSource(ctx, panel, sourcePath);
         await rememberLastPath(ctx, panel, sourcePath);
-        await sendDocument(panel, { path: sourcePath, markdown, title: documentTitle(markdown, sourcePath), draftRestored, draftConflict });
+        await sendDocument(panel, { path: sourcePath, markdown, title: documentTitle(markdown, sourcePath), draftRestored, draftConflict, diskMarkdown });
       } catch (error) {
         ctx.logger.error(`pickFile() threw: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
         await panel.postMessage({
@@ -825,10 +833,10 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
         return;
       }
       try {
-        const { markdown, draftRestored, draftConflict } = await readFileWithDraft(ctx, sourcePath);
+        const { markdown, diskMarkdown, draftRestored, draftConflict } = await readFileWithDraft(ctx, sourcePath);
         watchSource(ctx, panel, sourcePath);
         await rememberLastPath(ctx, panel, sourcePath);
-        await sendDocument(panel, { path: sourcePath, markdown, title: documentTitle(markdown, sourcePath), draftRestored, draftConflict });
+        await sendDocument(panel, { path: sourcePath, markdown, title: documentTitle(markdown, sourcePath), draftRestored, draftConflict, diskMarkdown });
       } catch (error) {
         await panel.postMessage({ type: 'error', message: `Cannot read file: ${error instanceof Error ? error.message : String(error)}` });
       }
@@ -1135,12 +1143,12 @@ action:
         if (!path.isAbsolute(sourcePath)) return result('`path` must be an absolute local path.', true);
         if (action === 'open') {
           try {
-            const { markdown, draftRestored, draftConflict } = await readFileWithDraft(ctx, sourcePath);
+            const { markdown, diskMarkdown, draftRestored, draftConflict } = await readFileWithDraft(ctx, sourcePath);
             const panel = ctx.ui.createPanel({ instanceMode: 'single', payload: { path: sourcePath } });
             await panel.reveal();
             watchSource(ctx, panel, sourcePath);
             await rememberLastPath(ctx, panel, sourcePath);
-            await sendDocument(panel, { path: sourcePath, markdown, title: documentTitle(markdown, sourcePath), draftRestored, draftConflict });
+            await sendDocument(panel, { path: sourcePath, markdown, title: documentTitle(markdown, sourcePath), draftRestored, draftConflict, diskMarkdown });
             return result(`Opened Markdown Editor for ${path.basename(sourcePath)}.`);
           } catch (error) {
             return result(`Could not read ${sourcePath}: ${error instanceof Error ? error.message : String(error)}`, true);

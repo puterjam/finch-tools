@@ -1479,7 +1479,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     fileHandle = null;
   }
 
-  function applyDocument(nextMarkdown, nextName, nextPath, force) {
+  function applyDocument(nextMarkdown, nextName, nextPath, force, diskBaseline) {
     // Deliberately does NOT check cm.hasFocus(): unsaved local edits must
     // never be silently clobbered by an external update, whether or not the
     // editor happens to have DOM focus at that instant (e.g. the panel was
@@ -1493,7 +1493,15 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     name = nextName;
     if (nextPath) sourcePath = nextPath;
     fileName = pathFileName(nextPath || sourcePath) || nextName || 'Markdown';
-    savedMarkdown = markdown;
+    // `savedMarkdown` must track the file's real *on-disk* content, not
+    // necessarily what's being displayed — when a restored draft differs
+    // from disk (`diskBaseline` provided and != nextMarkdown), keeping
+    // `savedMarkdown` at the draft's own text would poison the next draft
+    // mirror's baseline hash: it'd be recorded against a draft that was
+    // never actually on disk, so a later reopen would see the *true* disk
+    // content sitting unchanged at the real baseline and wrongly report
+    // an external-edit conflict that never happened.
+    savedMarkdown = typeof diskBaseline === 'string' ? diskBaseline : markdown;
     cm.setValue(markdown);
     setDirty(false); // also rebuilds+syncs the whole toolbar, picking up the new sourcePath/fileName below
     setPanelTitle(fileName);
@@ -2360,7 +2368,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         var isFirst = savedMarkdown === null;
         var wasLoadingFromHome = loadingFromHome;
         loadingFromHome = false;
-        var applied = applyDocument(incoming, m.title || t('common.markdownDocDefault'), m.path || sourcePath, openedFromPicker || isFirst || isDifferentDocument);
+        var applied = applyDocument(incoming, m.title || t('common.markdownDocDefault'), m.path || sourcePath, openedFromPicker || isFirst || isDifferentDocument, m.diskMarkdown);
         if (!applied) { syncToolbar(); return; } // still clear the "open" button's pending/disabled state
         if (m.draftRestored) {
           // The buffer we just loaded is an unsaved draft, not what's on
