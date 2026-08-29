@@ -75,7 +75,7 @@ interface MarkdownEditorOptions {
 // value IS the rendered body size. The gutter stays a fixed fraction
 // (12/16) of the same root so it scales along.
 const CM_ROOT_PX = 16;
-const CM_LINE_WIDTH = '40rem';
+const CM_LINE_WIDTH = '50rem';
 const CM_LINE_MAX_WIDTH = '88%';
 const finchTheme = EditorView.theme({
   '&': {
@@ -137,22 +137,22 @@ const finchTheme = EditorView.theme({
     lineHeight: '0 !important',
     overflow: 'hidden',
   },
-  // Match the same centered reading column as ordinary `.cm-line` content.
-  // The small right/bottom inset keeps the package's append-row/column grips
-  // visible without letting the table itself exceed the readable column.
+  // Tables shrink to their intrinsic width, but are centered and never grow
+  // beyond the same readable column as ordinary `.cm-line` content. The small
+  // right/bottom inset keeps the package's append-row/column grips visible.
   '.cm-content > .tbl-table-widget': {
     boxSizing: 'border-box',
-    width: `${CM_LINE_WIDTH} !important`,
-    maxWidth: `${CM_LINE_MAX_WIDTH} !important`,
+    width: 'auto !important',
+    maxWidth: `min(${CM_LINE_WIDTH}, ${CM_LINE_MAX_WIDTH}) !important`,
     marginInline: 'auto !important',
     padding: '0 16px 16px 6px !important',
   },
   '.tbl-table-widget .tbl-table-wrapper': {
-    width: '100% !important',
+    width: 'auto !important',
     maxWidth: '100%',
   },
   '.tbl-table-widget .tbl-table': {
-    width: '100% !important',
+    width: 'auto !important',
     maxWidth: '100%',
   },
   // The selected cell's embedded editor must render at exactly the body
@@ -164,14 +164,17 @@ const finchTheme = EditorView.theme({
   // `--tbl-style-font-size: inherit` then cascades it down to the
   // scroller/content/line elements unchanged.
   '.tbl-table-widget .tbl-cell-editor .cm-editor': {
-    fontSize: 'inherit',
+    fontSize: '0.8rem',
   },
   // Keep the selected cell's editable text at the same body size: with the
   // 0.9em chain gone, `inherit` tracks the root editor's inline font-size
   // (the menu tier) through the DOM, matching the static cells exactly.
   // An earlier 0.9em here compensated for the old double-scaling chain.
   '.tbl-cell-editor .cm-editor .cm-content': {
-    fontSize: 'inherit',
+    fontSize: '0.8rem',
+  },
+  '.tbl-cell-view': {
+    fontSize: '0.8rem',
   },
   // Tint the active cell / row / column boundary against dark skins. The
   // outline itself keeps the package's default 2px width — its ::after
@@ -217,6 +220,7 @@ const finchTheme = EditorView.theme({
     color: 'var(--text)',
     backgroundColor: 'color-mix(in srgb, var(--text) 9%, transparent)',
     fontFamily: 'var(--finch-font-mono)',
+    fontSize: '0.8em',
   },
   '.cm-md-link': {
     color: 'var(--accent) !important',
