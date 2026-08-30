@@ -434,11 +434,19 @@ const finchTheme = EditorView.theme({
   // cursor's line stands out while writing. Driven by a CSS token on the
   // editor root (set by setFocusMode) rather than a hand-added class —
   // CM rebuilds view.dom.className on updates, which would drop the class.
-  // The `:not(.cm-activeLine)` guard keeps the current line fully opaque;
-  // `.tbl-table-widget` cells and the code-fence/heading rows still follow
-  // the token since they are ordinary `.cm-line`s.
+  // The `:not(.cm-activeLine)` guard keeps the current line fully opaque.
+  // Tables are block widgets, so their static cells do not match `.cm-line`;
+  // fade each inactive cell directly instead. A selected cell owns an
+  // embedded CodeMirror whose line *does* match the generic rule, therefore
+  // restore opacity on both its cell and its inner line explicitly.
   '.cm-line:not(.cm-activeLine)': {
     opacity: 'var(--md-focus-opacity, 1)',
+  },
+  '.tbl-table-widget .tbl-cell': {
+    opacity: 'var(--md-focus-opacity, 1)',
+  },
+  '.tbl-table-widget .tbl-cell[data-selected], .tbl-table-widget .tbl-cell[data-selected] .cm-line': {
+    opacity: '1',
   },
   '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground': {
     backgroundColor: 'color-mix(in srgb, var(--accent) 34%, transparent)',
@@ -1361,41 +1369,76 @@ function isPureDelimiterLine(text: string): boolean {
 function moveIntoAdjacentTable(view: EditorView, direction: -1 | 1): boolean {
   const selection = view.state.selection.main;
   if (!selection.empty) return false;
-  const currentLine = view.state.doc.lineAt(selection.head).number;
-  let tableIndex = -1;
-  let index = 0;
-  syntaxTree(view.state).iterate({
-    enter: (ref) => {
-      if (ref.name !== 'Table') return undefined;
-      const first = view.state.doc.lineAt(ref.from).number;
-      const last = view.state.doc.lineAt(ref.to).number;
-      if ((direction > 0 && first === currentLine + 1) || (direction < 0 && last === currentLine - 1)) {
-        tableIndex = index;
-      }
-      index++;
-      return false;
-    },
-  });
-  if (tableIndex < 0) return false;
 
-  // The table package selects a cell from pointerdown; replay that native
-  // entry path so its own embedded editor, selection state and key bindings
-  // remain authoritative. A frame lets the block widget be measured first.
+  // A table replaces multiple source lines with one block widget. Its syntax
+  // range is therefore not a reliable neighbour of the cursor's *visual*
+  // line: normal ArrowUp/Down can skip the widget entirely. Ask CodeMirror
+  // where that native move would land, then see whether a table widget lies
+  // between the current and skipped-to cursor rectangles.
+  const currentCoords = view.coordsAtPos(selection.head);
+  const nativeTarget = view.moveVertically(selection, direction > 0);
+  const targetCoords = view.coordsAtPos(nativeTarget.head);
+  if (!currentCoords || !targetCoords || nativeTarget.head === selection.head) return false;
+
+  const candidates = Array.from(view.dom.querySelectorAll<HTMLElement>('.tbl-table-widget'))
+    .map((widget) => ({ widget, rect: widget.getBoundingClientRect() }))
+    .filter(({ rect }) => direction > 0
+      ? rect.top >= currentCoords.bottom - 1 && rect.top <= targetCoords.top + 1
+      : rect.bottom <= currentCoords.top + 1 && rect.bottom >= targetCoords.bottom - 1)
+    .sort((a, b) => direction > 0 ? a.rect.top - b.rect.top : b.rect.bottom - a.rect.bottom);
+  const widget = candidates[0]?.widget;
+  if (!widget) return false;
+
+  // A frame lets the block widget be measured before we reach into its DOM.
   window.requestAnimationFrame(() => {
-    const widget = view.dom.querySelectorAll<HTMLElement>('.tbl-table-widget')[tableIndex];
-    const cells = widget?.querySelectorAll<HTMLElement>('.tbl-cell');
-    if (!cells?.length) return;
+    const cells = widget.querySelectorAll<HTMLElement>('.tbl-cell');
+    if (!cells.length) return;
     const cell = cells[direction > 0 ? 0 : cells.length - 1];
-    const rect = cell.getBoundingClientRect();
-    cell.dispatchEvent(new PointerEvent('pointerdown', {
-      bubbles: true,
-      button: 0,
-      clientX: rect.left + Math.min(12, rect.width / 2),
-      clientY: rect.top + Math.min(12, rect.height / 2),
-    }));
-    window.requestAnimationFrame(() => cell.querySelector<HTMLElement>('.tbl-cell-editor .cm-content')?.focus());
+    placeCaretInTableCell(cell, direction < 0);
   });
   return true;
+}
+
+/**
+ * Move the caret into a table cell the way a real click does.
+ *
+ * codemirror-markdown-tables derives its cell selection from the *document*
+ * selection (a `selectionchange` listener resolves the range's container back
+ * to a cell). Synthetic pointer events only outline the cell, because they
+ * carry no default action that would move the DOM selection — and the outline
+ * drag they start never ends without a matching pointerup. Placing the range
+ * ourselves is the entry path the package actually listens for: it promotes
+ * the cell to a caret selection, which is what mounts its nested editor.
+ */
+function placeCaretInTableCell(cell: HTMLElement, atEnd: boolean): void {
+  const doc = cell.ownerDocument;
+  const walker = doc.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+  // Note: `Text` here would resolve to CodeMirror's document type, so keep
+  // these as plain DOM nodes and read their length from `textContent`.
+  const textNodes: Node[] = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+  const target = atEnd ? textNodes[textNodes.length - 1] : textNodes[0];
+  const range = doc.createRange();
+  if (target) range.setStart(target, atEnd ? (target.textContent?.length ?? 0) : 0);
+  else range.selectNodeContents(cell);
+  range.collapse(true);
+
+  const domSelection = doc.getSelection();
+  domSelection?.removeAllRanges();
+  domSelection?.addRange(range);
+
+  // The nested CodeMirror mounts asynchronously once that selection lands, so
+  // wait for its contenteditable node before handing over keyboard focus.
+  const focusCellEditor = (remainingFrames: number) => {
+    const content = cell.querySelector<HTMLElement>('.tbl-cell-editor .cm-content');
+    if (content) {
+      content.focus({ preventScroll: true });
+      return;
+    }
+    if (remainingFrames > 0) window.requestAnimationFrame(() => focusCellEditor(remainingFrames - 1));
+  };
+  window.requestAnimationFrame(() => focusCellEditor(8));
 }
 
 function moveIntoSkippedDelimiterLine(view: EditorView, direction: -1 | 1): boolean {
@@ -1812,6 +1855,15 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       imageAtomicRanges,
       livePreviewMarkdownPlugin,
       EditorView.domEventHandlers({
+        // This runs before CodeMirror's default cursor-motion keymap. A table
+        // is a block widget rather than a text line, so default ArrowUp/Down
+        // skips straight over it before a normal key binding can transfer
+        // focus into its first/last cell.
+        keydown: (event, dispatchView) => {
+          if (event.key === 'ArrowUp') return moveIntoAdjacentTable(dispatchView, -1);
+          if (event.key === 'ArrowDown') return moveIntoAdjacentTable(dispatchView, 1);
+          return false;
+        },
         mousedown: (event) => {
           mouseSelecting = true;
           return handleMarkdownImageMouseDown(event) || handleMarkdownLinkMouseDown(event);
