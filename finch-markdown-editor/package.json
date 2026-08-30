@@ -27,7 +27,7 @@
     "annotation"
   ],
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js && esbuild src/codemirror.ts --bundle --platform=browser --format=iife --target=chrome120 --minify --outfile=dist/codemirror.js && node -e \"require('node:fs').copyFileSync('src/panel.html', 'dist/panel.html')\"",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js && esbuild src/codemirror.ts --bundle --platform=browser --format=iife --target=chrome120 --minify --outfile=dist/codemirror.js && node -e \"const fs=require('node:fs');fs.copyFileSync('src/panel.html','dist/panel.html');fs.rmSync('dist/bmmd',{recursive:true,force:true});fs.mkdirSync('dist/bmmd',{recursive:true});fs.cpSync('node_modules/bmmd/bin','dist/bmmd/bin',{recursive:true});fs.copyFileSync('node_modules/bmmd/LICENSE','dist/bmmd/LICENSE')\"",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
   },
@@ -183,6 +183,7 @@
   "devDependencies": {
     "@finchtoys/minitool-api": "^0.3.5",
     "@types/node": "^26.1.0",
+    "bmmd": "0.3.0",
     "esbuild": "^0.28.1",
     "typescript": "^6.0.3"
   },

@@ -1,11 +1,10 @@
 import type * as finch from 'finch';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { gunzip } from 'node:zlib';
-import { promisify } from 'node:util';
+import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 
 interface DocumentState {
@@ -536,87 +535,13 @@ async function restoreDocument(ctx: finch.MiniToolContext, panel: finch.AppPanel
   }
 }
 
-// bmmd is AGPL-licensed, so it remains a separately downloaded renderer
-// rather than being bundled into this MIT-licensed mini tool. Downloading its
-// published tarball directly avoids assuming that Finch's GUI extension host
-// inherited a terminal's `npm` PATH (which is not true on many installations).
-const BMMD_VERSION = '0.2.0';
-const BMMD_TARBALL_URL = `https://registry.npmjs.org/bmmd/-/bmmd-${BMMD_VERSION}.tgz`;
-const gunzipAsync = promisify(gunzip);
-let bmmdBinPromise: Promise<string> | undefined;
+// bmmd is LGPL-3.0-only as of 0.3.0, so its published CLI payload is
+// bundled under dist/bmmd/bin at build time. Keeping its files intact (rather
+// than rebundling) preserves the CLI's dynamic imports between chunk files.
+const BMMD_BIN_PATH = fileURLToPath(new URL('./bmmd/bin/bmmd.mjs', import.meta.url));
 
-function tarString(buffer: Buffer): string {
-  const zero = buffer.indexOf(0);
-  return buffer.subarray(0, zero === -1 ? buffer.length : zero).toString('utf8');
-}
-
-async function extractBmmdTarball(tarball: Buffer, destination: string): Promise<void> {
-  const tar = await gunzipAsync(tarball);
-  for (let offset = 0; offset + 512 <= tar.length;) {
-    const header = tar.subarray(offset, offset + 512);
-    if (header.every((byte) => byte === 0)) break;
-    const name = tarString(header.subarray(0, 100));
-    const prefix = tarString(header.subarray(345, 500));
-    const entryPath = prefix ? `${prefix}/${name}` : name;
-    const sizeText = tarString(header.subarray(124, 136)).trim();
-    const size = Number.parseInt(sizeText || '0', 8);
-    if (!Number.isSafeInteger(size) || size < 0) throw new Error('Invalid bmmd package archive.');
-    const bodyStart = offset + 512;
-    const bodyEnd = bodyStart + size;
-    if (bodyEnd > tar.length) throw new Error('Truncated bmmd package archive.');
-    // Only retain bmmd's published CLI payload. This rejects absolute paths
-    // and traversal entries instead of trusting paths supplied by a network
-    // archive.
-    if (header[156] === 48 && entryPath.startsWith('package/bin/') && !entryPath.includes('..')) {
-      const relative = entryPath.slice('package/bin/'.length);
-      if (relative && !path.isAbsolute(relative)) {
-        const outputPath = path.join(destination, relative);
-        await mkdir(path.dirname(outputPath), { recursive: true });
-        await writeFile(outputPath, tar.subarray(bodyStart, bodyEnd));
-      }
-    }
-    offset = bodyStart + Math.ceil(size / 512) * 512;
-  }
-}
-
-async function ensureBmmdBin(ctx: finch.MiniToolContext, onInstalling?: () => void): Promise<string> {
-  if (!bmmdBinPromise) {
-    bmmdBinPromise = (async () => {
-      const installDir = path.join(ctx.storagePath, 'bmmd');
-      const binPath = path.join(installDir, 'bin', 'bmmd.mjs');
-      try {
-        await stat(binPath);
-        return binPath;
-      } catch {
-        // First render: download the pinned renderer below.
-      }
-      onInstalling?.();
-      const response = await fetch(BMMD_TARBALL_URL);
-      if (!response.ok) throw new Error(`Could not download bmmd ${BMMD_VERSION}: HTTP ${response.status}.`);
-      const stagingDir = `${installDir}.staging-${process.pid}-${Date.now()}`;
-      await rm(stagingDir, { recursive: true, force: true });
-      try {
-        await extractBmmdTarball(Buffer.from(await response.arrayBuffer()), path.join(stagingDir, 'bin'));
-        await stat(path.join(stagingDir, 'bin', 'bmmd.mjs'));
-        await rm(installDir, { recursive: true, force: true });
-        await rename(stagingDir, installDir);
-      } catch (error) {
-        await rm(stagingDir, { recursive: true, force: true });
-        throw error;
-      }
-      return binPath;
-    })();
-  }
-  try {
-    return await bmmdBinPromise;
-  } catch (error) {
-    bmmdBinPromise = undefined; // allow a retry on the next call
-    throw error;
-  }
-}
-
-async function runBmmd(ctx: finch.MiniToolContext, args: string[], input: string, onInstalling?: () => void): Promise<string> {
-  const binPath = await ensureBmmdBin(ctx, onInstalling);
+async function runBmmd(args: string[], input: string): Promise<string> {
+  const binPath = BMMD_BIN_PATH;
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [binPath, ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
     let output = '';
@@ -659,11 +584,11 @@ function substituteFinchFileImagesForBm(markdown: string): { markdown: string; u
   return { markdown: substituted, urls };
 }
 
-async function renderWithBm(ctx: finch.MiniToolContext, markdown: string, markdownStyle: string, customCss: string | undefined, onInstalling?: () => void): Promise<string> {
+async function renderWithBm(markdown: string, markdownStyle: string, customCss: string | undefined): Promise<string> {
   const args = ['render', '--platform', 'wechat', '--markdown-style', markdownStyle || 'kami'];
   if (customCss && customCss.trim()) args.push('--custom-css', customCss);
   const prepared = substituteFinchFileImagesForBm(markdown);
-  let html = await runBmmd(ctx, args, prepared.markdown, onInstalling);
+  let html = await runBmmd(args, prepared.markdown);
   for (const [placeholder, originalUrl] of prepared.urls) html = html.split(placeholder).join(originalUrl);
   return html;
 }
@@ -968,9 +893,7 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
     }
     case 'renderBm': {
       try {
-        const html = await renderWithBm(ctx, String(message.markdown ?? ''), String(message.markdownStyle ?? 'kami'), message.customCss, () => {
-          panel.postMessage({ type: 'status', message: '首次渲染：正在下载 bmmd 渲染引擎（约几秒，仅一次）…' }).catch(() => {});
-        });
+        const html = await renderWithBm(String(message.markdown ?? ''), String(message.markdownStyle ?? 'kami'), message.customCss);
         await panel.postMessage({ type: 'bmRendered', html, requestId: message.requestId });
       } catch (error) {
         await panel.postMessage({ type: 'error', message: `bm.md rendering failed: ${error instanceof Error ? error.message : String(error)}` });
@@ -1122,6 +1045,9 @@ export function activate(ctx: finch.MiniToolContext): void {
     },
     feather: {
       svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.086 18.412A2 2 0 0 1 12.67 19H5v-7.672a2 2 0 0 1 .586-1.414L11.75 3.75a6 6 0 1 1 8.49 8.49z"/><path d="M16 8 2 22"/><path d="M17.488 15H9"/></svg>',
+    },
+    'swatch-book': {
+      svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 17a4 4 0 0 1-8 0V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2Z"/><path d="M16.7 13H19a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H7"/><path d="M 7 17h.01"/><path d="m11 8 2.3-2.3a2.4 2.4 0 0 1 3.404.004L18.6 7.6a2.4 2.4 0 0 1 .026 3.434L9.9 19.8"/></svg>',
     },
   }));
 

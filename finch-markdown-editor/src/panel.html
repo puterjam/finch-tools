@@ -918,11 +918,11 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         checked: annotationsEnabled, disabled: !hasDoc,
       },
       {
-        // Label stays "预览" no matter which mode is active — the icon
-        // (toggle-left/right) plus `checked` already communicate on/off;
-        // flipping the word itself between "预览"/"编辑" read as ambiguous
-        // ("is this the mode I'm in, or the one I'm switching to?").
-        id: 'mode', icon: mode === 'edit' ? 'toggle-left' : 'toggle-right',
+        // Label stays "预览" no matter which mode is active — the swatch
+        // icon plus `checked` already communicate on/off; flipping the word
+        // itself between "预览"/"编辑" read as ambiguous ("is this the mode
+        // I'm in, or the one I'm switching to?").
+        id: 'mode', icon: 'ext:markdown-editor-icons/swatch-book',
         label: t('toolbar.mode.label'), tooltip: hasDoc ? (mode === 'edit' ? t('toolbar.mode.tooltipToPreview') : t('toolbar.mode.tooltipToEdit')) : t('toolbar.needDoc'),
         checked: mode === 'preview', disabled: !hasDoc,
       },

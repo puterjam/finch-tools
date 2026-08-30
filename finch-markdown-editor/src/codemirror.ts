@@ -159,6 +159,7 @@ const finchTheme = EditorView.theme({
   '.tbl-table-widget .tbl-table-wrapper': {
     // width: 'auto !important',
     maxWidth: '100%',
+    paddingTop: '12px',
   },
   '.tbl-table-widget .tbl-table': {
     width: 'auto !important',
@@ -318,8 +319,8 @@ const finchTheme = EditorView.theme({
     fontFamily: 'var(--finch-font-mono)',
     paddingTop: '0 !important',
     paddingBottom: '0 !important',
-    paddingLeft: '24px',
-    paddingRight: '24px',
+    width: 'calc(50rem - 30px) !important',
+    paddingInline: '24px',
     fontSize: '13px !important',
   },
 
@@ -331,16 +332,14 @@ const finchTheme = EditorView.theme({
     borderRadius: '8px 8px 0 0',
     height: '22px',
     paddingTop: '2px',
-    paddingLeft: '12px',
-    paddingRight: '12px',
+    paddingInline: '12px',
     lineHeight: '1.5rem !important',
   },
   '.cm-line.cm-md-code-close': {
     fontSize: '12px',
     borderRadius: '0 0 8px 8px',
     height: '22px',
-    paddingLeft: '12px',
-    paddingRight: '12px',
+    paddingInline: '12px'
   },
   '.cm-md-code-fence-empty': { opacity: '0' },
   '.cm-md-code-copy': {
