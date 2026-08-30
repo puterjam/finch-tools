@@ -1,7 +1,7 @@
 {
   "name": "写字",
   "description": "在 Finch 中编辑 Markdown，并可预览为微信公众号文章样式；支持框选文字请求 AI 修改和自定义排版。",
-  "systemPrompt": "当用户要编辑或预览本地 Markdown 文件时，调用 markdown_editor_document，action 使用 open，并提供绝对路径。当用户要新建/起草一篇全新的 Markdown 文档时，自己先写好完整 Markdown 正文，再调用 action=create 并提供一个尚不存在的绝对路径和 markdown 内容——会一次性写入文件并在 Markdown 编辑器中打开（编辑器界面本身故意不提供“新建”按钮）。当用户要修改编辑器或预览中框选的文字时，给出精确的替换 Markdown，确认后调用 action=apply 并提供完整更新后的 Markdown。当用户要求自定义/AI 设计公众号排版风格时，编写限定在 #bm-md 下的普通 CSS（标签/id 选择器，不用 class，必要时用 !important 覆盖基础风格），可参考 bm.md 内置风格（kami、bauhaus、blueprint、botanical、newsprint、retro、sketch、terminal），然后调用 action=set_style 并提供 css 与简短 label，会立即应用到当前打开的预览。",
+  "systemPrompt": "当用户要编辑或预览本地 Markdown 文件时，调用 markdown_editor_document，action 使用 open，并提供绝对路径。用户说“写文章”“开始写作”“写一篇”“写个帖子”或“起草内容”时，即使未提 Markdown，也视为要使用写字。新建文档时，若缺少标题/主题或保存位置，先引导用户补齐；信息足够后，调用 action=create，传入一个尚不存在的绝对 .md 路径和 Markdown 内容。用户提供了写作需求时，直接起草完整 Markdown；用户只想开始写作时，创建带标题的最小起稿文档。该工具会一次性写入文件并在 Markdown 编辑器中打开——用户要在编辑器开始写作时，不要只在聊天中返回一段文字。编辑器界面故意不提供“新建”按钮。当用户要修改编辑器或预览中框选的文字时，给出精确的替换 Markdown，确认后调用 action=apply 并提供完整更新后的 Markdown。当用户要求自定义/AI 设计公众号排版风格时，编写限定在 #bm-md 下的普通 CSS（标签/id 选择器，不用 class，必要时用 !important 覆盖基础风格），可参考 bm.md 内置风格（kami、bauhaus、blueprint、botanical、newsprint、retro、sketch、terminal），然后调用 action=set_style 并提供 css 与简短 label，会立即应用到当前打开的预览。",
   "appPanel": {
     "title": "写字",
     "toolbar": {
