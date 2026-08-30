@@ -1,6 +1,6 @@
 {
   "name": "finch-markdown-editor",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "A Markdown editor and WeChat Official Account style preview, with selection-based AI edits and AI-generated custom styles.",
   "author": {
     "name": "PuterJam",
@@ -27,7 +27,7 @@
     "annotation"
   ],
   "scripts": {
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js && esbuild src/codemirror.ts --bundle --platform=browser --format=iife --target=chrome120 --minify --outfile=dist/codemirror.js && cp src/panel.html dist/panel.html",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js && esbuild src/codemirror.ts --bundle --platform=browser --format=iife --target=chrome120 --minify --outfile=dist/codemirror.js && node -e \"require('node:fs').copyFileSync('src/panel.html', 'dist/panel.html')\"",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
   },
@@ -176,7 +176,7 @@
     },
     "permissions": {
       "filesystem": "readwrite",
-      "network": false,
+      "network": true,
       "shell": true
     }
   },

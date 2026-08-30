@@ -1,6 +1,8 @@
 import type * as finch from 'finch';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { gunzip } from 'node:zlib';
+import { promisify } from 'node:util';
 import { watch, type FSWatcher } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -534,36 +536,74 @@ async function restoreDocument(ctx: finch.MiniToolContext, panel: finch.AppPanel
   }
 }
 
-// Installing bmmd once into our own storage dir and invoking its script
-// directly with `node` is much faster than `npx -y bmmd ...` on every
-// render: npx re-resolves/re-verifies the package from its dlx cache on
-// every single invocation, which dominates render latency once bmmd itself
-// is already cached. A one-time local install avoids that overhead for
-// every subsequent render.
+// bmmd is AGPL-licensed, so it remains a separately downloaded renderer
+// rather than being bundled into this MIT-licensed mini tool. Downloading its
+// published tarball directly avoids assuming that Finch's GUI extension host
+// inherited a terminal's `npm` PATH (which is not true on many installations).
+const BMMD_VERSION = '0.2.0';
+const BMMD_TARBALL_URL = `https://registry.npmjs.org/bmmd/-/bmmd-${BMMD_VERSION}.tgz`;
+const gunzipAsync = promisify(gunzip);
 let bmmdBinPromise: Promise<string> | undefined;
+
+function tarString(buffer: Buffer): string {
+  const zero = buffer.indexOf(0);
+  return buffer.subarray(0, zero === -1 ? buffer.length : zero).toString('utf8');
+}
+
+async function extractBmmdTarball(tarball: Buffer, destination: string): Promise<void> {
+  const tar = await gunzipAsync(tarball);
+  for (let offset = 0; offset + 512 <= tar.length;) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const name = tarString(header.subarray(0, 100));
+    const prefix = tarString(header.subarray(345, 500));
+    const entryPath = prefix ? `${prefix}/${name}` : name;
+    const sizeText = tarString(header.subarray(124, 136)).trim();
+    const size = Number.parseInt(sizeText || '0', 8);
+    if (!Number.isSafeInteger(size) || size < 0) throw new Error('Invalid bmmd package archive.');
+    const bodyStart = offset + 512;
+    const bodyEnd = bodyStart + size;
+    if (bodyEnd > tar.length) throw new Error('Truncated bmmd package archive.');
+    // Only retain bmmd's published CLI payload. This rejects absolute paths
+    // and traversal entries instead of trusting paths supplied by a network
+    // archive.
+    if (header[156] === 48 && entryPath.startsWith('package/bin/') && !entryPath.includes('..')) {
+      const relative = entryPath.slice('package/bin/'.length);
+      if (relative && !path.isAbsolute(relative)) {
+        const outputPath = path.join(destination, relative);
+        await mkdir(path.dirname(outputPath), { recursive: true });
+        await writeFile(outputPath, tar.subarray(bodyStart, bodyEnd));
+      }
+    }
+    offset = bodyStart + Math.ceil(size / 512) * 512;
+  }
+}
 
 async function ensureBmmdBin(ctx: finch.MiniToolContext, onInstalling?: () => void): Promise<string> {
   if (!bmmdBinPromise) {
     bmmdBinPromise = (async () => {
       const installDir = path.join(ctx.storagePath, 'bmmd');
-      const binPath = path.join(installDir, 'node_modules', 'bmmd', 'bin', 'bmmd.mjs');
+      const binPath = path.join(installDir, 'bin', 'bmmd.mjs');
       try {
         await stat(binPath);
         return binPath;
       } catch {
-        // not installed yet, fall through to install below
+        // First render: download the pinned renderer below.
       }
       onInstalling?.();
-      await mkdir(installDir, { recursive: true });
-      await new Promise<void>((resolve, reject) => {
-        const child = spawn('npm', [
-          'install', '--no-save', '--no-audit', '--no-fund', '--silent',
-          '--prefix', installDir, 'bmmd@latest',
-        ], { stdio: 'ignore' });
-        child.on('error', reject);
-        child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`npm install bmmd exited with code ${code}`))));
-      });
-      await stat(binPath);
+      const response = await fetch(BMMD_TARBALL_URL);
+      if (!response.ok) throw new Error(`Could not download bmmd ${BMMD_VERSION}: HTTP ${response.status}.`);
+      const stagingDir = `${installDir}.staging-${process.pid}-${Date.now()}`;
+      await rm(stagingDir, { recursive: true, force: true });
+      try {
+        await extractBmmdTarball(Buffer.from(await response.arrayBuffer()), path.join(stagingDir, 'bin'));
+        await stat(path.join(stagingDir, 'bin', 'bmmd.mjs'));
+        await rm(installDir, { recursive: true, force: true });
+        await rename(stagingDir, installDir);
+      } catch (error) {
+        await rm(stagingDir, { recursive: true, force: true });
+        throw error;
+      }
       return binPath;
     })();
   }
@@ -929,7 +969,7 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
     case 'renderBm': {
       try {
         const html = await renderWithBm(ctx, String(message.markdown ?? ''), String(message.markdownStyle ?? 'kami'), message.customCss, () => {
-          panel.postMessage({ type: 'status', message: '首次渲染：正在本机安装 bmmd 渲染引擎（约几秒，仅一次）…' }).catch(() => {});
+          panel.postMessage({ type: 'status', message: '首次渲染：正在下载 bmmd 渲染引擎（约几秒，仅一次）…' }).catch(() => {});
         });
         await panel.postMessage({ type: 'bmRendered', html, requestId: message.requestId });
       } catch (error) {
