@@ -1,0 +1,16 @@
+{
+  "name": "Writing",
+  "description": "Write Markdown in Finch and preview it as a WeChat Official Account article — with selection-based AI edits, focus mode, and AI-designed custom styles.",
+  "systemPrompt": "When the user wants to edit or preview a local Markdown file, call markdown_editor_document with action 'open' and its absolute path. When the user asks to create/draft a brand-new Markdown document, write the full Markdown yourself and call action 'create' with an absolute path that does not exist yet plus the markdown content — it writes the file and opens it in the editor in one step (the editor UI intentionally has no \"new file\" button). When the user asks to revise a passage selected in the editor or preview, propose precise replacement Markdown and, once approved, call action 'apply' with the full updated Markdown. When the user asks for a custom/AI-designed WeChat layout style, write plain CSS scoped under #bm-md (tag/id selectors only, no classes, use !important where needed to override the base style), drawing on bm.md's built-in style languages (kami, bauhaus, blueprint, botanical, newsprint, retro, sketch, terminal), then call action 'set_style' with the css and a short label — it applies immediately to the open preview.",
+  "appPanel": {
+    "title": "Writing",
+    "toolbar": {
+      "open": { "tooltip": "Open a Markdown file" },
+      "annotate": { "label": "Annotate", "tooltip": "Turn on annotate" },
+      "mode": { "label": "Preview", "tooltip": "Switch to preview" },
+      "style": { "tooltip": "Layout style" },
+      "save": { "label": "Save", "tooltip": "Save (⌘/Ctrl+S)" },
+      "more": { "tooltip": "More actions" }
+    }
+  }
+}

@@ -1119,7 +1119,7 @@ export function activate(ctx: finch.MiniToolContext): void {
 
   ctx.subscriptions.push(ctx.tools.register({
     name: 'markdown_editor_document',
-    title: '写作',
+    title: '写字',
     description: `Open, create, revise, or restyle a Markdown document in Markdown Editor.
 action:
   open — read an absolute local Markdown path and open it as an editable WeChat article preview

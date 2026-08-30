@@ -1,43 +1,69 @@
-# Markdown Editor
+# 写字 (Writing)
 
-A focused Markdown editor for Finch with WeChat Official Account preview, selection-based AI edits, and AI-designed custom styles.
-
-## Use it
-
-1. Open **Markdown Editor** from Finch's right Panel and click the **folder** icon to open a `.md` file.
-2. Edit Markdown directly. Use the **save** button or `Cmd/Ctrl+S` to write changes to disk; external file changes refresh automatically.
-3. Click the **toggle** button to switch to the WeChat preview. Choose one of bm.md's 8 built-in styles from the **palette** menu.
-4. Select text in the editor or preview, describe the desired revision in the popup, and add it to the Finch Composer as precise AI context.
-5. Click the **wand** icon to ask Finch AI to design custom CSS based on the bm.md output structure.
-6. Use **Copy HTML** to copy inline-styled rich text for the WeChat editor.
-
-## Architecture
-
-The Markdown editor is implemented by this mini tool with CodeMirror 6, not by bm.md. CodeMirror owns Markdown parsing, syntax highlighting, line wrapping, selections, active-line rendering, undo history, and keyboard editing. The Panel integration owns file I/O, selection annotations, save state, toolbar interactions, and preview presentation.
-
-bm.md is only the rendering engine. The mini tool installs the `bmmd` CLI once into its private storage, then sends the current Markdown to `bmmd render --platform wechat`. The returned inline-styled HTML is displayed in a sandboxed iframe. Article content stays local and no long-running bm.md web service is used.
-
-The mini tool is MIT licensed. bm.md / `bmmd` is AGPL-3.0 and is installed separately at runtime rather than bundled into this package.
+一款为码字工作者打造的 Markdown 写作小程序：本地文件直接编辑、微信风格排版预览、专注模式、AI 批注改写，全部在你自己的机器上完成。
 
 ---
 
-# Markdown 编辑器
+## 它解决什么问题
 
-一个专注于 Markdown 编辑体验的 Finch 小程序，同时提供微信公众号样式预览、框选文字请求 AI 修改，以及 AI 自定义排版。
+写长文最怕三件事：
 
-## 使用方式
+1. **一边写一边想排版**，思绪被打断；
+2. **改一个段落要复制粘贴来回倒腾**，还容易弄丢草稿；
+3. **写完发公众号才发现格式不对**，返工重排。
 
-1. 从 Finch 右侧 Panel 打开 **Markdown 编辑器**，点击工具栏「文件夹」图标选择 `.md` 文件。
-2. 直接编辑 Markdown；使用工具栏**保存**按钮或 `Cmd/Ctrl+S` 写入磁盘。文件被外部修改时，编辑器会自动刷新。
-3. 点击「切换」按钮进入公众号预览，可在「调色板」菜单选择 bm.md 内置的 8 种排版风格。
-4. 在编辑器或预览中框选文字，在浮层里描述修改要求，即可把精确上下文加入 Finch Composer。
-5. 点击「魔杖」图标，让 Finch AI 基于 bm.md 的输出结构设计自定义 CSS。
-6. 使用**复制 HTML**复制带内联样式的富文本，再粘贴到微信公众号编辑器。
+「写字」把这三件事合到了一起：Markdown 就是你的源文件，预览即所得，AI 帮你改稿，草稿永不丢。
 
-## 架构关系
+---
 
-Markdown 编辑器不是 bm.md 内置编辑器，而是小程序内集成的 CodeMirror 6。Markdown 解析、语法高亮、自动换行、选区、当前行、撤销历史和键盘编辑由 CodeMirror 负责；文件读写、选区批注、保存状态、工具栏交互和预览容器由 Finch 小程序负责。
+## 快速上手
 
-bm.md 只负责渲染。小程序会把 `bmmd` CLI 一次性安装到自己的私有存储目录，然后将当前 Markdown 交给 `bmmd render --platform wechat`；返回的内联样式 HTML 再显示到沙箱 iframe 中。文章内容全程留在本机，也不需要常驻 bm.md Web 服务。
+1. 从 Finch 右侧面板打开 **写字**。
+2. 点击工具栏「文件夹」图标选择一篇 `.md` 文件（或直接新建一篇）。
+3. 开始写。写的过程中随时：
 
-小程序本身采用 MIT 许可证；bm.md / `bmmd` 为 AGPL-3.0，因此运行时独立安装，不直接打包进小程序。
+| 想做的事 | 怎么操作 |
+|---|---|
+| 打开/新建文档 | 工具栏「文件夹」/ 首页「新建文档」 |
+| 保存 | `Cmd/Ctrl + S`（改动会自动落盘，不用惦记） |
+| 切换公众号预览 | 工具栏「预览」按钮，所见即所得 |
+| 让 AI 改一段话 | 框选文字 → 描述要求 → 加入对话 |
+| 专注不被打扰 | 工具栏「专注」（羽毛图标），当前行居中、其余行变淡 |
+| 行距宽松点写 | 字体菜单 → 舒适（紧凑/舒适两档） |
+| 排版风格 | 预览模式下点「调色板」，8 种内置风格任选 |
+| 自定义 AI 排版 | 预览浮层「让 AI 设计排版」 |
+
+---
+
+## 给码字工作者的能力
+
+### ✍️ 写，像在用编辑器
+
+- 原生 CodeMirror 6 内核：语法高亮、软换行、选区、撤销历史、行号，应有尽有。
+- **草稿永不丢**：每次按键内容都会后台留存；就算手滑关掉标签页，重新打开也会自动恢复未保存的内容。文件在别处被改过？会提示冲突，但你的草稿仍然保留。
+- **专注模式**：开启后光标所在行自动平滑滚动到屏幕中央，其余行 70% 变淡——长文写作不再追着光标跑。
+- **紧凑 / 舒适**：两档行距，阅读时紧凑、写作时宽松，随时切换。
+- 文件被外部修改会自动刷新，编辑器和磁盘永远同步。
+
+### 🔍 批注：框选即问
+
+选中一段文字，弹窗里写下你的要求（"更口语一点"、"扩写成三句话"、"换个更有力的开头"），内容会带着精确的行号和原文进入 Finch 对话。AI 改完给出可替换片段，确认后才写入文件——不会乱改你的稿子。
+
+### 🎨 预览与排版
+
+- 点击「预览」即时看到公众号文章效果，支持 8 种内置风格（暖纸感、几何撞色、蓝图网格、清新绿、报刊衬线、复古、手绘、终端）。
+- 预览浮层可**复制到公众号**（内联样式富文本，直接粘贴）、导出图片或 PDF。
+- 想要独一无二的排版？让 AI 基于你的文章设计自定义 CSS，一键应用并保存，下次写文直接复用。
+
+### 🛡️ 本地优先
+
+- 所有文件都在你自己的磁盘上，内容不出本机。
+- 渲染引擎 `bmmd` 独立安装、按需调用，没有常驻服务，也没有云端依赖。
+
+---
+
+## 架构说明（给开发者）
+
+编辑器是小程序内集成的 CodeMirror 6，负责解析、高亮、选区、撤销与键盘编辑；文件读写、草稿恢复、批注上下文、保存状态、工具栏与预览容器由 Finch 小程序负责。bm.md 仅作为渲染引擎：小程序按需调用 `bmmd render --platform wechat`，把返回的内联样式 HTML 显示在沙箱 iframe 中。
+
+小程序采用 MIT 许可证；bm.md / `bmmd` 为 AGPL-3.0，运行时独立安装，不打包进本包。

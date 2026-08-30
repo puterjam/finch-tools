@@ -1,9 +1,9 @@
 {
-  "name": "写作",
+  "name": "写字",
   "description": "在 Finch 中编辑 Markdown，并可预览为微信公众号文章样式；支持框选文字请求 AI 修改和自定义排版。",
   "systemPrompt": "当用户要编辑或预览本地 Markdown 文件时，调用 markdown_editor_document，action 使用 open，并提供绝对路径。当用户要新建/起草一篇全新的 Markdown 文档时，自己先写好完整 Markdown 正文，再调用 action=create 并提供一个尚不存在的绝对路径和 markdown 内容——会一次性写入文件并在 Markdown 编辑器中打开（编辑器界面本身故意不提供“新建”按钮）。当用户要修改编辑器或预览中框选的文字时，给出精确的替换 Markdown，确认后调用 action=apply 并提供完整更新后的 Markdown。当用户要求自定义/AI 设计公众号排版风格时，编写限定在 #bm-md 下的普通 CSS（标签/id 选择器，不用 class，必要时用 !important 覆盖基础风格），可参考 bm.md 内置风格（kami、bauhaus、blueprint、botanical、newsprint、retro、sketch、terminal），然后调用 action=set_style 并提供 css 与简短 label，会立即应用到当前打开的预览。",
   "appPanel": {
-    "title": "写作",
+    "title": "写字",
     "toolbar": {
       "open": { "tooltip": "打开 Markdown 文件" },
       "annotate": { "label": "批注", "tooltip": "开启批注" },
