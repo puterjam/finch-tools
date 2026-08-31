@@ -645,6 +645,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   var frameReady = false;
   var renderId = 0;
   var renderingPreview = false;
+  var renderAnimationFrame = 0;
+  var renderAnimationTimer = null;
   var saveId = 0;
   var pendingSaveContents = {};
   // Resolvers for callers that need to *await* a save round-trip (the
@@ -987,7 +989,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         // icon plus `checked` already communicate on/off; flipping the word
         // itself between "预览"/"编辑" read as ambiguous ("is this the mode
         // I'm in, or the one I'm switching to?").
-        id: 'mode', icon: renderingPreview ? 'ext:markdown-editor-icons/loader-circle' : 'ext:markdown-editor-icons/swatch-book',
+        id: 'mode', icon: renderingPreview ? 'ext:markdown-editor-icons/loader-circle-' + renderAnimationFrame : 'ext:markdown-editor-icons/swatch-book',
         label: t('toolbar.mode.label'), tooltip: hasDoc ? (renderingPreview ? t('toolbar.mode.tooltipRendering') : mode === 'edit' ? t('toolbar.mode.tooltipToPreview') : t('toolbar.mode.tooltipToEdit')) : t('toolbar.needDoc'),
         checked: mode === 'preview', disabled: !hasDoc,
       },
@@ -1042,6 +1044,33 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 
   function syncToolbar() {
     if (api) api.postMessage({ type: 'setToolbar', toolbar: buildToolbar() });
+  }
+
+  function updateRenderAnimationFrame() {
+    if (!api || !renderingPreview) return;
+    api.postMessage({
+      type: 'updateToolbar', itemId: 'mode',
+      patch: { icon: 'ext:markdown-editor-icons/loader-circle-' + renderAnimationFrame },
+    });
+  }
+
+  function startRenderAnimation() {
+    renderingPreview = true;
+    renderAnimationFrame = 0;
+    if (renderAnimationTimer !== null) return;
+    renderAnimationTimer = setInterval(function () {
+      renderAnimationFrame = (renderAnimationFrame + 1) % 8;
+      updateRenderAnimationFrame();
+    }, 100);
+  }
+
+  function stopRenderAnimation() {
+    renderingPreview = false;
+    renderAnimationFrame = 0;
+    if (renderAnimationTimer !== null) {
+      clearInterval(renderAnimationTimer);
+      renderAnimationTimer = null;
+    }
   }
 
   function setMode(next) {
@@ -1121,7 +1150,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   function render() {
     if (!markdown || !api) return;
     var id = ++renderId;
-    renderingPreview = true;
+    startRenderAnimation();
     syncToolbar();
     api.postMessage({
       type: 'renderBm',
@@ -2595,7 +2624,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         if (m.requestId !== renderId) return;
         showHtml(m.html || '');
         updateEmptyState();
-        renderingPreview = false;
+        stopRenderAnimation();
         syncToolbar(); // `html` just became available (or changed) — refresh the copy menu's disabled state
         setStatus('');
         return;
@@ -2662,7 +2691,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         if (m.fallback) pickFileSupported = false;
         // renderBm failures arrive through the same error channel; never
         // leave the preview button's loader spinning after one.
-        renderingPreview = false;
+        stopRenderAnimation();
         syncToolbar();
         setStatus(m.message, true);
         return;
