@@ -80,6 +80,20 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .status a{color:var(--accent);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 .status.error{color:#c54232}
 .status:empty{padding:0;border-top:0}
+/* Lines an external revision (AI apply, or an on-disk edit) just rewrote.
+   The decoration is dropped again after the animation, so the highlight is
+   purely transient — it marks the change without leaving the doc annotated.
+   It eases in rather than appearing at full strength, and leaves a thin
+   change-bar on the left the way a diff view would, so the eye reads it as
+   "this got rewritten" instead of a highlighter pen being slapped down. */
+.cm-line.cm-ai-changed{border-radius:6px;animation:ai-edit-flash 1.9s cubic-bezier(.33,0,.2,1) both}
+@keyframes ai-edit-flash{
+  0%{background:transparent;box-shadow:inset 2px 0 0 transparent}
+  26%{background:color-mix(in srgb,var(--accent) 13%,transparent);box-shadow:inset 2px 0 0 color-mix(in srgb,var(--accent) 52%,transparent)}
+  55%{background:color-mix(in srgb,var(--accent) 11%,transparent);box-shadow:inset 2px 0 0 color-mix(in srgb,var(--accent) 44%,transparent)}
+  100%{background:transparent;box-shadow:inset 2px 0 0 transparent}
+}
+@media (prefers-reduced-motion:reduce){.cm-line.cm-ai-changed{animation:none;background:transparent;box-shadow:none}}
 .popup{position:fixed;z-index:20;display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);border-radius:9px;box-shadow:0 8px 22px rgba(0,0,0,.22);padding:5px;transform-origin:center bottom;animation:popup-in .18s cubic-bezier(.2,.8,.2,1)}
 .popup.hidden{display:none}
 @keyframes popup-in{from{opacity:0;transform:translateY(5px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
@@ -303,20 +317,20 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'annotate.requirementWith': '要求：{comment}',
       'annotate.requirementDefault': '让表达更清晰',
       'annotate.pathMissing': '（未关联本地文件，请先粘贴/保存全部内容）',
-      'annotate.promptText': '请改写这段 Markdown 内容（位置：{lineLabel}），{requirement}：\n\n{text}\n\n给出可直接替换的片段；我确认后调用 markdown_editor_document 的 apply 动作，用更新后的完整内容覆盖源文件（path={path}）。',
-      'annotate.reminder': '仅给出改写建议，不要在未确认前直接写入源文件。',
+      'annotate.promptText': '请改写这段 Markdown 内容（位置：{lineLabel}），{requirement}：\n\n{text}\n\n先给出可直接替换的片段；我确认后，用针对这一段的局部替换写回源文件（{path}），不用重发全文。',
+      'annotate.reminder': '仅给出改写建议，不要在未确认前直接写入源文件。回复用自然的说法（如“确认后我就改到文件里”），不要提工具名或动作名。【强制要求，不可省略】只要本回合给出了改写建议并等我确认，就必须在回复文本之后、本回合结束前调用一次 Session action=suggest，附上 1–3 个一键确认选项（如“就用这版”“用更短的那版”“再换个语气”）。只写完回复文字、不调用 suggest，视为任务未完成——“把方案写给用户看”和“让用户能一键确认”是同一个任务的两半，缺一不可，不要因为文字已给完就认为确认环节已经处理完毕。',
       'newdoc.needChat': '请在 Finch 对话中使用“新建文档”。',
       'newdoc.label': '新建 Markdown 文档',
-      'newdoc.promptText': '我想新建一篇 Markdown 文档。请先根据我的要求确定标题、内容与一个尚不存在的绝对保存路径；信息不足时先问我。确认后调用 markdown_editor_document 的 create 动作，传入完整 Markdown 正文和绝对 path，并在编辑器中打开新文件。',
-      'newdoc.reminder': '新建文件时必须使用 markdown_editor_document 的 create 动作；不要覆盖已有文件。',
+      'newdoc.promptText': '我想新建一篇 Markdown 文档。请先根据我的要求确定标题、内容与一个尚不存在的绝对保存路径；信息不足时先问我。确认后把完整正文写入那个路径，并在编辑器中打开这篇新文档。',
+      'newdoc.reminder': '只能新建文件，不要覆盖已有文件。回复用自然的说法，不要提工具名或动作名。【强制要求，不可省略】只要本回合需要我确认标题、方向或保存位置，就必须在回合结束前调用一次 Session action=suggest，给出 1–3 个一键选项，不要让我手打。光在文字里问问题而不调 suggest，视为这次询问没完成。',
       'newdoc.added': '已把新建文档引导加入输入框。',
       'aiStyle.label': '根据 {file} 设计风格',
       'aiStyle.note': 'AI 一键排版',
       'aiStyle.baseNoteCustom': '当前基础风格是 kami（自定义 CSS 叠加其上）',
       'aiStyle.baseNoteOther': '当前基础风格是 {style}',
       'aiStyle.pathMissing': '（未关联本地文件）',
-      'aiStyle.promptText': '请为这篇公众号文章设计一套自定义排版 CSS。{baseNote}，你的 CSS 会叠加在基础风格之上。要求：只写普通 CSS 规则，选择器限定在 #bm-md 下的标签/结构（如 #bm-md h1、#bm-md p、#bm-md blockquote、#bm-md pre code、#bm-md a、#bm-md strong、#bm-md table 等），不要使用 class（bm.md 输出没有 class，只有内联样式），必要时用 !important 覆盖基础风格。可参考 bm.md 内置风格的设计语言：kami（暖色纸感）、bauhaus（几何撞色）、blueprint（技术蓝图网格）、botanical（清新绿意）、newsprint（报刊衬线）、retro（复古怀旧）、sketch（手绘风）、terminal（等宽暗色终端风）。文章路径：{path}。动手生成 CSS 前，先询问用户要覆盖「自定义风格 1、2、3」中的哪一个槽位；用户选择后，再调用 markdown_editor_document 的 set_style，必须传入 css、简短 label 和 slot（1/2/3）。该调用会覆盖并持久化那个槽位，同时立即应用预览。',
-      'aiStyle.reminder': '必须先询问槽位，不能自行猜测或覆盖；用户明确选定 1/2/3 后才调用 set_style。',
+      'aiStyle.promptText': '请为这篇公众号文章设计一套自定义排版 CSS。{baseNote}，你的 CSS 会叠加在基础风格之上。要求：只写普通 CSS 规则，选择器限定在 #bm-md 下的标签/结构（如 #bm-md h1、#bm-md p、#bm-md blockquote、#bm-md pre code、#bm-md a、#bm-md strong、#bm-md table 等），不要使用 class（bm.md 输出没有 class，只有内联样式），必要时用 !important 覆盖基础风格。可参考 bm.md 内置风格的设计语言：kami（暖色纸感）、bauhaus（几何撞色）、blueprint（技术蓝图网格）、botanical（清新绿意）、newsprint（报刊衬线）、retro（复古怀旧）、sketch（手绘风）、terminal（等宽暗色终端风）。文章路径：{path}。动手生成 CSS 前，先询问用户要覆盖「自定义风格 1、2、3」中的哪一个槽位；用户选择后，再把设计好的 CSS 应用到那个槽位（需要 css、简短标签和槽位编号 1/2/3）。这会覆盖并持久化那个槽位，同时立即应用到预览。',
+      'aiStyle.reminder': '必须先询问槽位，不能自行猜测或覆盖；用户明确选定 1/2/3 后才应用。回复用自然的说法，不要提工具名或动作名。【强制要求，不可省略】询问槽位时必须在回合结束前调用一次 Session action=suggest，给出“用自定义风格 1/2/3”三个一键选项，不要让我手打。只在文字里问选哪个槽位、不调 suggest，视为询问未完成。',
       'aiStyle.requested': '已请求 AI 设计自定义排版。',
       'status.saved': '已保存。',
       'status.savedWithNewChanges': '已保存，编辑器中仍有新改动。',
@@ -333,6 +347,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'status.opening': '正在打开…',
       'status.opened': '已打开 {file}。',
       'status.contentUpdated': '内容已更新。',
+      'status.contentUpdatedLine': '已更新第 {line} 行。',
+      'status.contentUpdatedLines': '已更新第 {from}–{to} 行。',
+      'status.contentUpdatedSpots': '已更新 {count} 处，共 {lines} 行。',
       'status.pasteImageTimeout': '粘贴图片超时',
       'status.pasteImageFailed': '粘贴图片失败：{msg}',
       'status.clipboardPrepareTimeout': '准备公众号图片超时',
@@ -442,20 +459,20 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'annotate.requirementWith': 'Requirement: {comment}',
       'annotate.requirementDefault': 'make the wording clearer',
       'annotate.pathMissing': '(No local file linked — ask me to paste/save the full text first)',
-      'annotate.promptText': 'Please rewrite this Markdown passage (location: {lineLabel}), {requirement}:\n\n{text}\n\nGive a drop-in replacement snippet; once I confirm, call markdown_editor_document\u2019s apply action to overwrite the source file (path={path}) with the updated content.',
-      'annotate.reminder': "Only propose the rewrite — don't write to the source file before I confirm.",
+      'annotate.promptText': 'Please rewrite this Markdown passage (location: {lineLabel}), {requirement}:\n\n{text}\n\nGive a drop-in replacement snippet first; once I confirm, write it back to the source file ({path}) as a targeted local replacement, not a full resend of the document.',
+      'annotate.reminder': "Only propose the rewrite — don't write to the source file before I confirm. Reply in natural language (e.g. “I'll put it into the file once you confirm”); never name the tool or its actions. [MANDATORY, not optional] Whenever this turn proposes a rewrite and is waiting on my confirmation, calling Session action=suggest with 1–3 one-tap confirmations (e.g. “Use this one”, “Use the shorter version”, “Try another tone”) is part of completing that same turn — writing the proposal text is only half the job. Do not treat the turn as done, and do not skip the call, just because the proposal text itself was already sent.",
       'newdoc.needChat': 'Use \u201cNew Document\u201d from the Finch chat instead.',
       'newdoc.label': 'New Markdown Document',
-      'newdoc.promptText': "I want to create a new Markdown document. First work out the title, content, and a not-yet-existing absolute save path from my request — ask me first if anything is missing. Once confirmed, call markdown_editor_document's create action with the full Markdown body and absolute path to write and open the new file.",
-      'newdoc.reminder': "Always use markdown_editor_document's create action for new files; never overwrite an existing file.",
+      'newdoc.promptText': 'I want to create a new Markdown document. First work out the title, content, and a not-yet-existing absolute save path from my request — ask me first if anything is missing. Once confirmed, write the full body to that path and open the new document in the editor.',
+      'newdoc.reminder': 'Only create a new file; never overwrite an existing one. Reply in natural language and never name the tool or its actions. [MANDATORY, not optional] Whenever this turn ends still waiting on me to confirm a title, an angle, or a save location, it must call Session action=suggest with 1–3 one-tap options before the turn ends — asking the question in plain text is not enough on its own; skipping the call leaves the question unfinished.',
       'newdoc.added': 'Added the new-document prompt to the composer.',
       'aiStyle.label': 'Design a layout based on {file}',
       'aiStyle.note': 'One-click AI layout',
       'aiStyle.baseNoteCustom': 'The current base style is kami (your custom CSS layers on top of it)',
       'aiStyle.baseNoteOther': 'The current base style is {style}',
       'aiStyle.pathMissing': '(No local file linked)',
-      'aiStyle.promptText': 'Please design a custom layout CSS for this WeChat article. {baseNote}, and your CSS will layer on top of the base style. Requirements: write plain CSS rules only, with selectors scoped to tags/structure under #bm-md (e.g. #bm-md h1, #bm-md p, #bm-md blockquote, #bm-md pre code, #bm-md a, #bm-md strong, #bm-md table); don\u2019t use classes (bm.md\u2019s output has no classes, only inline styles), and use !important where needed to override the base style. You can draw on bm.md\u2019s built-in style language: kami (warm paper feel), bauhaus (geometric color-blocking), blueprint (technical grid), botanical (fresh green), newsprint (editorial serif), retro (nostalgic), sketch (hand-drawn), terminal (monospace dark). Article path: {path}. Before generating any CSS, ask the user which of \u201cCustom style 1/2/3\u201d slots to overwrite; once they choose, call markdown_editor_document\u2019s set_style with css, a short label, and slot (1/2/3). That call overwrites and persists that slot and applies it to the preview immediately.',
-      'aiStyle.reminder': "Always ask which slot first — never guess or overwrite on your own; call set_style only after the user picks 1/2/3.",
+      'aiStyle.promptText': 'Please design a custom layout CSS for this WeChat article. {baseNote}, and your CSS will layer on top of the base style. Requirements: write plain CSS rules only, with selectors scoped to tags/structure under #bm-md (e.g. #bm-md h1, #bm-md p, #bm-md blockquote, #bm-md pre code, #bm-md a, #bm-md strong, #bm-md table); don\u2019t use classes (bm.md\u2019s output has no classes, only inline styles), and use !important where needed to override the base style. You can draw on bm.md\u2019s built-in style language: kami (warm paper feel), bauhaus (geometric color-blocking), blueprint (technical grid), botanical (fresh green), newsprint (editorial serif), retro (nostalgic), sketch (hand-drawn), terminal (monospace dark). Article path: {path}. Before generating any CSS, ask the user which of \u201cCustom style 1/2/3\u201d slots to overwrite; once they choose, apply the CSS you designed to that slot (it needs the css, a short label, and the slot number 1/2/3). That overwrites and persists the slot and applies it to the preview immediately.',
+      'aiStyle.reminder': 'Always ask which slot first — never guess or overwrite on your own; apply it only after the user picks 1/2/3. Reply in natural language and never name the tool or its actions. [MANDATORY, not optional] Asking which slot must always be paired with calling Session action=suggest (“Use custom style 1/2/3” as one-tap options) before the turn ends — the question is not considered asked until that call happens, not merely the text of the question.',
       'aiStyle.requested': 'Asked AI to design a custom layout.',
       'status.saved': 'Saved.',
       'status.savedWithNewChanges': "Saved — but the editor already has newer changes.",
@@ -472,6 +489,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'status.opening': 'Opening…',
       'status.opened': 'Opened {file}.',
       'status.contentUpdated': 'Content updated.',
+      'status.contentUpdatedLine': 'Updated line {line}.',
+      'status.contentUpdatedLines': 'Updated lines {from}\u2013{to}.',
+      'status.contentUpdatedSpots': 'Updated {count} spots, {lines} lines in total.',
       'status.pasteImageTimeout': 'Paste image timed out',
       'status.pasteImageFailed': 'Paste image failed: {msg}',
       'status.clipboardPrepareTimeout': 'Preparing WeChat images timed out',
@@ -699,6 +719,12 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   // the backend scopes its recent-file list to whatever we hand back, so a
   // panel in another Space never shows this Space's documents.
   var envCwd = '';
+  // Home panels (`view === 'home'`) can legitimately have an empty `cwd` in
+  // `finch:env` — the backend still resolves a usable directory itself (the
+  // Space's bound folder, or the global default workspace) via `ctx.workspace`.
+  // So `envCwd === ''` must not block the request; only "no `finch:env` yet"
+  // should, which this separate flag tracks instead of overloading envCwd.
+  var envReceived = false;
   var recentRequested = false;
   var assistantName = '';
   var homeDir = '';
@@ -783,7 +809,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   }
 
   function requestRecentDocuments() {
-    if (!api || !api.postMessage || !envCwd) return;
+    if (!api || !api.postMessage || !envReceived) return;
     recentRequested = true;
     api.postMessage({ type: 'requestRecentDocuments', cwd: envCwd });
   }
@@ -860,7 +886,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     if (actions) actions.hidden = !html;
     // Refresh whenever the home page comes back into view: mtimes change while
     // a document is open, and a file may have been created since last render.
-    if (!empty.hidden && envCwd) requestRecentDocuments();
+    if (!empty.hidden && envReceived) requestRecentDocuments();
   }
 
   function showPane() {
@@ -1565,6 +1591,10 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     fileHandle = null;
   }
 
+  // Line range touched by the most recent in-place external revision, so the
+  // status line can say *what* moved instead of just "content updated".
+  var lastExternalChange = null;
+
   function applyDocument(nextMarkdown, nextName, nextPath, force, diskBaseline) {
     // Deliberately does NOT check cm.hasFocus(): unsaved local edits must
     // never be silently clobbered by an external update, whether or not the
@@ -1575,6 +1605,10 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       setStatus(t('status.externalUpdateSkipped'), true);
       return false;
     }
+    // Is this a revision of the document already on screen (an AI apply, or
+    // an external save), rather than a switch to a different file? Must be
+    // decided before `sourcePath` is reassigned below.
+    var revisesOpenDocument = savedMarkdown !== null && (!nextPath || !sourcePath || nextPath === sourcePath);
     markdown = nextMarkdown;
     name = nextName;
     if (nextPath) sourcePath = nextPath;
@@ -1588,7 +1622,11 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     // content sitting unchanged at the real baseline and wrongly report
     // an external-edit conflict that never happened.
     savedMarkdown = typeof diskBaseline === 'string' ? diskBaseline : markdown;
-    cm.setValue(markdown);
+    // Patching only the changed span keeps the scroll offset and the caret
+    // where the user left them, and flashes the rewritten lines. A fresh
+    // document still gets the plain full replacement.
+    lastExternalChange = revisesOpenDocument ? cm.applyExternalValue(markdown) : null;
+    if (!lastExternalChange) cm.setValue(markdown);
     setDirty(false); // also rebuilds+syncs the whole toolbar, picking up the new sourcePath/fileName below
     setPanelTitle(fileName);
     updateEmptyState();
@@ -2457,8 +2495,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         // Panel scope changed (first open, or Home → Session relocation): rescope
         // the recent list to this panel's own working directory.
         var incomingCwd = m.cwd || '';
-        if (incomingCwd !== envCwd) {
+        if (incomingCwd !== envCwd || !envReceived) {
           envCwd = incomingCwd;
+          envReceived = true;
           renderHomeCwd();
           renderRecentDocuments([]);
         }
@@ -2511,7 +2550,16 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         } else if (wasLoadingFromHome) {
           setStatus(t('status.opened', { file: fileName }));
         } else if (!isFirst) {
-          setStatus(t('status.contentUpdated'));
+          var touched = lastExternalChange;
+          if (touched && touched.hunks > 1) {
+            setStatus(t('status.contentUpdatedSpots', { count: touched.hunks, lines: touched.changedLines }));
+          } else if (touched && touched.fromLine === touched.toLine) {
+            setStatus(t('status.contentUpdatedLine', { line: touched.fromLine }));
+          } else if (touched) {
+            setStatus(t('status.contentUpdatedLines', { from: touched.fromLine, to: touched.toLine }));
+          } else {
+            setStatus(t('status.contentUpdated'));
+          }
         }
         return;
       }

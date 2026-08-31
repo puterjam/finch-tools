@@ -140,6 +140,46 @@ function result(message: string, isError = false): finch.ToolResult {
   return { content: [{ type: 'text', text: message }], isError };
 }
 
+/** `apply`'s targeted-edit mode — the same find-and-replace contract as a
+ * code editor's Edit tool: each `old_string` is matched against the file's
+ * *current* content (already reflecting any earlier edits in this same
+ * call), not against the original snapshot, so a batch of edits composes
+ * left-to-right. This lets the caller send a handful of small replacements
+ * instead of the entire document for anything short of a full rewrite. */
+interface EditSpec { old_string: string; new_string: string; replace_all?: boolean }
+
+type EditSpecsResult = { ok: true; content: string } | { ok: false; error: string };
+
+function applyEditSpecs(content: string, edits: EditSpec[]): EditSpecsResult {
+  let working = content;
+  for (let i = 0; i < edits.length; i++) {
+    const { old_string: oldString, new_string: newString, replace_all: replaceAll } = edits[i];
+    if (typeof oldString !== 'string' || oldString.length === 0) {
+      return { ok: false, error: `edits[${i}]: 'old_string' must be a non-empty string.` };
+    }
+    if (typeof newString !== 'string') {
+      return { ok: false, error: `edits[${i}]: 'new_string' must be a string.` };
+    }
+    if (oldString === newString) {
+      return { ok: false, error: `edits[${i}]: 'old_string' and 'new_string' are identical — nothing to change.` };
+    }
+    const occurrences = working.split(oldString).length - 1;
+    if (occurrences === 0) {
+      return { ok: false, error: `edits[${i}]: 'old_string' was not found in the file's current content. Check the exact text (including whitespace/line breaks) — the file may differ from what you last saw.` };
+    }
+    if (occurrences > 1 && !replaceAll) {
+      return { ok: false, error: `edits[${i}]: 'old_string' matches ${occurrences} places in the file. Include more surrounding context to make it unique, or set 'replace_all: true' to replace every match.` };
+    }
+    if (replaceAll) {
+      working = working.split(oldString).join(newString);
+    } else {
+      const index = working.indexOf(oldString);
+      working = working.slice(0, index) + newString + working.slice(index + oldString.length);
+    }
+  }
+  return { ok: true, content: working };
+}
+
 function documentTitle(markdown: string, filePath?: string): string {
   const heading = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim();
   return heading || (filePath ? path.basename(filePath, path.extname(filePath)) : 'Untitled article');
@@ -367,6 +407,25 @@ async function rememberLastPath(ctx: finch.MiniToolContext, panel: finch.AppPane
   }
 }
 
+/** Lightweight sibling of `rememberLastPath` for writes that have no Panel
+ * to key off — namely `apply`, which may land on a document nobody has
+ * ever `open`ed in this editor. Without this, an AI-only edit-and-write
+ * workflow (revise → apply → revise → apply, never once opening the panel)
+ * left `recentPaths` untouched and the file would never surface on Home,
+ * in a Space or in plain chat alike. */
+async function rememberRecentPath(ctx: finch.MiniToolContext, sourcePath: string): Promise<void> {
+  try {
+    await mkdir(ctx.storagePath, { recursive: true });
+    const state = await readLastPathState(ctx);
+    state.recentPaths = [sourcePath, ...(state.recentPaths ?? [])]
+      .filter((value, index, values) => path.isAbsolute(value) && values.indexOf(value) === index)
+      .slice(0, 50);
+    await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+  } catch (error) {
+    ctx.logger.warn(`Could not persist recent path: ${String(error)}`);
+  }
+}
+
 async function readLastPath(ctx: finch.MiniToolContext, panel: finch.AppPanel): Promise<string | undefined> {
   const state = await readLastPathState(ctx);
   const perPanel = state.panels?.[panel.id];
@@ -425,8 +484,18 @@ function derivePreview(markdown: string): string {
  * panel's own working directory and ordered by the file's current mtime — so
  * the Home card list doubles as "where I left off", and a document edited
  * elsewhere still floats back to the top.
+ *
+ * `requestedCwd` is whatever the page's own `finch:env` handed back — for a
+ * real Session panel that's always the session's cwd, but for a Home panel
+ * (`view === 'home'`) the platform may hand back an empty string (see
+ * `AppPanelEnvMessage.cwd`'s own doc comment). Falling back to
+ * `ctx.workspace.directoryPath ?? ctx.workspace.projectPath` — the same
+ * Space-bound directory or global default workspace a Session in this same
+ * scope would have used — means Home shows the same recent list a chat
+ * Session here would, instead of silently staying empty forever.
  */
-async function collectRecentDocuments(ctx: finch.MiniToolContext, cwd: string): Promise<RecentDocument[]> {
+async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: string): Promise<RecentDocument[]> {
+  const cwd = requestedCwd || ctx.workspace.directoryPath || ctx.workspace.projectPath || '';
   if (!cwd || !path.isAbsolute(cwd)) return [];
   const state = await readLastPathState(ctx);
   const candidates = [
@@ -930,6 +999,7 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
         // No `openDiff` here on purpose — see the matching comment on the
         // `apply` tool action below.
         await writeFile(sourcePath, markdown, 'utf8');
+        await rememberRecentPath(ctx, sourcePath);
         await panel.postMessage({ type: 'applied', path: sourcePath, title: documentTitle(markdown, sourcePath) });
       } catch (error) {
         await panel.postMessage({ type: 'error', message: `Could not apply revision: ${error instanceof Error ? error.message : String(error)}` });
@@ -1090,14 +1160,27 @@ export function activate(ctx: finch.MiniToolContext): void {
 action:
   open — read an absolute local Markdown path and open it as an editable WeChat article preview
   create — write brand-new Markdown content to an absolute path that does not exist yet, then open it in Markdown Editor. Use this whenever the user asks to write an article, start writing, write a post, create, or draft a new document — even if they do not mention Markdown. If title/topic or destination is missing, guide the user to provide it; once known, create and open the document rather than returning prose only. If they only want to begin, create a minimal titled starter document. Markdown Editor's own UI has no "new file" button on purpose — this tool action is the intended way to start a new document
-  apply — replace a source document with reviewed Markdown (requires path and markdown); the open panel refreshes in place, no Diff window
+  apply — revise a source document (requires path). For a small, targeted change, pass edits instead of markdown: an array of {old_string, new_string} replacements matched against the file's current on-disk content, the same find-and-replace contract as a code editor's Edit tool — this avoids resending the whole document and keeps the on-screen highlight scoped to what actually changed. Reserve markdown (the full updated document) for a genuine full rewrite. The open panel refreshes in place, no Diff window. Whenever you propose a rewrite and wait for approval before applying it, calling Session action=suggest with 1-3 one-tap confirmations is MANDATORY, not optional, and part of that same turn — sending the proposal text alone does not complete the confirmation step, so do not end the turn without also calling it
   set_style — apply an AI-designed custom CSS layout to the currently open Markdown Editor preview (requires css). Write plain CSS scoped under #bm-md using tag/id selectors (no classes), use !important where needed to override the base style, and take inspiration from bm.md's built-in styles: kami (warm paper), bauhaus (geometric primary colors), blueprint (technical grid), botanical (soft green), newsprint (editorial serif), retro (nostalgic), sketch (hand-drawn), terminal (monospace dark).`,
     inputSchema: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['open', 'create', 'apply', 'set_style'], description: 'Operation to perform.' },
         path: { type: 'string', description: 'Absolute path to the Markdown file. Required for open, create, and apply. For create, the file must not already exist.' },
-        markdown: { type: 'string', description: 'Full Markdown content, required for create and apply.' },
+        markdown: { type: 'string', description: "Full Markdown content. Required for create. For apply, use this only for a genuine full rewrite — prefer `edits` for a small, targeted change." },
+        edits: {
+          type: 'array',
+          description: "For apply only: targeted local replacements instead of resending the whole document. Each old_string is matched against the file's current on-disk content (already reflecting earlier items in this same array) and must match exactly once unless replace_all is set. Prefer this over `markdown` for anything short of a full rewrite.",
+          items: {
+            type: 'object',
+            properties: {
+              old_string: { type: 'string', description: 'Exact existing text to replace; must be unique in the file unless replace_all is true.' },
+              new_string: { type: 'string', description: 'Replacement text.' },
+              replace_all: { type: 'boolean', description: 'Replace every occurrence of old_string instead of requiring it to be unique.' },
+            },
+            required: ['old_string', 'new_string'],
+          },
+        },
         css: { type: 'string', description: 'Custom CSS to layer on top of the current base style, required for set_style.' },
         label: { type: 'string', description: 'Short label describing the custom style, optional for set_style.' },
         slot: { type: 'number', enum: [1, 2, 3], description: 'Required for AI-designed styles: user-selected reusable custom style slot to overwrite.' },
@@ -1140,17 +1223,39 @@ action:
             return result(`Could not create ${sourcePath}: ${error instanceof Error ? error.message : String(error)}`, true);
           }
         }
+        // Deliberately no `ctx.ui.openDiff` here: this action is meant to
+        // land an already-reviewed revision straight into the document
+        // (and, if a panel for this path is open, straight onto the
+        // screen via `watchSource`'s fs.watch push) — popping a native
+        // Diff window on every single edit was surprising/unwanted, since
+        // the user typically reviews the change directly in the editor or
+        // preview, not in a separate Diff dialog.
+        const rawEdits = Array.isArray(input.edits) ? input.edits as unknown[] : undefined;
+        if (rawEdits && rawEdits.length > 0) {
+          const edits: EditSpec[] = rawEdits.map((entry) => {
+            const item = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>;
+            return {
+              old_string: typeof item.old_string === 'string' ? item.old_string : '',
+              new_string: typeof item.new_string === 'string' ? item.new_string : '',
+              replace_all: Boolean(item.replace_all),
+            };
+          });
+          try {
+            const current = await readFile(sourcePath, 'utf8');
+            const applied = applyEditSpecs(current, edits);
+            if (!applied.ok) return result(applied.error, true);
+            await writeFile(sourcePath, applied.content, 'utf8');
+            await rememberRecentPath(ctx, sourcePath);
+            return result(`Applied ${edits.length} targeted edit${edits.length > 1 ? 's' : ''} to ${path.basename(sourcePath)}.`);
+          } catch (error) {
+            return result(`Could not apply edits: ${error instanceof Error ? error.message : String(error)}`, true);
+          }
+        }
         const markdown = String(input.markdown ?? '');
-        if (!markdown) return result('`apply` requires non-empty `markdown`.', true);
+        if (!markdown) return result("`apply` requires either `edits` (targeted replacements) or non-empty `markdown` (full document).", true);
         try {
-          // Deliberately no `ctx.ui.openDiff` here: this action is meant to
-          // land an already-reviewed revision straight into the document
-          // (and, if a panel for this path is open, straight onto the
-          // screen via `watchSource`'s fs.watch push) — popping a native
-          // Diff window on every single edit was surprising/unwanted, since
-          // the user typically reviews the change directly in the editor or
-          // preview, not in a separate Diff dialog.
           await writeFile(sourcePath, markdown, 'utf8');
+          await rememberRecentPath(ctx, sourcePath);
           return result(`Applied reviewed Markdown to ${path.basename(sourcePath)}.`);
         } catch (error) {
           return result(`Could not apply revision: ${error instanceof Error ? error.message : String(error)}`, true);

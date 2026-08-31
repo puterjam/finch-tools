@@ -17,7 +17,7 @@ import {
   TableStyle,
   TableTheme,
 } from 'codemirror-markdown-tables';
-import { EditorState, RangeSetBuilder, StateField, type RangeSet, type Text } from '@codemirror/state';
+import { EditorState, RangeSetBuilder, StateEffect, StateField, type RangeSet, type Text } from '@codemirror/state';
 import { indentLess, indentMore, indentWithTab, defaultKeymap, historyKeymap } from '@codemirror/commands';
 import { searchKeymap } from '@codemirror/search';
 import {
@@ -38,9 +38,20 @@ interface EditorSelectionInfo {
   rect: { top: number; bottom: number; left: number; right: number };
 }
 
+interface ExternalChangeSummary {
+  /** Number of separate edited regions. */
+  hunks: number;
+  /** Total lines flashed across all regions. */
+  changedLines: number;
+  /** 1-based first and last changed line, for a one-region summary. */
+  fromLine: number;
+  toLine: number;
+}
+
 interface MarkdownEditorHandle {
   getValue(): string;
   setValue(value: string): void;
+  applyExternalValue(value: string): ExternalChangeSummary | null;
   getSelection(): EditorSelectionInfo | null;
   hasFocus(): boolean;
   focus(): void;
@@ -1759,8 +1770,196 @@ const markdownEditorKeymap = keymap.of([
   indentWithTab,
 ]);
 
+// ---- External (AI / on-disk) revisions -----------------------------------
+//
+// An external revision used to arrive as a whole-document replacement, which
+// reset both the scroll offset and the caret: the reader lost their place
+// every time the assistant touched the file, with nothing to show what had
+// actually changed. Instead, diff the old text against the new one, dispatch
+// only the differing span, pin the viewport to the position it was already
+// showing, and flash the touched lines.
+
+interface ExternalPatch {
+  from: number;
+  to: number;
+  insert: string;
+}
+
+interface LineHunk {
+  oldFrom: number; // [oldFrom, oldTo) as 0-based line indices in the old text
+  oldTo: number;
+  newFrom: number; // [newFrom, newTo) as 0-based line indices in the new text
+  newTo: number;
+}
+
+interface ExternalDiff {
+  changes: ExternalPatch[];
+  /** 1-based, inclusive line ranges in the NEW document — what to flash. */
+  lines: Array<{ from: number; to: number }>;
+}
+
+// A single first-difference-to-last-difference span is far too coarse here:
+// `apply` rewrites the whole file, so one reworded sentence plus any
+// incidental difference elsewhere (a touched-up signature line, say) would
+// mark every line in between as changed. Diff line-by-line instead so
+// untouched lines between two real edits stay untouched.
+function diffLineHunks(oldLines: string[], newLines: string[]): LineHunk[] {
+  let start = 0;
+  const shared = Math.min(oldLines.length, newLines.length);
+  while (start < shared && oldLines[start] === newLines[start]) start++;
+  let oldEnd = oldLines.length;
+  let newEnd = newLines.length;
+  while (oldEnd > start && newEnd > start && oldLines[oldEnd - 1] === newLines[newEnd - 1]) {
+    oldEnd--;
+    newEnd--;
+  }
+  if (start === oldEnd && start === newEnd) return [];
+
+  const n = oldEnd - start;
+  const m = newEnd - start;
+  // Trimming the common head and tail usually leaves a tiny middle, so the
+  // quadratic LCS is cheap in practice. Guard the pathological case (an
+  // almost-entirely-rewritten large file) by falling back to one hunk.
+  if (n * m > 1_500_000) return [{ oldFrom: start, oldTo: oldEnd, newFrom: start, newTo: newEnd }];
+
+  const width = m + 1;
+  const lcs = new Int32Array((n + 1) * width);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i * width + j] = oldLines[start + i] === newLines[start + j]
+        ? lcs[(i + 1) * width + (j + 1)] + 1
+        : Math.max(lcs[(i + 1) * width + j], lcs[i * width + (j + 1)]);
+    }
+  }
+
+  const hunks: LineHunk[] = [];
+  let pendingOld = -1;
+  let pendingNew = -1;
+  let i = 0;
+  let j = 0;
+  const flush = (oldTo: number, newTo: number) => {
+    if (pendingOld < 0) return;
+    hunks.push({ oldFrom: pendingOld, oldTo, newFrom: pendingNew, newTo });
+    pendingOld = -1;
+    pendingNew = -1;
+  };
+  while (i < n && j < m) {
+    if (oldLines[start + i] === newLines[start + j]) {
+      flush(start + i, start + j);
+      i++;
+      j++;
+      continue;
+    }
+    if (pendingOld < 0) {
+      pendingOld = start + i;
+      pendingNew = start + j;
+    }
+    if (lcs[(i + 1) * width + j] >= lcs[i * width + (j + 1)]) i++;
+    else j++;
+  }
+  if (i < n || j < m) {
+    if (pendingOld < 0) {
+      pendingOld = start + i;
+      pendingNew = start + j;
+    }
+    i = n;
+    j = m;
+  }
+  flush(start + i, start + j);
+  return hunks;
+}
+
+// Turn line hunks into document-offset edits. Each hunk swaps whole lines
+// *including* the newline that terminates them, which keeps insertions and
+// deletions from leaving a stray or missing line break behind.
+function computeExternalDiff(oldText: string, newText: string): ExternalDiff | null {
+  if (oldText === newText) return null;
+  const oldLines = oldText.split('\n');
+  const newLines = newText.split('\n');
+  const hunks = diffLineHunks(oldLines, newLines);
+  if (!hunks.length) return null;
+
+  const oldStarts = new Array<number>(oldLines.length);
+  for (let index = 0, offset = 0; index < oldLines.length; index++) {
+    oldStarts[index] = offset;
+    offset += oldLines[index].length + 1;
+  }
+
+  const changes: ExternalPatch[] = [];
+  const lines: Array<{ from: number; to: number }> = [];
+  for (const hunk of hunks) {
+    const inserted = newLines.slice(hunk.newFrom, hunk.newTo).join('\n');
+    const isInsertion = hunk.oldFrom === hunk.oldTo;
+    const isDeletion = hunk.newFrom === hunk.newTo;
+    const runsToLastLine = hunk.oldTo >= oldLines.length;
+    let from: number;
+    let to: number;
+    let insert: string;
+    if (isInsertion) {
+      if (hunk.oldFrom >= oldLines.length) {
+        // Appending past the final line: bring the separating newline along.
+        from = to = oldText.length;
+        insert = '\n' + inserted;
+      } else {
+        from = to = oldStarts[hunk.oldFrom];
+        insert = inserted + '\n';
+      }
+    } else if (runsToLastLine) {
+      // The final line has no trailing newline, so a deletion here has to eat
+      // the newline *before* the block instead.
+      from = isDeletion && hunk.oldFrom > 0 ? oldStarts[hunk.oldFrom] - 1 : oldStarts[hunk.oldFrom];
+      to = oldText.length;
+      insert = inserted;
+    } else {
+      from = oldStarts[hunk.oldFrom];
+      to = oldStarts[hunk.oldTo];
+      insert = isDeletion ? '' : inserted + '\n';
+    }
+    changes.push({ from, to, insert });
+    if (isDeletion) {
+      // Nothing new to flash — mark the seam the removed lines left behind.
+      const seam = Math.min(Math.max(hunk.newFrom + 1, 1), newLines.length);
+      lines.push({ from: seam, to: seam });
+    } else {
+      lines.push({ from: hunk.newFrom + 1, to: hunk.newTo });
+    }
+  }
+  return { changes, lines };
+}
+
+const EXTERNAL_HIGHLIGHT_MS = 2000;
+const externalChangedLine = Decoration.line({ class: 'cm-ai-changed' });
+const setExternalHighlight = StateEffect.define<Array<{ from: number; to: number }> | null>();
+
+const externalHighlightField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(highlights, transaction) {
+    let next = highlights.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (!effect.is(setExternalHighlight)) continue;
+      if (!effect.value) {
+        next = Decoration.none;
+        continue;
+      }
+      const doc = transaction.state.doc;
+      const ranges: any[] = [];
+      for (const range of effect.value) {
+        const from = Math.max(1, Math.min(range.from, doc.lines));
+        const to = Math.max(from, Math.min(range.to, doc.lines));
+        for (let lineNo = from; lineNo <= to; lineNo++) {
+          ranges.push(externalChangedLine.range(doc.line(lineNo).from));
+        }
+      }
+      next = Decoration.set(ranges, true);
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHandle {
   let suppressChange = false;
+  let externalHighlightTimer = 0;
   // Shared parser configuration for the document and an interactive table
   // cell. A cell does not need fenced-code language loading, but it must use
   // the same GFM grammar so bare HTTP(S) URLs and inline Markdown parse.
@@ -1852,6 +2051,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       blockSpacingPlugin,
       imageWrapperExtension,
       imageAtomicRanges,
+      externalHighlightField,
       livePreviewMarkdownPlugin,
       EditorView.domEventHandlers({
         // This runs before CodeMirror's default cursor-motion keymap. A table
@@ -1889,6 +2089,55 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       suppressChange = true;
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
       suppressChange = false;
+    },
+    applyExternalValue(value) {
+      const diff = computeExternalDiff(view.state.doc.toString(), value);
+      if (!diff) return null;
+      const changes = view.state.changes(diff.changes);
+      // Anchor on whatever position sits at the viewport's top edge. Keeping
+      // *that* pinned (rather than a raw scrollTop) is what makes an edit
+      // above the fold — which shifts every following line — invisible to a
+      // reader looking further down the document.
+      const box = view.scrollDOM.getBoundingClientRect();
+      const anchorPos = view.posAtCoords({ x: box.left + 1, y: box.top + 1 }, false);
+      const anchorBefore = view.coordsAtPos(anchorPos);
+      const anchorOffset = anchorBefore ? anchorBefore.top - box.top : 0;
+      const mappedAnchor = changes.mapPos(anchorPos, 1);
+      if (externalHighlightTimer) clearTimeout(externalHighlightTimer);
+      // `suppressChange` keeps this from echoing back to the host as if the
+      // user had typed it; `scrollIntoView: false` keeps CodeMirror from
+      // chasing the caret to the edited span.
+      suppressChange = true;
+      view.dispatch({
+        changes,
+        effects: setExternalHighlight.of(diff.lines),
+        scrollIntoView: false,
+      });
+      suppressChange = false;
+      const anchorDrift = (): number => {
+        const after = view.coordsAtPos(Math.min(mappedAnchor, view.state.doc.length));
+        if (!after) return 0;
+        return after.top - view.scrollDOM.getBoundingClientRect().top - anchorOffset;
+      };
+      const correct = (drift: number) => {
+        if (Math.abs(drift) > 0.5) view.scrollDOM.scrollTop += drift;
+      };
+      correct(anchorDrift());
+      // Freshly inserted lines are estimated until CodeMirror measures them,
+      // so re-anchor once real heights are known.
+      view.requestMeasure({ read: anchorDrift, write: correct });
+      externalHighlightTimer = window.setTimeout(() => {
+        externalHighlightTimer = 0;
+        view.dispatch({ effects: setExternalHighlight.of(null) });
+      }, EXTERNAL_HIGHLIGHT_MS);
+      let changedLines = 0;
+      for (const range of diff.lines) changedLines += range.to - range.from + 1;
+      return {
+        hunks: diff.lines.length,
+        changedLines,
+        fromLine: diff.lines[0].from,
+        toLine: diff.lines[diff.lines.length - 1].to,
+      };
     },
     getSelection() {
       const range = view.state.selection.main;
@@ -1950,6 +2199,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     scrollDOM: view.scrollDOM,
     destroy() {
       if (centerLineRaf) { cancelAnimationFrame(centerLineRaf); centerLineRaf = 0; }
+      if (externalHighlightTimer) { clearTimeout(externalHighlightTimer); externalHighlightTimer = 0; }
       window.removeEventListener('mouseup', onWindowMouseUp);
       disposeStaticTableCellPreview();
       disposeTableMenuI18n();
