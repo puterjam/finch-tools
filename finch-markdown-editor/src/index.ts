@@ -1210,16 +1210,12 @@ export function activate(ctx: finch.MiniToolContext): void {
     'swatch-book': {
       svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 17a4 4 0 0 1-8 0V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2Z"/><path d="M16.7 13H19a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H7"/><path d="M 7 17h.01"/><path d="m11 8 2.3-2.3a2.4 2.4 0 0 1 3.404.004L18.6 7.6a2.4 2.4 0 0 1 .026 3.434L9.9 19.8"/></svg>',
     },
-    // The host renders external SVGs as static markup and does not run SMIL
-    // animations. The panel therefore swaps these static rotation frames.
-    'loader-circle-0': { svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><g transform="rotate(0 12 12)"><path d="M12 3a9 9 0 1 0 9 9"/></g></svg>' },
-    'loader-circle-1': { svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><g transform="rotate(45 12 12)"><path d="M12 3a9 9 0 1 0 9 9"/></g></svg>' },
-    'loader-circle-2': { svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><g transform="rotate(90 12 12)"><path d="M12 3a9 9 0 1 0 9 9"/></g></svg>' },
-    'loader-circle-3': { svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><g transform="rotate(135 12 12)"><path d="M12 3a9 9 0 1 0 9 9"/></g></svg>' },
-    'loader-circle-4': { svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><g transform="rotate(180 12 12)"><path d="M12 3a9 9 0 1 0 9 9"/></g></svg>' },
-    'loader-circle-5': { svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><g transform="rotate(225 12 12)"><path d="M12 3a9 9 0 1 0 9 9"/></g></svg>' },
-    'loader-circle-6': { svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><g transform="rotate(270 12 12)"><path d="M12 3a9 9 0 1 0 9 9"/></g></svg>' },
-    'loader-circle-7': { svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><g transform="rotate(315 12 12)"><path d="M12 3a9 9 0 1 0 9 9"/></g></svg>' },
+    // Static hourglass shown on the Preview button while bm.md rendering is
+    // in flight — a plain status hint, deliberately not animated (SMIL does
+    // not run on host-rendered SVGs and frame-swapping felt janky).
+    'hourglass': {
+      svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/></svg>',
+    },
   }));
 
   ctx.subscriptions.push(ctx.ui.onDidOpenPanel((panel) => {
