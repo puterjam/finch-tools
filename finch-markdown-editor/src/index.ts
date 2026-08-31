@@ -191,9 +191,15 @@ function documentTitle(markdown: string, filePath?: string): string {
 // gets its own stable instance, including different Space Home scopes, and a
 // Home → Session relocation preserves the same id. Older session/global keys
 // remain readable for migration.
+const HOME_PATH_SCOPE = '__finch_home_path__';
+
 interface LastPathState {
-  /** Files explicitly opened/created in the editor, deduplicated newest-first. */
+  /** @deprecated Global pre-0.1.8 list; read only for one-time migration. */
   recentPaths?: string[];
+  /** Recent Markdown paths, deduplicated newest-first within a cwd/homePath scope. */
+  recentPathsByScope?: Record<string, string[]>;
+  /** Last known recent-list scope for each live/rebindable Panel. */
+  panelRecentScopes?: Record<string, string>;
   /** Per-Panel last-opened path. A Panel id stays stable for its scope and also follows Home → Session relocation. */
   panels?: Record<string, string>;
   /** @deprecated Pre-0.8 per-Session state, retained as a read fallback. */
@@ -389,38 +395,65 @@ async function readLastPathState(ctx: finch.MiniToolContext): Promise<LastPathSt
   }
 }
 
+function recentScopeKey(cwd: string): string {
+  return path.isAbsolute(cwd) ? cwd : HOME_PATH_SCOPE;
+}
+
+function addRecentPath(state: LastPathState, scope: string, sourcePath: string): void {
+  const existing = state.recentPathsByScope?.[scope] ?? [];
+  state.recentPathsByScope = {
+    ...state.recentPathsByScope,
+    [scope]: [sourcePath, ...existing]
+      .filter((value, index, values) => path.isAbsolute(value) && values.indexOf(value) === index)
+      .slice(0, 50),
+  };
+}
+
+/** Records the panel's actual finch:env scope and migrates its current file
+ * into that scope. This handles opens/creates that happened just before the
+ * panel received its first env push. */
+async function rememberPanelRecentScope(ctx: finch.MiniToolContext, panel: finch.AppPanel, cwd: string): Promise<void> {
+  try {
+    await mkdir(ctx.storagePath, { recursive: true });
+    const state = await readLastPathState(ctx);
+    const scope = recentScopeKey(cwd);
+    state.panelRecentScopes = { ...state.panelRecentScopes, [panel.id]: scope };
+    const panelPath = state.panels?.[panel.id];
+    if (panelPath) addRecentPath(state, scope, panelPath);
+    await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+  } catch (error) {
+    ctx.logger.warn(`Could not persist panel recent scope: ${String(error)}`);
+  }
+}
+
 async function rememberLastPath(ctx: finch.MiniToolContext, panel: finch.AppPanel, sourcePath: string): Promise<void> {
   try {
     await mkdir(ctx.storagePath, { recursive: true });
     const state = await readLastPathState(ctx);
-    const legacyPaths = [...Object.values(state.panels ?? {}), ...Object.values(state.sessions ?? {})];
-    state.recentPaths = [sourcePath, ...(state.recentPaths ?? []), ...legacyPaths]
-      .filter((value, index, values) => path.isAbsolute(value) && values.indexOf(value) === index)
-      .slice(0, 50);
     state.panels = { ...state.panels, [panel.id]: sourcePath };
     // Keep the previous shape warm for downgrade compatibility, but always
     // prefer the Panel id on reads so Home scopes in different Spaces cannot
     // overwrite one shared '__global__' bucket.
     state.sessions = { ...state.sessions, [sessionBucketKey(panel)]: sourcePath };
+    const scope = state.panelRecentScopes?.[panel.id];
+    if (scope) addRecentPath(state, scope, sourcePath);
     await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
   } catch (error) {
     ctx.logger.warn(`Could not persist last-opened path: ${String(error)}`);
   }
 }
 
-/** Lightweight sibling of `rememberLastPath` for writes that have no Panel
- * to key off — namely `apply`, which may land on a document nobody has
- * ever `open`ed in this editor. Without this, an AI-only edit-and-write
- * workflow (revise → apply → revise → apply, never once opening the panel)
- * left `recentPaths` untouched and the file would never surface on Home,
- * in a Space or in plain chat alike. */
-async function rememberRecentPath(ctx: finch.MiniToolContext, sourcePath: string): Promise<void> {
+/** Lightweight sibling of `rememberLastPath` for AI `apply` writes without
+ * a Panel. Its true Session cwd is the key when available; missing cwd maps
+ * to the same stable homePath bucket used by a no-cwd Home panel. */
+async function rememberRecentPath(ctx: finch.MiniToolContext, sourcePath: string, panel?: finch.AppPanel): Promise<void> {
   try {
     await mkdir(ctx.storagePath, { recursive: true });
     const state = await readLastPathState(ctx);
-    state.recentPaths = [sourcePath, ...(state.recentPaths ?? [])]
-      .filter((value, index, values) => path.isAbsolute(value) && values.indexOf(value) === index)
-      .slice(0, 50);
+    const scope = panel
+      ? state.panelRecentScopes?.[panel.id] ?? HOME_PATH_SCOPE
+      : recentScopeKey(ctx.session.cwd ?? '');
+    addRecentPath(state, scope, sourcePath);
     await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
   } catch (error) {
     ctx.logger.warn(`Could not persist recent path: ${String(error)}`);
@@ -446,11 +479,6 @@ const RECENT_PREVIEW_CHARS = 220;
 
 function isMarkdownPath(filePath: string): boolean {
   return /\.(md|markdown|mdown|mkd)$/i.test(filePath);
-}
-
-function isInsideDirectory(filePath: string, directory: string): boolean {
-  const relative = path.relative(directory, filePath);
-  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
 /** First ATX heading, else first non-empty line, as the card title. */
@@ -491,33 +519,24 @@ function derivePreview(markdown: string): string {
  * (`view === 'home'`) the platform may hand back an empty string (see
  * `AppPanelEnvMessage.cwd`'s own doc comment).
  *
- * A Home chat may temporarily have neither a real Session/cwd nor a Space
- * (`view === 'home'`, empty `spaceId`). That is the one safe fallback case:
- * it maps to the editor's stable free-chat bucket (`recentPaths`) and shows
- * those recorded files without a directory filter. Do NOT use
- * `ctx.workspace` here: it is a shared currently-active context for this
- * whole mini tool process and can point at an unrelated Space/chat.
- *
- * An empty cwd *with* a Space id is deliberately not guessed — returning an
- * empty list is safer than leaking another Space's documents.
+ * A Home panel may temporarily have no cwd regardless of whether it carries
+ * a Space id. Empty cwd always maps to the stable virtual `homePath` scope;
+ * once the platform supplies a real cwd, it naturally maps to that cwd's own
+ * bucket without any migration or fallback guesswork. Do NOT use
+ * `ctx.workspace` here: it is shared across the whole mini tool process and
+ * can point at an unrelated Space/chat.
  */
-async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: string, requestedSpaceId: string): Promise<RecentDocument[]> {
+async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: string): Promise<RecentDocument[]> {
   const cwd = requestedCwd;
-  const isFreeChatFallback = !cwd && !requestedSpaceId;
-  if (!isFreeChatFallback && (!cwd || !path.isAbsolute(cwd))) return [];
+  const scope = recentScopeKey(cwd);
   const state = await readLastPathState(ctx);
-  const candidates = [
-    ...(state.recentPaths ?? []),
-    ...Object.values(state.panels ?? {}),
-    ...Object.values(state.sessions ?? {}),
-  ].filter(
-    (value, index, values) =>
+  const candidates = (state.recentPathsByScope?.[scope] ?? [])
+    .filter((value, index, values) =>
       typeof value === 'string' &&
       path.isAbsolute(value) &&
       isMarkdownPath(value) &&
-      (isFreeChatFallback || isInsideDirectory(value, cwd)) &&
       values.indexOf(value) === index,
-  );
+    );
 
   const documents = await Promise.all(
     candidates.map(async (filePath): Promise<RecentDocument | undefined> => {
@@ -528,7 +547,7 @@ async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: 
         const fileName = path.basename(filePath);
         return {
           path: filePath,
-          relativePath: path.relative(cwd, filePath),
+          relativePath: cwd ? path.relative(cwd, filePath) : filePath,
           fileName,
           title: deriveTitle(markdown, fileName.replace(/\.[^.]+$/, '')),
           preview: derivePreview(markdown),
@@ -921,9 +940,9 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       // The page owns the cwd (it arrives with `finch:env`), so it tells us
       // which directory to scope the list to instead of us guessing per panel.
       const cwd = String(message.cwd ?? '').trim();
-      const spaceId = String(message.spaceId ?? '').trim();
       try {
-        await panel.postMessage({ type: 'recentDocuments', cwd, documents: await collectRecentDocuments(ctx, cwd, spaceId) });
+        await rememberPanelRecentScope(ctx, panel, cwd);
+        await panel.postMessage({ type: 'recentDocuments', cwd, documents: await collectRecentDocuments(ctx, cwd) });
       } catch (error) {
         ctx.logger.warn(`Could not collect recent documents: ${String(error)}`);
         await panel.postMessage({ type: 'recentDocuments', cwd, documents: [] });
@@ -1008,7 +1027,7 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
         // No `openDiff` here on purpose — see the matching comment on the
         // `apply` tool action below.
         await writeFile(sourcePath, markdown, 'utf8');
-        await rememberRecentPath(ctx, sourcePath);
+        await rememberRecentPath(ctx, sourcePath, panel);
         await panel.postMessage({ type: 'applied', path: sourcePath, title: documentTitle(markdown, sourcePath) });
       } catch (error) {
         await panel.postMessage({ type: 'error', message: `Could not apply revision: ${error instanceof Error ? error.message : String(error)}` });
