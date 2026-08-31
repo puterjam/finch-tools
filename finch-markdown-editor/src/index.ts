@@ -62,6 +62,7 @@ interface PanelMessage {
   urls?: string[];
   url?: string;
   cwd?: string;
+  sessionId?: string;
   spaceId?: string;
 }
 
@@ -191,12 +192,12 @@ function documentTitle(markdown: string, filePath?: string): string {
 // gets its own stable instance, including different Space Home scopes, and a
 // Home → Session relocation preserves the same id. Older session/global keys
 // remain readable for migration.
-const HOME_PATH_SCOPE = '__finch_home_path__';
-
 interface LastPathState {
   /** @deprecated Global pre-0.1.8 list; read only for one-time migration. */
   recentPaths?: string[];
-  /** Recent Markdown paths, deduplicated newest-first within a cwd/homePath scope. */
+  /** Latest real cwd from a no-Space Agent Session; Home uses it only while the app omits cwd. */
+  homePath?: string;
+  /** Recent Markdown paths, deduplicated newest-first within a real cwd scope. */
   recentPathsByScope?: Record<string, string[]>;
   /** Last known recent-list scope for each live/rebindable Panel. */
   panelRecentScopes?: Record<string, string>;
@@ -395,8 +396,24 @@ async function readLastPathState(ctx: finch.MiniToolContext): Promise<LastPathSt
   }
 }
 
-function recentScopeKey(cwd: string): string {
-  return path.isAbsolute(cwd) ? cwd : HOME_PATH_SCOPE;
+interface RecentScopeResolution {
+  /** The real cwd key used for storage, if one is available. */
+  scope?: string;
+  /** The cwd a no-cwd Home panel should display as its fallback. */
+  fallbackCwd?: string;
+}
+
+function resolveRecentScope(state: LastPathState, cwd: string, sessionId: string, spaceId: string): RecentScopeResolution {
+  if (path.isAbsolute(cwd)) {
+    // A real ordinary Chat Session establishes the path Home must use while
+    // the app is still omitting cwd for its pre-session Home view.
+    if (sessionId && !spaceId) state.homePath = cwd;
+    return { scope: cwd };
+  }
+  if (!cwd && !sessionId && !spaceId && path.isAbsolute(state.homePath ?? '')) {
+    return { scope: state.homePath, fallbackCwd: state.homePath };
+  }
+  return {};
 }
 
 function addRecentPath(state: LastPathState, scope: string, sourcePath: string): void {
@@ -412,17 +429,21 @@ function addRecentPath(state: LastPathState, scope: string, sourcePath: string):
 /** Records the panel's actual finch:env scope and migrates its current file
  * into that scope. This handles opens/creates that happened just before the
  * panel received its first env push. */
-async function rememberPanelRecentScope(ctx: finch.MiniToolContext, panel: finch.AppPanel, cwd: string): Promise<void> {
+async function rememberPanelRecentScope(ctx: finch.MiniToolContext, panel: finch.AppPanel, cwd: string, sessionId: string, spaceId: string): Promise<RecentScopeResolution> {
   try {
     await mkdir(ctx.storagePath, { recursive: true });
     const state = await readLastPathState(ctx);
-    const scope = recentScopeKey(cwd);
-    state.panelRecentScopes = { ...state.panelRecentScopes, [panel.id]: scope };
-    const panelPath = state.panels?.[panel.id];
-    if (panelPath) addRecentPath(state, scope, panelPath);
+    const resolved = resolveRecentScope(state, cwd, sessionId, spaceId);
+    if (resolved.scope) {
+      state.panelRecentScopes = { ...state.panelRecentScopes, [panel.id]: resolved.scope };
+      const panelPath = state.panels?.[panel.id];
+      if (panelPath) addRecentPath(state, resolved.scope, panelPath);
+    }
     await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+    return resolved;
   } catch (error) {
     ctx.logger.warn(`Could not persist panel recent scope: ${String(error)}`);
+    return {};
   }
 }
 
@@ -444,16 +465,16 @@ async function rememberLastPath(ctx: finch.MiniToolContext, panel: finch.AppPane
 }
 
 /** Lightweight sibling of `rememberLastPath` for AI `apply` writes without
- * a Panel. Its true Session cwd is the key when available; missing cwd maps
- * to the same stable homePath bucket used by a no-cwd Home panel. */
+ * a Panel. Its true Session cwd is the key when available; a no-cwd Home
+ * write waits for a real ordinary Session to establish homePath first. */
 async function rememberRecentPath(ctx: finch.MiniToolContext, sourcePath: string, panel?: finch.AppPanel): Promise<void> {
   try {
     await mkdir(ctx.storagePath, { recursive: true });
     const state = await readLastPathState(ctx);
     const scope = panel
-      ? state.panelRecentScopes?.[panel.id] ?? HOME_PATH_SCOPE
-      : recentScopeKey(ctx.session.cwd ?? '');
-    addRecentPath(state, scope, sourcePath);
+      ? state.panelRecentScopes?.[panel.id]
+      : resolveRecentScope(state, ctx.session.cwd ?? '', ctx.session.id ?? '', ctx.session.spaceId ?? '').scope;
+    if (scope) addRecentPath(state, scope, sourcePath);
     await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
   } catch (error) {
     ctx.logger.warn(`Could not persist recent path: ${String(error)}`);
@@ -519,17 +540,18 @@ function derivePreview(markdown: string): string {
  * (`view === 'home'`) the platform may hand back an empty string (see
  * `AppPanelEnvMessage.cwd`'s own doc comment).
  *
- * A Home panel may temporarily have no cwd regardless of whether it carries
- * a Space id. Empty cwd always maps to the stable virtual `homePath` scope;
- * once the platform supplies a real cwd, it naturally maps to that cwd's own
- * bucket without any migration or fallback guesswork. Do NOT use
+ * A Home panel with no cwd/session/Space falls back to the persisted
+ * `homePath`: the last real cwd observed from an ordinary no-Space Session.
+ * That makes Home and normal chat use the same real cwd key. Do NOT use
  * `ctx.workspace` here: it is shared across the whole mini tool process and
  * can point at an unrelated Space/chat.
  */
-async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: string): Promise<RecentDocument[]> {
+async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: string, sessionId: string, spaceId: string): Promise<{ documents: RecentDocument[]; fallbackCwd?: string }> {
   const cwd = requestedCwd;
-  const scope = recentScopeKey(cwd);
   const state = await readLastPathState(ctx);
+  const resolved = resolveRecentScope(state, cwd, sessionId, spaceId);
+  if (!resolved.scope) return { documents: [] };
+  const scope = resolved.scope;
   const candidates = (state.recentPathsByScope?.[scope] ?? [])
     .filter((value, index, values) =>
       typeof value === 'string' &&
@@ -547,7 +569,7 @@ async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: 
         const fileName = path.basename(filePath);
         return {
           path: filePath,
-          relativePath: cwd ? path.relative(cwd, filePath) : filePath,
+          relativePath: path.relative(scope, filePath),
           fileName,
           title: deriveTitle(markdown, fileName.replace(/\.[^.]+$/, '')),
           preview: derivePreview(markdown),
@@ -560,10 +582,13 @@ async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: 
     }),
   );
 
-  return documents
-    .filter((entry): entry is RecentDocument => Boolean(entry))
-    .sort((a, b) => b.modifiedAt - a.modifiedAt)
-    .slice(0, RECENT_LIMIT);
+  return {
+    documents: documents
+      .filter((entry): entry is RecentDocument => Boolean(entry))
+      .sort((a, b) => b.modifiedAt - a.modifiedAt)
+      .slice(0, RECENT_LIMIT),
+    fallbackCwd: resolved.fallbackCwd,
+  };
 }
 
 // The document currently being delivered to each live Panel. This is
@@ -940,9 +965,12 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       // The page owns the cwd (it arrives with `finch:env`), so it tells us
       // which directory to scope the list to instead of us guessing per panel.
       const cwd = String(message.cwd ?? '').trim();
+      const sessionId = String(message.sessionId ?? '').trim();
+      const spaceId = String(message.spaceId ?? '').trim();
       try {
-        await rememberPanelRecentScope(ctx, panel, cwd);
-        await panel.postMessage({ type: 'recentDocuments', cwd, documents: await collectRecentDocuments(ctx, cwd) });
+        await rememberPanelRecentScope(ctx, panel, cwd, sessionId, spaceId);
+        const recent = await collectRecentDocuments(ctx, cwd, sessionId, spaceId);
+        await panel.postMessage({ type: 'recentDocuments', cwd, documents: recent.documents, fallbackCwd: recent.fallbackCwd });
       } catch (error) {
         ctx.logger.warn(`Could not collect recent documents: ${String(error)}`);
         await panel.postMessage({ type: 'recentDocuments', cwd, documents: [] });
