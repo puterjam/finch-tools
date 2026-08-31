@@ -77,8 +77,6 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .doc-reveal:hover{background:var(--card);color:var(--text)}
 .home-hint{margin:0;padding:22px 0;text-align:center;font-size:12.5px;color:var(--muted)}
 .home-hint[hidden],.home-recent[hidden]{display:none}
-.home-env-debug{margin:14px auto 0;max-width:560px;padding:10px 12px;border-radius:8px;border:1px dashed rgba(127,127,127,.4);background:rgba(127,127,127,.08);font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);white-space:pre-wrap;word-break:break-all;text-align:left}
-.home-env-debug[hidden]{display:none}
 .status{font-size:12px;color:var(--muted);padding:5px 10px;text-align:center;border-top:1px solid var(--border);background:var(--bg)}
 .status a{color:var(--accent);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 .status.error{color:#c54232}
@@ -177,7 +175,6 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
             </button>
           </div>
         </header>
-        <pre id="homeEnvDebug" class="home-env-debug" hidden></pre>
         <section id="homeRecent" class="home-recent" hidden>
           <div class="home-section"><b data-i18n="home.recentLabel">Recent</b><button id="homeCwd" type="button" class="home-cwd"></button></div>
           <div id="homeGrid" class="home-grid"></div>
@@ -582,7 +579,6 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   var homeGrid = document.getElementById('homeGrid');
   var homeCwd = document.getElementById('homeCwd');
   var homeHint = document.getElementById('homeHint');
-  var homeEnvDebug = document.getElementById('homeEnvDebug');
   var homeTagline = document.getElementById('homeTagline');
   var editPane = document.getElementById('editPane');
   var previewPane = document.getElementById('previewPane');
@@ -735,12 +731,6 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   // separate flag tracks instead of overloading envCwd.
   var envReceived = false;
   var recentRequested = false;
-  // Temporary on-page diagnostics for the Home-panel cross-Space/blocked-open
-  // report: renders the raw `finch:env` push plus the last `recentDocuments`
-  // round trip so it can be read straight off the panel instead of console
-  // logs. Safe to remove once that bug is confirmed fixed.
-  var lastEnvMessage = null;
-  var lastRecentReply = null;
   var assistantName = '';
   var homeDir = '';
 
@@ -832,31 +822,6 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     if (!api || !api.postMessage || !envReceived) return;
     recentRequested = true;
     api.postMessage({ type: 'requestRecentDocuments', cwd: envCwd, sessionId: envSessionId, spaceId: envSpaceId });
-  }
-
-  // See `lastEnvMessage`/`lastRecentReply` declaration for why this exists.
-  function renderEnvDebug() {
-    if (!homeEnvDebug) return;
-    if (!lastEnvMessage) { homeEnvDebug.hidden = true; return; }
-    var lines = [
-      'finch:env  view=' + JSON.stringify(lastEnvMessage.view) +
-        '  sessionId=' + JSON.stringify(lastEnvMessage.sessionId) +
-        '  spaceId=' + JSON.stringify(lastEnvMessage.spaceId) +
-        '  spaceName=' + JSON.stringify(lastEnvMessage.spaceName) +
-        '  cwd=' + JSON.stringify(lastEnvMessage.cwd),
-    ];
-    if (lastRecentReply) {
-      lines.push(
-        'recentDocuments  echoed cwd=' + JSON.stringify(lastRecentReply.cwd) +
-          '  fallbackCwd=' + JSON.stringify(lastRecentReply.fallbackCwd || '') +
-          '  docs=' + (Array.isArray(lastRecentReply.documents) ? lastRecentReply.documents.length : 0) +
-          (Array.isArray(lastRecentReply.documents) && lastRecentReply.documents.length
-            ? '  paths=' + JSON.stringify(lastRecentReply.documents.map(function (d) { return d && d.path; }))
-            : ''),
-      );
-    }
-    homeEnvDebug.textContent = lines.join('\n');
-    homeEnvDebug.hidden = false;
   }
 
   function renderRecentDocuments(documents) {
@@ -2556,8 +2521,6 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
           renderHomeCwd();
           renderRecentDocuments([]);
         }
-        lastEnvMessage = m;
-        renderEnvDebug();
         if (!empty.hidden) requestRecentDocuments();
         return;
       }
@@ -2566,8 +2529,6 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         if ((m.cwd || '') !== envCwd) return;
         fallbackCwd = m.fallbackCwd || '';
         renderHomeCwd();
-        lastRecentReply = m;
-        renderEnvDebug();
         renderRecentDocuments(m.documents);
         return;
       }
