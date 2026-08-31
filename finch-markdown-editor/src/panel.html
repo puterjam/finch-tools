@@ -69,6 +69,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .doc-title{font-size:13px;font-weight:600;line-height:1.35;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .doc-sub{margin-top:2px;display:flex;gap:6px;font-size:11px;line-height:1.4;color:var(--muted)}
 .doc-sub .doc-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+.doc-sub .doc-path.absolute-path{direction:ltr}
 .doc-sub .doc-time{flex:none;opacity:.8}
 .doc-reveal{position:absolute;top:6px;right:6px;z-index:1;display:flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:none;border-radius:7px;background:color-mix(in srgb, var(--bg) 72%, transparent);color:var(--muted);cursor:pointer;opacity:0;transition:opacity .12s ease,background .12s ease,color .12s ease}
 .doc-reveal svg{width:14px;height:14px}
@@ -264,6 +265,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'home.revealInFileManager': '在文件管理器中定位',
       'home.emptyDoc': '（空文档）',
       'home.cwdTitle': '在访达 / 文件资源管理器中打开：{path}',
+      'home.cwdFallback': 'homePath（无 cwd 回退）',
       'home.today': '今天 {clock}',
       'home.yesterday': '昨天 {clock}',
       'editor.ariaLabel': '写字编辑器',
@@ -406,6 +408,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'home.revealInFileManager': 'Show in file manager',
       'home.emptyDoc': '(Empty document)',
       'home.cwdTitle': 'Open in Finder / File Explorer: {path}',
+      'home.cwdFallback': 'homePath (no-cwd fallback)',
       'home.today': 'Today {clock}',
       'home.yesterday': 'Yesterday {clock}',
       'editor.ariaLabel': 'Writing editor',
@@ -795,9 +798,14 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 
   function renderHomeCwd() {
     if (!homeCwd) return;
-    homeCwd.textContent = truncateFriendlyPath(formatFriendlyPath(envCwd));
-    homeCwd.title = envCwd ? t('home.cwdTitle', { path: envCwd }) : '';
-    homeCwd.hidden = !envCwd;
+    // The platform currently omits cwd for some Home views. Make the
+    // virtual homePath bucket visible instead of leaving an unexplained hole
+    // beside “Recent”; it is a scope label, not a revealable filesystem path.
+    homeCwd.textContent = envCwd
+      ? truncateFriendlyPath(formatFriendlyPath(envCwd))
+      : t('home.cwdFallback');
+    homeCwd.title = envCwd ? t('home.cwdTitle', { path: envCwd }) : t('home.cwdFallback');
+    homeCwd.hidden = false;
   }
 
   if (homeCwd) homeCwd.addEventListener('click', function () {
@@ -863,6 +871,11 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
     var cards = '';
     for (var i = 0; i < list.length; i++) {
       var doc = list[i] || {};
+      // Under the virtual homePath scope relativePath is necessarily an
+      // absolute path. The normal RTL tail-truncation presentation would
+      // visually move its leading '/' to the far right, so keep it LTR.
+      var docPath = doc.relativePath || doc.fileName || '';
+      var docPathClass = /^(\/|[A-Za-z]:[\\/])/.test(docPath) ? 'doc-path absolute-path' : 'doc-path';
       cards += '<button class="doc-card" type="button" data-path="' + escapeHtml(doc.path || '') + '" title="' + escapeHtml(doc.path || '') + '">'
         + '<span class="doc-reveal" data-reveal-path="' + escapeHtml(doc.path || '') + '" role="button" tabindex="0" title="' + escapeHtml(t('home.revealInFileManager')) + '" aria-label="' + escapeHtml(t('home.revealInFileManager')) + '">'
         + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>'
@@ -870,7 +883,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         + '<div class="doc-preview">' + escapeHtml(doc.preview || t('home.emptyDoc')) + '</div>'
         + '<div class="doc-foot">'
         + '<div class="doc-title">' + escapeHtml(doc.title || doc.fileName || t('home.untitled')) + '</div>'
-        + '<div class="doc-sub"><span class="doc-path">' + escapeHtml(doc.relativePath || doc.fileName || '') + '</span>'
+        + '<div class="doc-sub"><span class="' + docPathClass + '">' + escapeHtml(docPath) + '</span>'
         + '<span class="doc-time">' + escapeHtml(formatDocTime(doc.modifiedAt)) + '</span></div>'
         + '</div></button>';
     }
