@@ -294,6 +294,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'toolbar.mode.label': '预览',
       'toolbar.mode.tooltipToPreview': '切换到预览',
       'toolbar.mode.tooltipToEdit': '切换到编辑',
+      'toolbar.mode.tooltipRendering': '正在渲染预览…',
       'toolbar.style.tooltip': '排版风格',
       'toolbar.style.tooltipNeedsPreview': '请先切换到预览',
       'toolbar.style.customSlot': '自定义风格 {n} · {label}',
@@ -383,7 +384,6 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'status.appliedStyleSlot': '已应用「{label}」。',
       'status.needCustomStyleFirst': '请先应用一个自定义/AI 设计的风格，再保存到槽位。',
       'status.savedToSlot': '已保存到槽位 {slot}：{label}',
-      'status.rendering': '正在渲染…',
       'status.serializeFailed': '无法序列化预览内容：{err}',
       'status.imageConversionFailed': '预览内容无法转成图片（可能含有无法跨域读取的外部图片）',
       'status.imageGenFailed': '生成图片数据失败',
@@ -437,6 +437,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'toolbar.mode.label': 'Preview',
       'toolbar.mode.tooltipToPreview': 'Switch to preview',
       'toolbar.mode.tooltipToEdit': 'Switch to edit',
+      'toolbar.mode.tooltipRendering': 'Rendering preview…',
       'toolbar.style.tooltip': 'Layout style',
       'toolbar.style.tooltipNeedsPreview': 'Switch to preview first',
       'toolbar.style.customSlot': 'Custom style {n} · {label}',
@@ -526,7 +527,6 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
       'status.appliedStyleSlot': 'Applied \u201c{label}\u201d.',
       'status.needCustomStyleFirst': 'Apply a custom/AI-designed style first before saving it to a slot.',
       'status.savedToSlot': 'Saved to slot {slot}: {label}',
-      'status.rendering': 'Rendering…',
       'status.serializeFailed': 'Failed to serialize the preview content: {err}',
       'status.imageConversionFailed': "The preview couldn't be converted to an image (it may contain external images that can't be read cross-origin)",
       'status.imageGenFailed': 'Failed to generate image data',
@@ -644,6 +644,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   var html = '';
   var frameReady = false;
   var renderId = 0;
+  var renderingPreview = false;
   var saveId = 0;
   var pendingSaveContents = {};
   // Resolvers for callers that need to *await* a save round-trip (the
@@ -986,8 +987,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         // icon plus `checked` already communicate on/off; flipping the word
         // itself between "预览"/"编辑" read as ambiguous ("is this the mode
         // I'm in, or the one I'm switching to?").
-        id: 'mode', icon: 'ext:markdown-editor-icons/swatch-book',
-        label: t('toolbar.mode.label'), tooltip: hasDoc ? (mode === 'edit' ? t('toolbar.mode.tooltipToPreview') : t('toolbar.mode.tooltipToEdit')) : t('toolbar.needDoc'),
+        id: 'mode', icon: renderingPreview ? 'ext:markdown-editor-icons/loader-circle' : 'ext:markdown-editor-icons/swatch-book',
+        label: t('toolbar.mode.label'), tooltip: hasDoc ? (renderingPreview ? t('toolbar.mode.tooltipRendering') : mode === 'edit' ? t('toolbar.mode.tooltipToPreview') : t('toolbar.mode.tooltipToEdit')) : t('toolbar.needDoc'),
         checked: mode === 'preview', disabled: !hasDoc,
       },
       {
@@ -1120,7 +1121,8 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   function render() {
     if (!markdown || !api) return;
     var id = ++renderId;
-    setStatus(t('status.rendering'));
+    renderingPreview = true;
+    syncToolbar();
     api.postMessage({
       type: 'renderBm',
       markdown: markdown,
@@ -2593,6 +2595,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         if (m.requestId !== renderId) return;
         showHtml(m.html || '');
         updateEmptyState();
+        renderingPreview = false;
         syncToolbar(); // `html` just became available (or changed) — refresh the copy menu's disabled state
         setStatus('');
         return;
@@ -2657,6 +2660,9 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         nativePickPending = false;
         clearNativePickTimer();
         if (m.fallback) pickFileSupported = false;
+        // renderBm failures arrive through the same error channel; never
+        // leave the preview button's loader spinning after one.
+        renderingPreview = false;
         syncToolbar();
         setStatus(m.message, true);
         return;
