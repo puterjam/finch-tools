@@ -488,14 +488,21 @@ function derivePreview(markdown: string): string {
  * `requestedCwd` is whatever the page's own `finch:env` handed back — for a
  * real Session panel that's always the session's cwd, but for a Home panel
  * (`view === 'home'`) the platform may hand back an empty string (see
- * `AppPanelEnvMessage.cwd`'s own doc comment). Falling back to
- * `ctx.workspace.directoryPath ?? ctx.workspace.projectPath` — the same
- * Space-bound directory or global default workspace a Session in this same
- * scope would have used — means Home shows the same recent list a chat
- * Session here would, instead of silently staying empty forever.
+ * `AppPanelEnvMessage.cwd`'s own doc comment).
+ *
+ * `ctx.workspace` reflects a single shared "currently active" context for
+ * this whole mini tool process, not this specific panel — a personal-scope
+ * install serves every open Space at once, so trusting
+ * `ctx.workspace.directoryPath` unconditionally here would leak whichever
+ * Space happens to be focused elsewhere into a *different* Space's Home
+ * panel. It's only safe to use as a stand-in for the empty cwd when it
+ * actually describes the same Space this panel belongs to (`panelSpaceId`,
+ * taken from the panel handle itself, not from `ctx`) — including the
+ * no-Space case, where both sides agree there's no Space at all.
  */
-async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: string): Promise<RecentDocument[]> {
-  const cwd = requestedCwd || ctx.workspace.directoryPath || ctx.workspace.projectPath || '';
+async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: string, panelSpaceId: string | undefined): Promise<RecentDocument[]> {
+  const sameSpaceAsCtx = (panelSpaceId || '') === (ctx.workspace.spaceId || '');
+  const cwd = requestedCwd || (sameSpaceAsCtx ? ctx.workspace.directoryPath || ctx.workspace.projectPath || '' : '');
   if (!cwd || !path.isAbsolute(cwd)) return [];
   const state = await readLastPathState(ctx);
   const candidates = [
@@ -914,7 +921,7 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       // which directory to scope the list to instead of us guessing per panel.
       const cwd = String(message.cwd ?? '').trim();
       try {
-        await panel.postMessage({ type: 'recentDocuments', cwd, documents: await collectRecentDocuments(ctx, cwd) });
+        await panel.postMessage({ type: 'recentDocuments', cwd, documents: await collectRecentDocuments(ctx, cwd, panel.spaceId) });
       } catch (error) {
         ctx.logger.warn(`Could not collect recent documents: ${String(error)}`);
         await panel.postMessage({ type: 'recentDocuments', cwd, documents: [] });
