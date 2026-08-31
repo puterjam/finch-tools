@@ -723,11 +723,12 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   // the backend scopes its recent-file list to whatever we hand back, so a
   // panel in another Space never shows this Space's documents.
   var envCwd = '';
+  var envSpaceId = '';
   // Home panels (`view === 'home'`) can legitimately have an empty `cwd` in
-  // `finch:env` — the backend still resolves a usable directory itself (the
-  // Space's bound folder, or the global default workspace) via `ctx.workspace`.
-  // So `envCwd === ''` must not block the request; only "no `finch:env` yet"
-  // should, which this separate flag tracks instead of overloading envCwd.
+  // `finch:env`. For the no-cwd/no-Space free-chat case the backend uses its
+  // dedicated recorded-recent fallback; so `envCwd === ''` must not block the
+  // request. Only "no `finch:env` yet" should, which this separate flag tracks
+  // instead of overloading envCwd.
   var envReceived = false;
   var recentRequested = false;
   // Temporary on-page diagnostics for the Home-panel cross-Space/blocked-open
@@ -821,7 +822,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
   function requestRecentDocuments() {
     if (!api || !api.postMessage || !envReceived) return;
     recentRequested = true;
-    api.postMessage({ type: 'requestRecentDocuments', cwd: envCwd });
+    api.postMessage({ type: 'requestRecentDocuments', cwd: envCwd, spaceId: envSpaceId });
   }
 
   // See `lastEnvMessage`/`lastRecentReply` declaration for why this exists.
@@ -2529,8 +2530,10 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
         // Panel scope changed (first open, or Home → Session relocation): rescope
         // the recent list to this panel's own working directory.
         var incomingCwd = m.cwd || '';
-        if (incomingCwd !== envCwd || !envReceived) {
+        var incomingSpaceId = m.spaceId || '';
+        if (incomingCwd !== envCwd || incomingSpaceId !== envSpaceId || !envReceived) {
           envCwd = incomingCwd;
+          envSpaceId = incomingSpaceId;
           envReceived = true;
           renderHomeCwd();
           renderRecentDocuments([]);

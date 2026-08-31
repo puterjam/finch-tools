@@ -62,6 +62,7 @@ interface PanelMessage {
   urls?: string[];
   url?: string;
   cwd?: string;
+  spaceId?: string;
 }
 
 // Pasted-image extension → file extension. Kept tiny and explicit rather
@@ -490,18 +491,20 @@ function derivePreview(markdown: string): string {
  * (`view === 'home'`) the platform may hand back an empty string (see
  * `AppPanelEnvMessage.cwd`'s own doc comment).
  *
- * Deliberately does NOT guess a directory when `requestedCwd` is empty.
- * `ctx.workspace` reflects a single shared "currently active" context for
- * this whole mini tool process, not this specific panel — a personal-scope
- * install serves every open Space/chat at once, so it can (and did) leak
- * whichever Space/session happens to be focused elsewhere into a
- * *different* panel's recent list, and produced a different result per
- * panel depending on unrelated timing. An empty, deterministic list beats
- * a plausible-looking but wrong one.
+ * A Home chat may temporarily have neither a real Session/cwd nor a Space
+ * (`view === 'home'`, empty `spaceId`). That is the one safe fallback case:
+ * it maps to the editor's stable free-chat bucket (`recentPaths`) and shows
+ * those recorded files without a directory filter. Do NOT use
+ * `ctx.workspace` here: it is a shared currently-active context for this
+ * whole mini tool process and can point at an unrelated Space/chat.
+ *
+ * An empty cwd *with* a Space id is deliberately not guessed — returning an
+ * empty list is safer than leaking another Space's documents.
  */
-async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: string): Promise<RecentDocument[]> {
+async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: string, requestedSpaceId: string): Promise<RecentDocument[]> {
   const cwd = requestedCwd;
-  if (!cwd || !path.isAbsolute(cwd)) return [];
+  const isFreeChatFallback = !cwd && !requestedSpaceId;
+  if (!isFreeChatFallback && (!cwd || !path.isAbsolute(cwd))) return [];
   const state = await readLastPathState(ctx);
   const candidates = [
     ...(state.recentPaths ?? []),
@@ -512,7 +515,7 @@ async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: 
       typeof value === 'string' &&
       path.isAbsolute(value) &&
       isMarkdownPath(value) &&
-      isInsideDirectory(value, cwd) &&
+      (isFreeChatFallback || isInsideDirectory(value, cwd)) &&
       values.indexOf(value) === index,
   );
 
@@ -918,8 +921,9 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       // The page owns the cwd (it arrives with `finch:env`), so it tells us
       // which directory to scope the list to instead of us guessing per panel.
       const cwd = String(message.cwd ?? '').trim();
+      const spaceId = String(message.spaceId ?? '').trim();
       try {
-        await panel.postMessage({ type: 'recentDocuments', cwd, documents: await collectRecentDocuments(ctx, cwd) });
+        await panel.postMessage({ type: 'recentDocuments', cwd, documents: await collectRecentDocuments(ctx, cwd, spaceId) });
       } catch (error) {
         ctx.logger.warn(`Could not collect recent documents: ${String(error)}`);
         await panel.postMessage({ type: 'recentDocuments', cwd, documents: [] });
