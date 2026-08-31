@@ -490,19 +490,17 @@ function derivePreview(markdown: string): string {
  * (`view === 'home'`) the platform may hand back an empty string (see
  * `AppPanelEnvMessage.cwd`'s own doc comment).
  *
+ * Deliberately does NOT guess a directory when `requestedCwd` is empty.
  * `ctx.workspace` reflects a single shared "currently active" context for
  * this whole mini tool process, not this specific panel — a personal-scope
- * install serves every open Space at once, so trusting
- * `ctx.workspace.directoryPath` unconditionally here would leak whichever
- * Space happens to be focused elsewhere into a *different* Space's Home
- * panel. It's only safe to use as a stand-in for the empty cwd when it
- * actually describes the same Space this panel belongs to (`panelSpaceId`,
- * taken from the panel handle itself, not from `ctx`) — including the
- * no-Space case, where both sides agree there's no Space at all.
+ * install serves every open Space/chat at once, so it can (and did) leak
+ * whichever Space/session happens to be focused elsewhere into a
+ * *different* panel's recent list, and produced a different result per
+ * panel depending on unrelated timing. An empty, deterministic list beats
+ * a plausible-looking but wrong one.
  */
-async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: string, panelSpaceId: string | undefined): Promise<RecentDocument[]> {
-  const sameSpaceAsCtx = (panelSpaceId || '') === (ctx.workspace.spaceId || '');
-  const cwd = requestedCwd || (sameSpaceAsCtx ? ctx.workspace.directoryPath || ctx.workspace.projectPath || '' : '');
+async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: string): Promise<RecentDocument[]> {
+  const cwd = requestedCwd;
   if (!cwd || !path.isAbsolute(cwd)) return [];
   const state = await readLastPathState(ctx);
   const candidates = [
@@ -921,7 +919,7 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       // which directory to scope the list to instead of us guessing per panel.
       const cwd = String(message.cwd ?? '').trim();
       try {
-        await panel.postMessage({ type: 'recentDocuments', cwd, documents: await collectRecentDocuments(ctx, cwd, panel.spaceId) });
+        await panel.postMessage({ type: 'recentDocuments', cwd, documents: await collectRecentDocuments(ctx, cwd) });
       } catch (error) {
         ctx.logger.warn(`Could not collect recent documents: ${String(error)}`);
         await panel.postMessage({ type: 'recentDocuments', cwd, documents: [] });
