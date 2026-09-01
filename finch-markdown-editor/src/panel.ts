@@ -423,6 +423,15 @@
   var libraryCollapsedGroups = {};
   var libraryDragging = null;
   var libraryDragOpenState = null;
+  // Custom pointer-driven drag state, replacing the browser's native HTML5
+  // drag-and-drop (whose default translucent "screenshot" ghost can't be
+  // restyled). `null` when idle; `active` flips true only past a small
+  // movement threshold so a plain click still toggles the group.
+  var libraryDragPointer = null;
+  // pointerup fires (and nulls libraryDragPointer) before the browser's
+  // trailing `click` event on the same interaction — so click-suppression
+  // needs its own flag that outlives the pointer state, not a read of it.
+  var librarySuppressNextClick = false;
 
   var isAppView = false;
   var previewVisible = true;
@@ -768,7 +777,7 @@
       var draggable = group.kind !== 'external';
       var open = !libraryCollapsedGroups[group.id];
       return '<details class="library-group" data-library-group-id="' + escapeHtml(group.id) + '"'
-        + (draggable ? ' draggable="true"' : '') + (open ? ' open' : '') + '><summary><span class="library-group-title">' + escapeHtml(group.label) + '</span>'
+        + (draggable ? ' data-draggable="true"' : '') + (open ? ' open' : '') + '><summary><span class="library-group-title">' + escapeHtml(group.label) + '</span>'
         + '<span class="library-group-count">' + group.documents.length + '</span></summary>'
         + '<div class="library-items">' + rows + '</div></details>';
     }).join('') || '<p class="home-hint">' + escapeHtml(t('home.hintDefault')) + '</p>';
@@ -787,7 +796,7 @@
     libraryDragging.classList.remove('dragging');
     Array.prototype.forEach.call(libraryGroups.querySelectorAll('.library-group.drag-over'), function (group) { group.classList.remove('drag-over'); });
     // Store only movable group ids: Other always remains a fixed final group.
-    libraryGroupOrder = Array.prototype.map.call(libraryGroups.querySelectorAll('.library-group[draggable="true"]'), function (group) {
+    libraryGroupOrder = Array.prototype.map.call(libraryGroups.querySelectorAll('.library-group[data-draggable="true"]'), function (group) {
       return group.getAttribute('data-library-group-id');
     }).filter(Boolean);
     var openState = libraryDragOpenState || {};
@@ -799,6 +808,78 @@
     // details `toggle` can be queued by the browser; keep the snapshot live
     // through this task so temporary collapsing never overwrites saved state.
     setTimeout(function () { libraryDragOpenState = null; saveLibraryGroupState(); }, 0);
+  }
+
+  // ---- Library group reordering: custom pointer-driven ghost -----------
+  //
+  // A plain `draggable="true"` + native dragstart/dragover/drop would work,
+  // but the browser paints its own translucent "screenshot" ghost of the
+  // dragged element that can't be restyled or suppressed. Tracking pointer
+  // events by hand instead lets the drag preview be a purpose-built floating
+  // clone (own shadow/scale/rotation), matching the rest of the UI.
+  function cleanupLibraryDragGhost() {
+    if (libraryDragPointer && libraryDragPointer.ghost && libraryDragPointer.ghost.parentNode) {
+      libraryDragPointer.ghost.parentNode.removeChild(libraryDragPointer.ghost);
+    }
+  }
+
+  function positionLibraryDragGhost(clientX, clientY) {
+    var state = libraryDragPointer;
+    if (!state || !state.ghost) return;
+    state.ghost.style.left = (clientX - state.offsetX) + 'px';
+    state.ghost.style.top = (clientY - state.offsetY) + 'px';
+  }
+
+  function activateLibraryDrag(group) {
+    var state = libraryDragPointer;
+    if (!state || state.active) return;
+    state.active = true;
+    libraryDragging = group;
+    libraryDragOpenState = {};
+    Array.prototype.forEach.call(libraryGroups.querySelectorAll('.library-group'), function (item) {
+      var id = item.getAttribute('data-library-group-id');
+      if (id) libraryDragOpenState[id] = !!item.open;
+      item.open = false;
+    });
+    group.classList.add('dragging');
+    // The clone is built *after* collapsing above, so it mirrors the
+    // compact row height actually being dragged, not the (possibly
+    // expanded) pre-drag one.
+    var rect = group.getBoundingClientRect();
+    var ghost = group.cloneNode(true);
+    ghost.classList.add('library-drag-ghost');
+    ghost.classList.remove('dragging');
+    ghost.style.width = rect.width + 'px';
+    state.ghost = ghost;
+    state.offsetX = state.startX - rect.left;
+    state.offsetY = state.startY - rect.top;
+    document.body.appendChild(ghost);
+    positionLibraryDragGhost(state.startX, state.startY);
+  }
+
+  function updateLibraryDragTarget(clientX, clientY) {
+    if (!libraryDragging) return;
+    // Ghost is pointer-events:none, so elementFromPoint sees through it to
+    // whatever row is actually underneath the cursor.
+    var el = document.elementFromPoint(clientX, clientY);
+    var target = el && el.closest ? el.closest('.library-group[data-draggable="true"]') : null;
+    Array.prototype.forEach.call(libraryGroups.querySelectorAll('.library-group.drag-over'), function (item) { item.classList.remove('drag-over'); });
+    if (!target || target === libraryDragging) return;
+    target.classList.add('drag-over');
+    var after = clientY > target.getBoundingClientRect().top + target.offsetHeight / 2;
+    libraryGroups.insertBefore(libraryDragging, after ? target.nextSibling : target);
+  }
+
+  function endLibraryDragPointer() {
+    var state = libraryDragPointer;
+    if (!state) return;
+    if (state.active) {
+      cleanupLibraryDragGhost();
+      finishLibraryDrag();
+      librarySuppressNextClick = true;
+      setTimeout(function () { librarySuppressNextClick = false; }, 0);
+    }
+    libraryDragPointer = null;
   }
 
   if (appLibrary) appLibrary.addEventListener('click', function () { setLibraryOpen(true); });
@@ -826,31 +907,38 @@
       libraryCollapsedGroups[id] = !group.open;
       saveLibraryGroupState();
     }, true);
-    libraryGroups.addEventListener('dragstart', function (event) {
-      var group = event.target && event.target.closest ? event.target.closest('.library-group[draggable="true"]') : null;
-      if (!group) return;
-      libraryDragging = group;
-      libraryDragOpenState = {};
-      Array.prototype.forEach.call(libraryGroups.querySelectorAll('.library-group'), function (item) {
-        var id = item.getAttribute('data-library-group-id');
-        if (id) libraryDragOpenState[id] = !!item.open;
-        item.open = false;
-      });
-      group.classList.add('dragging');
-      if (event.dataTransfer) { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', group.getAttribute('data-library-group-id') || ''); }
-    });
-    libraryGroups.addEventListener('dragover', function (event) {
-      if (!libraryDragging) return;
-      var target = event.target && event.target.closest ? event.target.closest('.library-group[draggable="true"]') : null;
-      if (!target || target === libraryDragging) return;
+    // Suppress the <summary> toggle click that a pointerdown+move sequence
+    // would otherwise also fire once the pointer is released — a real drag
+    // shouldn't also flip the group open/closed.
+    libraryGroups.addEventListener('click', function (event) {
+      if (!librarySuppressNextClick) return;
+      var summary = event.target && event.target.closest ? event.target.closest('.library-group summary') : null;
+      if (!summary) return;
       event.preventDefault();
-      Array.prototype.forEach.call(libraryGroups.querySelectorAll('.library-group.drag-over'), function (item) { item.classList.remove('drag-over'); });
-      target.classList.add('drag-over');
-      var after = event.clientY > target.getBoundingClientRect().top + target.offsetHeight / 2;
-      libraryGroups.insertBefore(libraryDragging, after ? target.nextSibling : target);
+      event.stopPropagation();
+    }, true);
+    libraryGroups.addEventListener('pointerdown', function (event) {
+      if (event.button !== 0) return;
+      var summary = event.target && event.target.closest ? event.target.closest('.library-group summary') : null;
+      var group = summary && summary.closest ? summary.closest('.library-group[data-draggable="true"]') : null;
+      if (!group) return;
+      libraryDragPointer = { group: group, startX: event.clientX, startY: event.clientY, active: false, ghost: null, offsetX: 0, offsetY: 0 };
     });
-    libraryGroups.addEventListener('drop', function (event) { if (libraryDragging) { event.preventDefault(); finishLibraryDrag(); } });
-    libraryGroups.addEventListener('dragend', finishLibraryDrag);
+    window.addEventListener('pointermove', function (event) {
+      var state = libraryDragPointer;
+      if (!state) return;
+      if (!state.active) {
+        // A small tolerance before committing to a drag: keeps quick clicks
+        // (open/close) from ever spawning a ghost.
+        if (Math.abs(event.clientX - state.startX) < 4 && Math.abs(event.clientY - state.startY) < 4) return;
+        activateLibraryDrag(state.group);
+      }
+      event.preventDefault();
+      positionLibraryDragGhost(event.clientX, event.clientY);
+      updateLibraryDragTarget(event.clientX, event.clientY);
+    });
+    window.addEventListener('pointerup', function () { endLibraryDragPointer(); });
+    window.addEventListener('pointercancel', function () { endLibraryDragPointer(); });
   }
 
   // Set while a Home-card click is in flight, so the `document` reply below
