@@ -146,6 +146,11 @@ const finchTheme = EditorView.theme({
   '.cm-line:not(.tbl-table-widget .cm-line)': {
     // '--md-line-pad': 'max(24px, calc((100% - 750px) / 2))',
     boxSizing: 'border-box',
+    // Anchor the blank-line AI hint to the line's final laid-out box. The
+    // generated hint must be absolute because CodeMirror puts a literal
+    // <br> in every empty contenteditable line; an inline ::after can only
+    // flow after that <br>, i.e. onto a second visual row.
+    position: 'relative',
     width: CM_LINE_WIDTH,
     maxWidth: CM_LINE_MAX_WIDTH,
     marginInline: 'auto',
@@ -528,16 +533,21 @@ const finchTheme = EditorView.theme({
     opacity: '0.5',
     pointerEvents: 'none',
     userSelect: 'none',
-    // An empty line is otherwise zero-width, so without a hard nowrap the
-    // hint text is free to wrap onto a second visual row — which inflates
-    // that one line's height and knocks every line below it out of
-    // alignment with its own gutter number (the exact bug this line
-    // exists to avoid). It's a fixed short phrase, never long enough to
-    // need wrapping on purpose. `.cm-line` also sets `word-break:
-    // break-word` for prose wrapping, and that property is inherited —
-    // Blink still force-breaks an unbreakable run under `white-space:
-    // nowrap` when it inherits `break-word`, so reset both wordBreak and
-    // overflowWrap here too or the nowrap above gets silently overridden.
+    // Every empty CodeMirror content line carries a literal <br>. An inline
+    // ::after necessarily flows after it, creating the unwanted second
+    // visual row. Instead, cover this line's *actual final layout box* and
+    // vertically center within it. top+bottom+flex means the placement uses
+    // the browser-computed height — it automatically follows different
+    // font sizes, line-heights, symmetric line padding, code rows, and the
+    // comfort-writing mode without any brittle negative margin constants.
+    position: 'absolute',
+    top: '0',
+    bottom: '0',
+    left: '2px',
+    display: 'flex',
+    alignItems: 'center',
+    // An empty line is otherwise zero-width. The phrase deliberately never
+    // wraps and never inherits prose's aggressive long-word breaking.
     whiteSpace: 'nowrap',
     wordBreak: 'keep-all',
     overflowWrap: 'normal',
