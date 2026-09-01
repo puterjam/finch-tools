@@ -19,7 +19,9 @@ interface RecentDocument {
   modifiedAt: number;
   spaceId?: string;
   spaceName?: string;
+  /** User-facing Space name; workspace/other labels localize in the panel. */
   scopeLabel?: string;
+  scopeKind?: 'space' | 'workspace' | 'external';
 }
 
 interface PanelMessage {
@@ -247,16 +249,29 @@ function pathBelongsTo(root: string, target: string): boolean {
   return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
 }
 
-async function resolveDocumentScope(ctx: finch.MiniToolContext, sourcePath: string): Promise<{ scope: string; spaceId?: string; spaceName?: string; scopeLabel: string }> {
+async function resolveDocumentScope(ctx: finch.MiniToolContext, sourcePath: string, fallbackCwd?: string): Promise<{ scope: string; spaceId?: string; spaceName?: string; scopeLabel?: string; scopeKind: 'space' | 'workspace' | 'external' }> {
   const spaces = await ctx.spaces.list().catch(() => []);
   const matches = spaces
     .filter((space) => path.isAbsolute(space.directoryPath ?? '') && pathBelongsTo(space.directoryPath!, sourcePath))
     .sort((a, b) => (b.directoryPath?.length ?? 0) - (a.directoryPath?.length ?? 0));
   const space = matches[0];
-  if (space?.directoryPath) return { scope: space.directoryPath, spaceId: space.id, spaceName: space.name, scopeLabel: space.name };
+  if (space?.directoryPath) {
+    // `name` is Finch's user-facing display name (unlike directoryPath).
+    // Prefer it over the directory basename; alias is only a fallback for
+    // legacy/imported entries that may lack a normal display name.
+    const spaceName = space.name || space.alias || path.basename(space.directoryPath);
+    return { scope: space.directoryPath, spaceId: space.id, spaceName, scopeLabel: spaceName, scopeKind: 'space' };
+  }
   const workspaceRoot = ctx.workspace.projectPath;
-  if (workspaceRoot && pathBelongsTo(workspaceRoot, sourcePath)) return { scope: workspaceRoot, scopeLabel: 'Workspace' };
-  return { scope: path.dirname(sourcePath), scopeLabel: 'External files' };
+  if (workspaceRoot && pathBelongsTo(workspaceRoot, sourcePath)) {
+    return { scope: workspaceRoot, scopeKind: 'workspace' };
+  }
+  // AppView Home can have no live cwd, so it falls back to homePath. That
+  // fallback is still a real working directory, not an external location.
+  if (fallbackCwd && path.isAbsolute(fallbackCwd) && pathBelongsTo(fallbackCwd, sourcePath)) {
+    return { scope: fallbackCwd, scopeKind: 'workspace' };
+  }
+  return { scope: path.dirname(sourcePath), scopeKind: 'external' };
 }
 
 /** Records the panel's actual finch:env scope and migrates its current file
@@ -435,7 +450,7 @@ async function collectLibraryDocuments(ctx: finch.MiniToolContext): Promise<Rece
     .filter((value, index, values) => path.isAbsolute(value) && isMarkdownPath(value) && values.indexOf(value) === index);
   const documents = await Promise.all(candidates.map(async (filePath): Promise<RecentDocument | undefined> => {
     try {
-      const [info, markdown, scope] = await Promise.all([stat(filePath), readFile(filePath, 'utf8'), resolveDocumentScope(ctx, filePath)]);
+      const [info, markdown, scope] = await Promise.all([stat(filePath), readFile(filePath, 'utf8'), resolveDocumentScope(ctx, filePath, state.homePath)]);
       if (!info.isFile()) return undefined;
       const fileName = path.basename(filePath);
       return {
@@ -448,6 +463,7 @@ async function collectLibraryDocuments(ctx: finch.MiniToolContext): Promise<Rece
         spaceId: scope.spaceId,
         spaceName: scope.spaceName,
         scopeLabel: scope.scopeLabel,
+        scopeKind: scope.scopeKind,
       };
     } catch {
       return undefined;

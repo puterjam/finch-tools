@@ -34,6 +34,8 @@
       'home.yesterday': '昨天 {clock}',
       'appview.library': '资料库',
       'appview.libraryHint': '所有空间的最近文档',
+      'appview.libraryWorkspace': '工作间文件',
+      'appview.libraryOther': '其他',
       'appview.rewrite': '改写',
       'appview.focus': '专注',
       'appview.openSession': '打开改写会话',
@@ -188,6 +190,8 @@
       'home.yesterday': 'Yesterday {clock}',
       'appview.library': 'Library',
       'appview.libraryHint': 'Recent documents across all Spaces',
+      'appview.libraryWorkspace': 'Workspace files',
+      'appview.libraryOther': 'Other',
       'appview.rewrite': 'Rewrite',
       'appview.focus': 'Focus',
       'appview.openSession': 'Open rewrite session',
@@ -711,16 +715,39 @@
     if (!libraryGroups) return;
     var groups = {};
     (Array.isArray(documents) ? documents : []).forEach(function (doc) {
-      var label = doc.scopeLabel || doc.spaceName || 'Workspace';
-      (groups[label] || (groups[label] = [])).push(doc);
+      // Space labels are supplied by the backend from SpaceSummary.name —
+      // never infer them from the bound directory. Workspace and external
+      // labels localize here in the currently active UI language.
+      var kind = doc.scopeKind || 'external';
+      var label = kind === 'workspace' ? t('appview.libraryWorkspace')
+        : kind === 'external' ? t('appview.libraryOther')
+          : (doc.scopeLabel || doc.spaceName || t('appview.libraryOther'));
+      var key = kind + '\u0000' + label;
+      if (!groups[key]) groups[key] = { kind: kind, label: label, documents: [] };
+      groups[key].documents.push(doc);
     });
-    libraryGroups.innerHTML = Object.keys(groups).map(function (label) {
-      var rows = groups[label].map(function (doc) {
+    var ordered = Object.keys(groups).map(function (key) { return groups[key]; }).sort(function (a, b) {
+      // "Other" is intentionally last; real Spaces first, then the
+      // working directory that binds Home's fallback files together.
+      var ranks = { space: 0, workspace: 1, external: 2 };
+      var rankA = ranks[a.kind] == null ? 2 : ranks[a.kind];
+      var rankB = ranks[b.kind] == null ? 2 : ranks[b.kind];
+      var rankDiff = rankA - rankB;
+      return rankDiff || a.label.localeCompare(b.label);
+    });
+    libraryGroups.innerHTML = ordered.map(function (group) {
+      var rows = group.documents.map(function (doc) {
+        var docPath = doc.relativePath || doc.fileName || '';
         return '<button class="library-row" type="button" data-path="' + escapeHtml(doc.path || '') + '">'
+          + '<span class="library-row-main">'
           + '<strong>' + escapeHtml(doc.title || doc.fileName || t('home.untitled')) + '</strong>'
-          + '<span>' + escapeHtml((doc.relativePath || doc.fileName || '') + ' · ' + formatDocTime(doc.modifiedAt)) + '</span></button>';
+          + '<span class="library-row-meta"><span class="library-row-path" title="' + escapeHtml(docPath) + '">' + escapeHtml(docPath) + '</span>'
+          + '<time>' + escapeHtml(formatDocTime(doc.modifiedAt)) + '</time></span>'
+          + '</span></button>';
       }).join('');
-      return '<section class="library-group"><h3>' + escapeHtml(label) + '</h3>' + rows + '</section>';
+      return '<details class="library-group" open><summary><span class="library-group-title">' + escapeHtml(group.label) + '</span>'
+        + '<span class="library-group-count">' + group.documents.length + '</span></summary>'
+        + '<div class="library-items">' + rows + '</div></details>';
     }).join('') || '<p class="home-hint">' + escapeHtml(t('home.hintDefault')) + '</p>';
   }
 
