@@ -533,8 +533,14 @@ const finchTheme = EditorView.theme({
     // that one line's height and knocks every line below it out of
     // alignment with its own gutter number (the exact bug this line
     // exists to avoid). It's a fixed short phrase, never long enough to
-    // need wrapping on purpose.
+    // need wrapping on purpose. `.cm-line` also sets `word-break:
+    // break-word` for prose wrapping, and that property is inherited —
+    // Blink still force-breaks an unbreakable run under `white-space:
+    // nowrap` when it inherits `break-word`, so reset both wordBreak and
+    // overflowWrap here too or the nowrap above gets silently overridden.
     whiteSpace: 'nowrap',
+    wordBreak: 'keep-all',
+    overflowWrap: 'normal',
   },
   '.cm-activeLine': {
     backgroundColor: 'color-mix(in srgb, var(--text) 7%, transparent)',

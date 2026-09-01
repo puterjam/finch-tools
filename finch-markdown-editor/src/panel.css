@@ -61,8 +61,14 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .doc-foot{flex:none;padding:8px 12px 10px;border-top:1px solid var(--border);background:var(--card)}
 .doc-title{font-size:13px;font-weight:600;line-height:1.35;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .doc-sub{margin-top:2px;display:flex;gap:6px;font-size:11px;line-height:1.4;color:var(--muted)}
-.doc-sub .doc-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
-.doc-sub .doc-path.absolute-path{direction:ltr}
+/* Front-truncated in JS (see elideFrontAll) rather than via CSS
+   direction:rtl trick: that trick reorders per Unicode bidi rules on a
+   per-run basis, and a plain LTR path (Latin text + weakly-directional
+   `/` separators) doesn't reliably get its ellipsis pinned to the front —
+   it was observed still cutting off the filename at the end instead.
+   Doing it in JS with real measured width is reliable regardless of
+   directionality. */
+.doc-sub .doc-path{flex:1;min-width:0;overflow:hidden;white-space:nowrap}
 .doc-sub .doc-time{flex:none;opacity:.8}
 .doc-reveal{position:absolute;top:6px;right:6px;z-index:1;display:flex;align-items:center;justify-content:center;width:24px;height:24px;padding:0;border:none;border-radius:7px;background:color-mix(in srgb, var(--bg) 72%, transparent);color:var(--muted);cursor:pointer;opacity:0;transition:opacity .12s ease,background .12s ease,color .12s ease}
 .doc-reveal svg{width:14px;height:14px}
@@ -95,17 +101,18 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .popup input{width:147px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:4px 6px}
 .popup button{font:inherit;border:0;background:var(--accent);color:#fff;border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap}
 .popup button:hover{opacity:.9}
-/* Plain muted text, no chip/border — this is a passive hint ("here's the
-   shortcut if you want it"), not a clickable control, so it shouldn't look
-   like one. Both focused and unfocused states show exactly the same
-   elements (input + shortcut hint + send button); nothing toggles by
-   focus, so the popup never resizes when you click into it. */
-.popup-shortcut{display:flex;align-items:center;gap:3px;padding:0 4px;color:var(--muted);white-space:nowrap;cursor:default;font-size:11px}
+/* Shortcut hint and Send are mutually exclusive, never shown together:
+   the hint (unfocused — nothing to send yet) tells you how to jump in;
+   once focused it's done its job and Send takes over. Plain muted text,
+   no chip/border here — a passive hint, not a clickable control,
+   shouldn't look like one. */
+.popup-shortcut{display:flex;align-items:center;gap:3px;padding:0 6px;color:var(--muted);white-space:nowrap;cursor:default;font-size:11px}
 .popup-shortcut kbd{font:inherit;font-size:11px}
-/* Round send button, icon-only — sits in the same slot regardless of
-   focus state so the popup's overall size never shifts. */
+.popup.focused .popup-shortcut{display:none}
+.popup:not(.focused) .popup-send{display:none}
+/* Round send button, icon-only. */
 .popup-send{flex:none;width:28px;height:28px;padding:0;border-radius:999px;display:flex;align-items:center;justify-content:center}
-.popup-send svg{width:15px;height:15px}
+.popup-send svg{width:18px;height:18px}
 /* Inline prompt bar: the blank line the writer pressed space on turns into
    a full-width input. Width comes from JS (the editor's text column), so the
    input just needs to fill whatever it is given. */

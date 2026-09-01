@@ -662,11 +662,7 @@
     var cards = '';
     for (var i = 0; i < list.length; i++) {
       var doc = list[i] || {};
-      // Under the virtual homePath scope relativePath is necessarily an
-      // absolute path. The normal RTL tail-truncation presentation would
-      // visually move its leading '/' to the far right, so keep it LTR.
       var docPath = doc.relativePath || doc.fileName || '';
-      var docPathClass = /^(\/|[A-Za-z]:[\\/])/.test(docPath) ? 'doc-path absolute-path' : 'doc-path';
       cards += '<button class="doc-card" type="button" data-path="' + escapeHtml(doc.path || '') + '" title="' + escapeHtml(doc.path || '') + '">'
         + '<span class="doc-reveal" data-reveal-path="' + escapeHtml(doc.path || '') + '" role="button" tabindex="0" title="' + escapeHtml(t('home.revealInFileManager')) + '" aria-label="' + escapeHtml(t('home.revealInFileManager')) + '">'
         + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>'
@@ -674,13 +670,41 @@
         + '<div class="doc-preview">' + escapeHtml(doc.preview || t('home.emptyDoc')) + '</div>'
         + '<div class="doc-foot">'
         + '<div class="doc-title">' + escapeHtml(doc.title || doc.fileName || t('home.untitled')) + '</div>'
-        + '<div class="doc-sub"><span class="' + docPathClass + '">' + escapeHtml(docPath) + '</span>'
+        + '<div class="doc-sub"><span class="doc-path" data-full-path="' + escapeHtml(docPath) + '">' + escapeHtml(docPath) + '</span>'
         + '<span class="doc-time">' + escapeHtml(formatDocTime(doc.modifiedAt)) + '</span></div>'
         + '</div></button>';
     }
     homeGrid.innerHTML = cards;
     homeRecent.hidden = false;
     homeHint.hidden = true;
+    // Layout needs to settle (grid columns, card width) before scrollWidth
+    // measurements below are meaningful.
+    requestAnimationFrame(function () { elideFrontAll(homeGrid); });
+  }
+
+  // Front-truncates every `[data-full-path]` element inside `root` down to
+  // "…" + as much of the tail as fits — a real per-element measurement
+  // rather than the CSS direction:rtl trick, which doesn't reliably keep
+  // the ellipsis pinned to the front for plain LTR path text (see the CSS
+  // comment on .doc-path). Binary search on character count keeps this to
+  // O(log n) DOM writes per element instead of trimming one char at a time.
+  function elideFrontAll(root) {
+    var ELLIPSIS = '\u2026';
+    var nodes = root.querySelectorAll('[data-full-path]');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var full = el.getAttribute('data-full-path') || '';
+      el.textContent = full;
+      if (!full || el.scrollWidth <= el.clientWidth + 1) continue;
+      var lo = 0, hi = full.length, best = 0;
+      while (lo <= hi) {
+        var mid = (lo + hi) >> 1;
+        el.textContent = mid > 0 ? ELLIPSIS + full.slice(full.length - mid) : ELLIPSIS;
+        if (el.scrollWidth <= el.clientWidth + 1) { best = mid; lo = mid + 1; }
+        else hi = mid - 1;
+      }
+      el.textContent = best > 0 ? ELLIPSIS + full.slice(full.length - best) : ELLIPSIS;
+    }
   }
 
   function renderLibraryDocuments(documents) {
@@ -1373,6 +1397,7 @@
     cancelScheduledPopup();
     popup.classList.add('hidden');
     popup.classList.remove('popup-bar');
+    popup.classList.remove('focused');
     popup.style.width = '';
     selection.text = '';
     selection.lines = null;
@@ -1386,6 +1411,18 @@
   popupInput.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') submitAnnotation();
     if (e.key === 'Escape') closePopup(true);
+  });
+  // Shortcut hint and Send button occupy the same slot and never show at
+  // once: unfocused, there's nothing to send yet, so the hint tells you
+  // how to jump in; focused, the hint has done its job and Send takes
+  // over. `.focused` is a plain class rather than `:focus-within` because
+  // `blur` needs its own check — moving focus to the Send button itself
+  // (a click) must not count as leaving the input.
+  popupInput.addEventListener('focus', function () { popup.classList.add('focused'); });
+  popupInput.addEventListener('blur', function () {
+    requestAnimationFrame(function () {
+      if (document.activeElement !== popupSend) popup.classList.remove('focused');
+    });
   });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && !popup.classList.contains('hidden')) closePopup(true);
