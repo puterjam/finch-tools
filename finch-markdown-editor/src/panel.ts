@@ -416,6 +416,11 @@
   var libraryBackdrop = document.getElementById('libraryBackdrop');
   var libraryClose = document.getElementById('libraryClose');
   var libraryGroups = document.getElementById('libraryGroups');
+  var LIBRARY_GROUP_STATE_KEY = 'md-editor-library-groups-v1';
+  var libraryGroupOrder = [];
+  var libraryCollapsedGroups = {};
+  var libraryDragging = null;
+  var libraryDragOpenState = null;
 
   var isAppView = false;
   var previewVisible = true;
@@ -454,6 +459,9 @@
     else if (savedEditorFont) localStorage.removeItem('md-editor-font-family');
     comfortWriting = localStorage.getItem('md-editor-comfort-writing') === '1';
     focusMode = localStorage.getItem('md-editor-focus-mode') === '1';
+    var savedLibraryGroups = JSON.parse(localStorage.getItem(LIBRARY_GROUP_STATE_KEY) || '{}');
+    if (Array.isArray(savedLibraryGroups.order)) libraryGroupOrder = savedLibraryGroups.order.filter(function (id) { return typeof id === 'string'; });
+    if (savedLibraryGroups.collapsed && typeof savedLibraryGroups.collapsed === 'object') libraryCollapsedGroups = savedLibraryGroups.collapsed;
   } catch (e) {}
   // On by default: selecting text opens the rewrite popup right away, no
   // extra "开启批注" click first. The toolbar toggle still exists so a
@@ -713,6 +721,10 @@
     }
   }
 
+  function saveLibraryGroupState() {
+    try { localStorage.setItem(LIBRARY_GROUP_STATE_KEY, JSON.stringify({ order: libraryGroupOrder, collapsed: libraryCollapsedGroups })); } catch (e) {}
+  }
+
   function renderLibraryDocuments(documents) {
     if (!libraryGroups) return;
     var groups = {};
@@ -724,17 +736,21 @@
       var label = kind === 'workspace' ? t('appview.libraryWorkspace')
         : kind === 'external' ? t('appview.libraryOther')
           : (doc.scopeLabel || doc.spaceName || t('appview.libraryOther'));
-      var key = kind + '\u0000' + label;
-      if (!groups[key]) groups[key] = { kind: kind, label: label, documents: [] };
-      groups[key].documents.push(doc);
+      var groupId = kind === 'space' ? 'space:' + (doc.spaceId || label)
+        : kind === 'workspace' ? 'workspace' : 'external';
+      if (!groups[groupId]) groups[groupId] = { id: groupId, kind: kind, label: label, documents: [] };
+      groups[groupId].documents.push(doc);
     });
     var ordered = Object.keys(groups).map(function (key) { return groups[key]; }).sort(function (a, b) {
-      // "Other" is intentionally last; real Spaces first, then the
-      // working directory that binds Home's fallback files together.
-      var ranks = { space: 0, workspace: 1, external: 2 };
-      var rankA = ranks[a.kind] == null ? 2 : ranks[a.kind];
-      var rankB = ranks[b.kind] == null ? 2 : ranks[b.kind];
-      var rankDiff = rankA - rankB;
+      // True external files remain fixed at the bottom. Space/workspace
+      // groups follow the user's persisted drag order, then default to the
+      // deterministic Space → workspace ordering for newly seen groups.
+      if (a.kind === 'external' || b.kind === 'external') return a.kind === b.kind ? 0 : a.kind === 'external' ? 1 : -1;
+      var orderA = libraryGroupOrder.indexOf(a.id);
+      var orderB = libraryGroupOrder.indexOf(b.id);
+      if (orderA >= 0 || orderB >= 0) return (orderA < 0 ? 9999 : orderA) - (orderB < 0 ? 9999 : orderB);
+      var ranks = { space: 0, workspace: 1 };
+      var rankDiff = ranks[a.kind] - ranks[b.kind];
       return rankDiff || a.label.localeCompare(b.label);
     });
     libraryGroups.innerHTML = ordered.map(function (group) {
@@ -747,7 +763,10 @@
           + '<time>' + escapeHtml(formatDocTime(doc.modifiedAt)) + '</time></span>'
           + '</span></button>';
       }).join('');
-      return '<details class="library-group" open><summary><span class="library-group-title">' + escapeHtml(group.label) + '</span>'
+      var draggable = group.kind !== 'external';
+      var open = !libraryCollapsedGroups[group.id];
+      return '<details class="library-group" data-library-group-id="' + escapeHtml(group.id) + '"'
+        + (draggable ? ' draggable="true"' : '') + (open ? ' open' : '') + '><summary><span class="library-group-title">' + escapeHtml(group.label) + '</span>'
         + '<span class="library-group-count">' + group.documents.length + '</span></summary>'
         + '<div class="library-items">' + rows + '</div></details>';
     }).join('') || '<p class="home-hint">' + escapeHtml(t('home.hintDefault')) + '</p>';
@@ -759,6 +778,25 @@
     libraryDrawer.setAttribute('aria-hidden', open ? 'false' : 'true');
     libraryBackdrop.hidden = !open;
     if (open) requestRecentDocuments();
+  }
+
+  function finishLibraryDrag() {
+    if (!libraryDragging || !libraryGroups) return;
+    libraryDragging.classList.remove('dragging');
+    Array.prototype.forEach.call(libraryGroups.querySelectorAll('.library-group.drag-over'), function (group) { group.classList.remove('drag-over'); });
+    // Store only movable group ids: Other always remains a fixed final group.
+    libraryGroupOrder = Array.prototype.map.call(libraryGroups.querySelectorAll('.library-group[draggable="true"]'), function (group) {
+      return group.getAttribute('data-library-group-id');
+    }).filter(Boolean);
+    var openState = libraryDragOpenState || {};
+    Array.prototype.forEach.call(libraryGroups.querySelectorAll('.library-group'), function (group) {
+      var id = group.getAttribute('data-library-group-id');
+      if (id in openState) group.open = !!openState[id];
+    });
+    libraryDragging = null;
+    // details `toggle` can be queued by the browser; keep the snapshot live
+    // through this task so temporary collapsing never overwrites saved state.
+    setTimeout(function () { libraryDragOpenState = null; saveLibraryGroupState(); }, 0);
   }
 
   if (appLibrary) appLibrary.addEventListener('click', function () { setLibraryOpen(true); });
@@ -773,6 +811,45 @@
     setStatus(t('status.opening'));
     api.postMessage({ type: 'loadPath', path: docPath });
   });
+  if (libraryGroups) {
+    // Persist ordinary expand/collapse choices. During a drag all groups are
+    // briefly collapsed for a clean reorder target, but that temporary state
+    // is deliberately ignored and restored from libraryDragOpenState.
+    libraryGroups.addEventListener('toggle', function (event) {
+      var group = event.target;
+      if (!group || !group.matches || !group.matches('.library-group')) return;
+      if (libraryDragOpenState) return;
+      var id = group.getAttribute('data-library-group-id');
+      if (!id) return;
+      libraryCollapsedGroups[id] = !group.open;
+      saveLibraryGroupState();
+    }, true);
+    libraryGroups.addEventListener('dragstart', function (event) {
+      var group = event.target && event.target.closest ? event.target.closest('.library-group[draggable="true"]') : null;
+      if (!group) return;
+      libraryDragging = group;
+      libraryDragOpenState = {};
+      Array.prototype.forEach.call(libraryGroups.querySelectorAll('.library-group'), function (item) {
+        var id = item.getAttribute('data-library-group-id');
+        if (id) libraryDragOpenState[id] = !!item.open;
+        item.open = false;
+      });
+      group.classList.add('dragging');
+      if (event.dataTransfer) { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', group.getAttribute('data-library-group-id') || ''); }
+    });
+    libraryGroups.addEventListener('dragover', function (event) {
+      if (!libraryDragging) return;
+      var target = event.target && event.target.closest ? event.target.closest('.library-group[draggable="true"]') : null;
+      if (!target || target === libraryDragging) return;
+      event.preventDefault();
+      Array.prototype.forEach.call(libraryGroups.querySelectorAll('.library-group.drag-over'), function (item) { item.classList.remove('drag-over'); });
+      target.classList.add('drag-over');
+      var after = event.clientY > target.getBoundingClientRect().top + target.offsetHeight / 2;
+      libraryGroups.insertBefore(libraryDragging, after ? target.nextSibling : target);
+    });
+    libraryGroups.addEventListener('drop', function (event) { if (libraryDragging) { event.preventDefault(); finishLibraryDrag(); } });
+    libraryGroups.addEventListener('dragend', finishLibraryDrag);
+  }
 
   // Set while a Home-card click is in flight, so the `document` reply below
   // can turn "正在打开…" into a completion message instead of leaving it
