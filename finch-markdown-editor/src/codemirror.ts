@@ -20,6 +20,7 @@ import {
 import { EditorState, RangeSet, RangeSetBuilder, StateEffect, StateField, Transaction, type Text } from '@codemirror/state';
 import { indentLess, indentMore, indentWithTab, defaultKeymap, historyKeymap } from '@codemirror/commands';
 import { searchKeymap } from '@codemirror/search';
+import { type Completion, type CompletionContext } from '@codemirror/autocomplete';
 import {
   Decoration,
   type DecorationSet,
@@ -543,7 +544,7 @@ const finchTheme = EditorView.theme({
     position: 'absolute',
     top: '0',
     bottom: '0',
-    left: '2px',
+    left: '10px',
     display: 'flex',
     alignItems: 'center',
     // An empty line is otherwise zero-width. The phrase deliberately never
@@ -2015,7 +2016,78 @@ const searchPhrases = {
   'on line': '位于第',
 };
 
+// Slash blocks are deliberately a small Markdown-only menu, not a generic
+// command palette: it only appears after `/` on an otherwise blank line.
+// `detail` renders as the quiet right-hand delimiter in CodeMirror's native
+// completion list, while `apply` replaces the typed `/…` query on Enter.
+const markdownSlashBlocks: Completion[] = [
+  { label: '标题 1', detail: '#', apply: '# ', type: 'keyword' },
+  { label: '标题 2', detail: '##', apply: '## ', type: 'keyword' },
+  { label: '标题 3', detail: '###', apply: '### ', type: 'keyword' },
+  { label: '符号列表', detail: '-', apply: '- ', type: 'keyword' },
+  { label: '有序列表', detail: '1.', apply: '1. ', type: 'keyword' },
+  { label: '引用', detail: '>', apply: '> ', type: 'keyword' },
+  { label: '分隔线', detail: '---', apply: '---', type: 'keyword' },
+  { label: '代码', detail: '```', apply: '```', type: 'keyword' },
+  { label: '表格', detail: '|', apply: '|', type: 'keyword' },
+];
+
+function markdownSlashAutocompleter(context: CompletionContext) {
+  const line = context.state.doc.lineAt(context.pos);
+  const before = context.state.sliceDoc(line.from, context.pos);
+  // Whitespace before `/` is kept intact, so slash blocks also work for an
+  // indented list item. Any non-whitespace before the slash means it is
+  // prose/a path instead and must never open this block menu.
+  const match = /^(\s*)\/(\S*)$/.exec(before);
+  if (!match) return null;
+  const query = match[2].toLowerCase();
+  const options = markdownSlashBlocks.filter((option) => {
+    const label = option.label.toLowerCase();
+    const delimiter = (option.detail || '').toLowerCase();
+    return !query || label.includes(query) || delimiter.startsWith(query);
+  });
+  if (!options.length) return null;
+  return {
+    // Include the slash in the replacement range, preserving only indent.
+    from: line.from + match[1].length,
+    options,
+    // We filter on delimiters as well as labels above; bypass CodeMirror's
+    // label-only filter so typing `/##`, `/---`, or `/|` stays intuitive.
+    filter: false,
+  };
+}
+
+// Toggle paired Markdown delimiters around a real selection. Repeating the
+// same shortcut unwraps an immediately surrounding pair, so Cmd/Ctrl+B/I
+// behaves as a genuine toggle rather than endlessly nesting punctuation.
+function toggleMarkdownDelimiter(view: EditorView, delimiter: string): boolean {
+  const selection = view.state.selection.main;
+  if (selection.empty) return false;
+  const { from, to } = selection;
+  const before = view.state.sliceDoc(Math.max(0, from - delimiter.length), from);
+  const after = view.state.sliceDoc(to, Math.min(view.state.doc.length, to + delimiter.length));
+  if (before === delimiter && after === delimiter) {
+    view.dispatch({
+      changes: [
+        { from: from - delimiter.length, to: from },
+        { from: to, to: to + delimiter.length },
+      ],
+      selection: { anchor: from - delimiter.length, head: to - delimiter.length },
+      scrollIntoView: true,
+    });
+  } else {
+    view.dispatch({
+      changes: [{ from, insert: delimiter }, { from: to, insert: delimiter }],
+      selection: { anchor: from + delimiter.length, head: to + delimiter.length },
+      scrollIntoView: true,
+    });
+  }
+  return true;
+}
+
 const markdownEditorKeymap = keymap.of([
+  { key: 'Mod-b', run: (view) => toggleMarkdownDelimiter(view, '**') },
+  { key: 'Mod-i', run: (view) => toggleMarkdownDelimiter(view, '_') },
   { key: '`', run: handleFenceTriggerBacktick },
   { key: 'Enter', run: completeOpeningCodeFence },
   { key: 'ArrowUp', run: (view) => moveIntoAdjacentTable(view, -1) || moveIntoSkippedDelimiterLine(view, -1) },
@@ -2309,6 +2381,9 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       // via CodeMirror's own autocompletion (basicSetup already includes
       // the autocompletion extension).
       markdownSupport.language.data.of({ autocomplete: markdownTableAutocompleter() }),
+      // Slash on an otherwise empty line opens the Markdown block menu;
+      // the native completion UI provides keyboard filtering/navigation.
+      markdownSupport.language.data.of({ autocomplete: markdownSlashAutocompleter }),
       // Interactive table component: Tab/Enter navigate cells, borders
       // insert/delete rows & columns, row/column headers drag to reorder.
       markdownTables({
