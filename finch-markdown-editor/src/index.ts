@@ -4,31 +4,11 @@ import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises
 import { watch, type FSWatcher } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import os from 'node:os';
+import { type DocumentState, type EditSpec, applyEditSpecs, documentTitle, preserveTextEnvelope } from './document.js';
+import { cancelPendingDraftWrite, deleteDraft, flushPendingDraftWrite, readFileWithDraft, scheduleDraftWrite } from './drafts.js';
+import { renderWithBm } from './renderer.js';
 
-interface DocumentState {
-  path?: string;
-  markdown: string;
-  title: string;
-  /** True when `markdown` came from a recovered unsaved draft rather than
-   * the file's actual on-disk content — the panel marks the document dirty
-   * and tells the user, instead of pretending it matches disk. */
-  draftRestored?: boolean;
-  /** True when a draft existed but disk had already moved on since the
-   * draft's baseline (an external save happened) — `markdown` here is the
-   * current disk content, not the draft, and the stale draft was kept
-   * on disk rather than silently applied or discarded. */
-  draftConflict?: boolean;
-  /** The file's *actual* on-disk content, only meaningfully different from
-   * `markdown` when `draftRestored` is true. The panel must track this
-   * (not the restored draft it's displaying) as its "last disk-confirmed"
-   * baseline — otherwise the next draft it mirrors back would record its
-   * `baseHash` against the *draft*, not disk, so a later reopen would see
-   * disk still sitting at the true baseline and wrongly report an
-   * external-edit conflict that never happened. */
-  diskMarkdown?: string;
-}
 
 interface RecentDocument {
   path: string;
@@ -142,84 +122,6 @@ function result(message: string, isError = false): finch.ToolResult {
   return { content: [{ type: 'text', text: message }], isError };
 }
 
-/** `apply`'s targeted-edit mode — the same find-and-replace contract as a
- * code editor's Edit tool: each `old_string` is matched against the file's
- * *current* content (already reflecting any earlier edits in this same
- * call), not against the original snapshot, so a batch of edits composes
- * left-to-right. This lets the caller send a handful of small replacements
- * instead of the entire document for anything short of a full rewrite. */
-interface EditSpec { old_string: string; new_string: string; replace_all?: boolean }
-
-type EditSpecsResult = { ok: true; content: string } | { ok: false; error: string };
-
-type TextEnvelope = { bom: string; lineEnding: '\r\n' | '\n'; text: string };
-
-/** Preserve the source's BOM and dominant newline convention while matching
- * edit strings against LF-normalized content. Models almost always emit LF,
- * while user-authored Markdown can be CRLF (or carry a UTF-8 BOM). */
-function unwrapTextEnvelope(content: string): TextEnvelope {
-  const bom = content.startsWith('\ufeff') ? '\ufeff' : '';
-  const text = bom ? content.slice(1) : content;
-  const firstCrLf = text.indexOf('\r\n');
-  const firstLf = text.indexOf('\n');
-  const lineEnding: '\r\n' | '\n' = firstCrLf !== -1 && (firstLf === -1 || firstCrLf <= firstLf) ? '\r\n' : '\n';
-  return { bom, lineEnding, text: text.replace(/\r\n/g, '\n').replace(/\r/g, '\n') };
-}
-
-function normalizeToLf(text: string): string {
-  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
-
-function rewrapTextEnvelope(envelope: TextEnvelope, normalizedText: string): string {
-  const restored = envelope.lineEnding === '\r\n' ? normalizedText.replace(/\n/g, '\r\n') : normalizedText;
-  return envelope.bom + restored;
-}
-
-/** Used by full-document replacement too, so apply never silently strips a
- * BOM or rewrites every line ending merely because the model sent LF text. */
-function preserveTextEnvelope(existingContent: string, replacement: string): string {
-  const envelope = unwrapTextEnvelope(existingContent);
-  return rewrapTextEnvelope(envelope, normalizeToLf(replacement.replace(/^\ufeff/, '')));
-}
-
-function applyEditSpecs(content: string, edits: EditSpec[]): EditSpecsResult {
-  const envelope = unwrapTextEnvelope(content);
-  let working = envelope.text;
-  for (let i = 0; i < edits.length; i++) {
-    const { old_string: rawOldString, new_string: rawNewString, replace_all: replaceAll } = edits[i];
-    if (typeof rawOldString !== 'string' || rawOldString.length === 0) {
-      return { ok: false, error: `edits[${i}]: 'old_string' must be a non-empty string.` };
-    }
-    if (typeof rawNewString !== 'string') {
-      return { ok: false, error: `edits[${i}]: 'new_string' must be a string.` };
-    }
-    const oldString = normalizeToLf(rawOldString);
-    const newString = normalizeToLf(rawNewString);
-    if (oldString === newString) {
-      return { ok: false, error: `edits[${i}]: 'old_string' and 'new_string' are identical — nothing to change.` };
-    }
-    const occurrences = working.split(oldString).length - 1;
-    if (occurrences === 0) {
-      return { ok: false, error: `edits[${i}]: 'old_string' was not found in the file's current content. Check the exact text (including whitespace/line breaks) — the file may differ from what you last saw.` };
-    }
-    if (occurrences > 1 && !replaceAll) {
-      return { ok: false, error: `edits[${i}]: 'old_string' matches ${occurrences} places in the file. Include more surrounding context to make it unique, or set 'replace_all: true' to replace every match.` };
-    }
-    if (replaceAll) {
-      working = working.split(oldString).join(newString);
-    } else {
-      const index = working.indexOf(oldString);
-      working = working.slice(0, index) + newString + working.slice(index + oldString.length);
-    }
-  }
-  return { ok: true, content: rewrapTextEnvelope(envelope, working) };
-}
-
-function documentTitle(markdown: string, filePath?: string): string {
-  const heading = markdown.match(/^#\s+(.+)$/m)?.[1]?.trim();
-  return heading || (filePath ? path.basename(filePath, path.extname(filePath)) : 'Untitled article');
-}
-
 // Remember the last successfully opened file, so the user doesn't have to
 // re-open it by hand every time. The primary key is panel.id: each Panel scope
 // gets its own stable instance, including different Space Home scopes, and a
@@ -285,135 +187,6 @@ async function writeStyleSlot(ctx: finch.MiniToolContext, slot: number, value: S
   await mkdir(ctx.storagePath, { recursive: true });
   await writeFile(styleSlotsFile(ctx), JSON.stringify(slots), 'utf8');
   return slots;
-}
-
-// Editor-style unsaved-draft recovery: while a document has a real path on
-// disk, every edit is mirrored (debounced, panel-side) into a small sidecar
-// file keyed by a hash of that path. Reopening the same file — even after
-// quitting Finch entirely — resumes from the draft instead of the last
-// saved-to-disk content, exactly like a desktop editor's crash recovery.
-// Saving for real deletes the draft; there is deliberately no user-facing
-// "restore draft?" prompt in the common case (that would just be new
-// friction) — the draft is simply the freshest version of the user's own
-// last edit, so it wins silently and the small status line already used
-// elsewhere says so.
-//
-// `baseHash` records a hash of the on-disk content the draft was *edited on
-// top of* (the panel's `savedMarkdown` at the time). On reopen this lets us
-// tell two very different situations apart:
-//   - disk still matches baseHash  → nothing else touched the file since the
-//     draft was taken; restoring it silently is safe.
-//   - disk no longer matches       → someone (another editor, an AI apply,
-//     a sync tool) saved a *different* version of the file after the draft
-//     was taken. Silently preferring the draft here would quietly discard
-//     that external save; silently preferring disk would quietly discard the
-//     user's own unsaved edit. Neither is a good "silent" default, so this
-//     case loads disk (the only version anyone else can see or has actually
-//     confirmed) and surfaces the conflict instead of guessing.
-interface DraftFile { path: string; markdown: string; baseHash?: string; savedAt: number }
-
-function draftPathFor(ctx: finch.MiniToolContext, sourcePath: string): string {
-  const digest = createHash('sha256').update(sourcePath).digest('hex').slice(0, 32);
-  return path.join(ctx.storagePath, 'drafts', `${digest}.json`);
-}
-
-function hashText(text: string): string {
-  return createHash('sha256').update(text).digest('hex');
-}
-
-async function readDraft(ctx: finch.MiniToolContext, sourcePath: string): Promise<DraftFile | undefined> {
-  try {
-    const raw = JSON.parse(await readFile(draftPathFor(ctx, sourcePath), 'utf8')) as DraftFile;
-    // Hash collisions are astronomically unlikely, but never trust a draft
-    // for a different absolute path than the one requested.
-    return raw && raw.path === sourcePath && typeof raw.markdown === 'string' ? raw : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function writeDraft(ctx: finch.MiniToolContext, sourcePath: string, markdown: string, base: string | undefined): Promise<void> {
-  try {
-    const file = draftPathFor(ctx, sourcePath);
-    await mkdir(path.dirname(file), { recursive: true });
-    const entry: DraftFile = { path: sourcePath, markdown, savedAt: Date.now() };
-    if (typeof base === 'string') entry.baseHash = hashText(base);
-    await writeFile(file, JSON.stringify(entry), 'utf8');
-  } catch (error) {
-    ctx.logger.warn(`Could not persist draft for ${sourcePath}: ${String(error)}`);
-  }
-}
-
-async function deleteDraft(ctx: finch.MiniToolContext, sourcePath: string): Promise<void> {
-  await rm(draftPathFor(ctx, sourcePath), { force: true }).catch(() => {});
-}
-
-// ---- Draft write coalescing ----
-// The panel now posts `saveDraft` on *every* keystroke (no client-side
-// timer) so the backend always has the latest content in hand the instant
-// it's typed — a tab close (Cmd/Ctrl+W) tears the panel down with no
-// reliable opportunity for page-lifecycle JS to run first, so anything that
-// depended on the panel itself flushing before teardown was inherently
-// racy. Debouncing the actual disk write moves here instead, where the
-// timer lives in this long-running extension host, not in the panel that
-// can disappear out from under it — the timer keeps ticking (and still
-// writes) even after the panel that scheduled it is gone. `onDidDispose`
-// additionally flushes immediately, so real teardown never waits out the
-// debounce at all.
-const DRAFT_WRITE_DEBOUNCE_MS = 600;
-interface PendingDraftWrite { path: string; markdown: string; base: string | undefined; timer: ReturnType<typeof setTimeout> | null }
-const pendingDraftWrites = new Map<string, PendingDraftWrite>();
-
-function scheduleDraftWrite(ctx: finch.MiniToolContext, panelId: string, sourcePath: string, markdown: string, base: string | undefined): void {
-  const existing = pendingDraftWrites.get(panelId);
-  if (existing?.timer) clearTimeout(existing.timer);
-  const entry: PendingDraftWrite = { path: sourcePath, markdown, base, timer: null };
-  entry.timer = setTimeout(() => {
-    entry.timer = null;
-    pendingDraftWrites.delete(panelId);
-    void writeDraft(ctx, sourcePath, markdown, base);
-  }, DRAFT_WRITE_DEBOUNCE_MS);
-  pendingDraftWrites.set(panelId, entry);
-}
-
-/** Writes out whatever's pending right now, bypassing the debounce — used
- * when we know for certain the panel is going away (`onDidDispose`). */
-function flushPendingDraftWrite(ctx: finch.MiniToolContext, panelId: string): void {
-  const entry = pendingDraftWrites.get(panelId);
-  if (!entry) return;
-  if (entry.timer) clearTimeout(entry.timer);
-  pendingDraftWrites.delete(panelId);
-  void writeDraft(ctx, entry.path, entry.markdown, entry.base);
-}
-
-/** Drops a pending write without persisting it — used when a real save or
- * an explicit discard has just made it stale, so it can't land afterward
- * and resurrect a draft for a file that was just handled. */
-function cancelPendingDraftWrite(panelId: string): void {
-  const entry = pendingDraftWrites.get(panelId);
-  if (entry?.timer) clearTimeout(entry.timer);
-  pendingDraftWrites.delete(panelId);
-}
-
-/** Reads a file from disk and reconciles it against any pending draft:
- * - no draft, or draft identical to disk → plain disk content.
- * - draft's baseline still matches disk (nothing else changed the file) →
- *   silently resume the draft (`draftRestored: true`).
- * - draft's baseline no longer matches disk (an external save happened
- *   since the draft was taken) → keep disk content (never silently drop an
- *   external save), leave the draft file in place, and flag the conflict
- *   (`draftConflict: true`) so the panel can tell the user instead of
- *   guessing on their behalf. */
-async function readFileWithDraft(
-  ctx: finch.MiniToolContext,
-  sourcePath: string,
-): Promise<{ markdown: string; diskMarkdown: string; draftRestored: boolean; draftConflict: boolean }> {
-  const diskMarkdown = await readFile(sourcePath, 'utf8');
-  const draft = await readDraft(ctx, sourcePath);
-  if (!draft || draft.markdown === diskMarkdown) return { markdown: diskMarkdown, diskMarkdown, draftRestored: false, draftConflict: false };
-  const diskMatchesBaseline = draft.baseHash === undefined || draft.baseHash === hashText(diskMarkdown);
-  if (diskMatchesBaseline) return { markdown: draft.markdown, diskMarkdown, draftRestored: true, draftConflict: false };
-  return { markdown: diskMarkdown, diskMarkdown, draftRestored: false, draftConflict: true };
 }
 
 function sessionBucketKey(panel: finch.AppPanel): string {
@@ -687,64 +460,6 @@ async function restoreDocument(ctx: finch.MiniToolContext, panel: finch.AppPanel
     ctx.logger.warn(`Could not restore ${sourcePath}: ${String(error)}`);
     return false;
   }
-}
-
-// bmmd is LGPL-3.0-only as of 0.3.0, so its published CLI payload is
-// bundled under dist/bmmd/bin at build time. Keeping its files intact (rather
-// than rebundling) preserves the CLI's dynamic imports between chunk files.
-const BMMD_BIN_PATH = fileURLToPath(new URL('./bmmd/bin/bmmd.mjs', import.meta.url));
-
-async function runBmmd(args: string[], input: string): Promise<string> {
-  const binPath = BMMD_BIN_PATH;
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [binPath, ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
-    let output = '';
-    let errors = '';
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => { output += chunk; });
-    child.stderr.on('data', (chunk: string) => { errors += chunk; });
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code === 0) resolve(output);
-      else reject(new Error(errors.trim() || `bmmd exited with code ${code}`));
-    });
-    child.stdin.end(input, 'utf8');
-  });
-}
-
-// bmmd sanitizes `img[src]` and deliberately removes both unknown protocols
-// (including Finch's `finch-file:`) and data: URLs. Preserve the Markdown
-// source URL unchanged, but temporarily turn each local image into a unique
-// harmless HTTPS placeholder. HTTPS survives bmmd's sanitizer; after bmmd
-// has finished its layout/inlining work we restore the original URL in the
-// generated HTML. The panel webview can then resolve it through Finch's
-// already-allowlisted `finch-file://local` protocol.
-const FINCH_FILE_IMAGE_RE = /finch-file:\/\/local\?path=[^\s)"']+/g;
-const FINCH_IMAGE_PLACEHOLDER_ORIGIN = 'https://finch-local.invalid/markdown-image/';
-
-function substituteFinchFileImagesForBm(markdown: string): { markdown: string; urls: Map<string, string> } {
-  const urls = new Map<string, string>();
-  let sequence = 0;
-  const substituted = markdown.replace(FINCH_FILE_IMAGE_RE, (originalUrl) => {
-    // The random-ish digest plus monotonically increasing suffix makes a
-    // collision within one render practically impossible, including when
-    // the same source URL is deliberately pasted more than once.
-    const placeholder = `${FINCH_IMAGE_PLACEHOLDER_ORIGIN}${createHash('sha256')
-      .update(`${originalUrl}:${sequence++}`).digest('hex')}`;
-    urls.set(placeholder, originalUrl);
-    return placeholder;
-  });
-  return { markdown: substituted, urls };
-}
-
-async function renderWithBm(markdown: string, markdownStyle: string, customCss: string | undefined): Promise<string> {
-  const args = ['render', '--platform', 'wechat', '--markdown-style', markdownStyle || 'kami'];
-  if (customCss && customCss.trim()) args.push('--custom-css', customCss);
-  const prepared = substituteFinchFileImagesForBm(markdown);
-  let html = await runBmmd(args, prepared.markdown);
-  for (const [placeholder, originalUrl] of prepared.urls) html = html.split(placeholder).join(originalUrl);
-  return html;
 }
 
 // Debounce timer lives alongside the watcher (not as a bare closure local)
