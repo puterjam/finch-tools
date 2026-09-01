@@ -99,19 +99,20 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 @keyframes popup-in{from{opacity:0;transform:translateY(5px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
 @media (prefers-reduced-motion:reduce){.popup{animation:none}}
 .popup input{width:147px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:4px 6px}
-.popup button{font:inherit;border:0;background:var(--accent);color:#fff;border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap}
+.popup button{font:inherit;border:0;background:var(--accent);color:#fff;border-radius:6px;padding:2px 6px;cursor:pointer;white-space:nowrap}
 .popup button:hover{opacity:.9}
-/* Shortcut hint and Send are mutually exclusive, never shown together:
-   the hint (unfocused — nothing to send yet) tells you how to jump in;
-   once focused it's done its job and Send takes over. Plain muted text,
-   no chip/border here — a passive hint, not a clickable control,
-   shouldn't look like one. */
+/* The slot stays sized by the shortcut even after focus: hiding with
+   visibility (rather than display:none) preserves both the popup's width
+   and height. Send is absolutely centered over that reserved space, so it
+   never coexists visually with the hint. */
+.popup-action-slot{position:relative;display:flex;align-items:center;justify-content:center;min-height:28px}
 .popup-shortcut{display:flex;align-items:center;gap:3px;padding:0 6px;color:var(--muted);white-space:nowrap;cursor:default;font-size:11px}
 .popup-shortcut kbd{font:inherit;font-size:11px}
-.popup.focused .popup-shortcut{display:none}
-.popup:not(.focused) .popup-send{display:none}
-/* Round send button, icon-only. */
-.popup-send{flex:none;width:28px;height:28px;padding:0;border-radius:999px;display:flex;align-items:center;justify-content:center}
+.popup.focused .popup-shortcut{visibility:hidden}
+.popup:not(.focused) .popup-send{visibility:hidden;pointer-events:none}
+/* Round send button, icon-only, centered inside the permanently reserved
+   shortcut slot. */
+.popup-send{position:absolute;inset:0;margin:auto;width:28px;height:28px;padding:0;border-radius:999px;display:flex;align-items:center;justify-content:center}
 .popup-send svg{width:18px;height:18px}
 /* Inline prompt bar: the blank line the writer pressed space on turns into
    a full-width input. Width comes from JS (the editor's text column), so the

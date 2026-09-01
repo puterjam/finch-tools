@@ -94,10 +94,12 @@
 </main>
 <section id="popup" class="popup hidden">
   <input id="popupInput" type="text">
-  <span id="popupShortcut" class="popup-shortcut" aria-hidden="true"></span>
-  <button id="popupSend" class="popup-send" aria-label="Send" data-i18n-tooltip="popup.send">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
-  </button>
+  <span class="popup-action-slot">
+    <span id="popupShortcut" class="popup-shortcut" aria-hidden="true"></span>
+    <button id="popupSend" class="popup-send" aria-label="Send" data-i18n-tooltip="popup.send">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>
+    </button>
+  </span>
 </section>
 <div id="confirmOverlay" class="confirm-overlay" hidden>
   <div class="confirm-card">
