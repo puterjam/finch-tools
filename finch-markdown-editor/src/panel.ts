@@ -32,6 +32,15 @@
       'home.cwdFallback': 'homePath（无 cwd 回退）',
       'home.today': '今天 {clock}',
       'home.yesterday': '昨天 {clock}',
+      'appview.library': '资料库',
+      'appview.libraryHint': '所有空间的最近文档',
+      'appview.rewrite': '改写',
+      'appview.focus': '专注',
+      'appview.openSession': '打开改写会话',
+      'appview.rewriting': '已发起改写，会话正在处理并将直接写回文件。',
+      'appview.continuing': '已发起续写，会话正在处理并将直接写回文件。',
+      'appview.hintSpace': '按 space（空格）以启用 AI',
+      'appview.rewriteDone': '改写已完成，文件内容已刷新。',
       'editor.ariaLabel': '写字编辑器',
       'actions.copyToWx': '复制到公众号',
       'actions.copyImg': '复制图片',
@@ -40,6 +49,7 @@
       'actions.aiStyle': '让 AI 设计排版',
       'actions.toggle': '展开/收起',
       'popup.placeholder': '让 {name} 编辑',
+      'popup.placeholderContinue': '让 {name} 从这里续写…',
       'popup.send': '发送',
       'confirm.cancel': '取消',
       'confirm.discard': '不保存',
@@ -80,6 +90,7 @@
       'toolbar.more.reload': '重新渲染',
       'toolbar.more.reveal': '在文件管理器中定位',
       'toolbar.more.about': '关于渲染',
+      'toolbar.more.tooltip': '更多',
       'annotate.lineUnknown': '（未能精确定位对应行号，请以下方引用文本为准）',
       'annotate.lineSingle': '第 {a} 行',
       'annotate.lineRange': '第 {a}–{b} 行',
@@ -175,6 +186,15 @@
       'home.cwdFallback': 'homePath (no-cwd fallback)',
       'home.today': 'Today {clock}',
       'home.yesterday': 'Yesterday {clock}',
+      'appview.library': 'Library',
+      'appview.libraryHint': 'Recent documents across all Spaces',
+      'appview.rewrite': 'Rewrite',
+      'appview.focus': 'Focus',
+      'appview.openSession': 'Open rewrite session',
+      'appview.rewriting': 'Rewrite started. The session will apply its revision directly to the file.',
+      'appview.continuing': 'Continuation started. The session will write the new text directly to the file.',
+      'appview.hintSpace': 'Press space to bring in AI',
+      'appview.rewriteDone': 'Rewrite complete. The document has refreshed.',
       'editor.ariaLabel': 'Writing editor',
       'actions.copyToWx': 'Copy for WeChat',
       'actions.copyImg': 'Copy image',
@@ -183,6 +203,7 @@
       'actions.aiStyle': 'Ask AI to design layout',
       'actions.toggle': 'Expand/collapse',
       'popup.placeholder': 'Let {name} edit',
+      'popup.placeholderContinue': 'Let {name} continue writing from here…',
       'popup.send': 'Send',
       'confirm.cancel': 'Cancel',
       'confirm.discard': "Don't save",
@@ -223,6 +244,7 @@
       'toolbar.more.reload': 'Re-render',
       'toolbar.more.reveal': 'Show in file manager',
       'toolbar.more.about': 'About rendering',
+      'toolbar.more.tooltip': 'More',
       'annotate.lineUnknown': "(Couldn't pinpoint the exact line — use the quoted text below as reference)",
       'annotate.lineSingle': 'Line {a}',
       'annotate.lineRange': 'Lines {a}\u2013{b}',
@@ -349,12 +371,14 @@
   var homeTagline = document.getElementById('homeTagline');
   var editPane = document.getElementById('editPane');
   var previewPane = document.getElementById('previewPane');
+  var previewResizer = document.getElementById('previewResizer');
   var editor = document.getElementById('editor');
   var frame = document.getElementById('article');
   var statusEl = document.getElementById('status');
   var popup = document.getElementById('popup');
   var popupInput = document.getElementById('popupInput');
   var popupSend = document.getElementById('popupSend');
+  var popupShortcut = document.getElementById('popupShortcut');
   var actions = document.getElementById('actions');
   var actCopyWx = document.getElementById('actCopyWx');
   var actCopyImg = document.getElementById('actCopyImg');
@@ -367,9 +391,31 @@
   var confirmCancel = document.getElementById('confirmCancel');
   var confirmDiscard = document.getElementById('confirmDiscard');
   var confirmSave = document.getElementById('confirmSave');
+  var appToolbar = document.getElementById('appToolbar');
+  var appHome = document.getElementById('appHome');
+  var appLibrary = document.getElementById('appLibrary');
+  var appOpen = document.getElementById('appOpen');
+  var appSave = document.getElementById('appSave');
+  var appPreview = document.getElementById('appPreview');
+  var appStyle = document.getElementById('appStyle');
+  var appStyleMenu = document.getElementById('appStyleMenu');
+  var appFocus = document.getElementById('appFocus');
+  var appFont = document.getElementById('appFont');
+  var appFontMenu = document.getElementById('appFontMenu');
+  var appMore = document.getElementById('appMore');
+  var appMoreMenu = document.getElementById('appMoreMenu');
+  var appDocumentTitle = document.getElementById('appDocumentTitle');
+  var appDocumentPath = document.getElementById('appDocumentPath');
+  var libraryDrawer = document.getElementById('libraryDrawer');
+  var libraryBackdrop = document.getElementById('libraryBackdrop');
+  var libraryClose = document.getElementById('libraryClose');
+  var libraryGroups = document.getElementById('libraryGroups');
 
+  var isAppView = false;
+  var previewVisible = true;
+  var liveRenderTimer = 0;
   var pickFileSupported = false; // set from the backend 'ready' message
-  var annotationsEnabled = false; // off by default; toggled from the toolbar "annotate" button
+  var annotationsEnabled = true; // see below — reconciled with focusMode once it's loaded
   var mode = 'edit';          // 'edit' | 'preview'
   var style = 'kami';
   var customCss = '';
@@ -403,6 +449,14 @@
     comfortWriting = localStorage.getItem('md-editor-comfort-writing') === '1';
     focusMode = localStorage.getItem('md-editor-focus-mode') === '1';
   } catch (e) {}
+  // On by default: selecting text opens the rewrite popup right away, no
+  // extra "开启批注" click first. The toolbar toggle still exists so a
+  // reader who doesn't want that popup while just browsing can turn it off.
+  // Focus mode (possibly restored from localStorage above) fights annotate
+  // for the same attention, so a session that starts in focus mode starts
+  // with annotate off too — same mutual exclusivity toggleFocusMode enforces
+  // afterward, just applied to the restored initial state as well.
+  annotationsEnabled = !focusMode;
   var markdown = '';
   var name = '';
   var fileName = '';
@@ -427,7 +481,7 @@
   var lastModified = 0;
   var watchTimer = 0;
   var watchBusy = false;
-  var selection = { text: '' };
+  var selection = { text: '', mode: 'replace' };
 
   var statusHideTimer = 0;
   function setStatus(text, isError) {
@@ -523,7 +577,9 @@
   // pre-handshake flash never says "AI".
   function updatePopupPlaceholder() {
     if (!popupInput) return;
-    popupInput.placeholder = t('popup.placeholder', { name: assistantName || 'Finch' });
+    popupInput.placeholder = selection.mode === 'continue'
+      ? t('popup.placeholderContinue', { name: assistantName || 'Finch' })
+      : t('popup.placeholder', { name: assistantName || 'Finch' });
   }
 
   // OS-friendly display only — the raw absolute path is still what's sent
@@ -627,6 +683,44 @@
     homeHint.hidden = true;
   }
 
+  function renderLibraryDocuments(documents) {
+    if (!libraryGroups) return;
+    var groups = {};
+    (Array.isArray(documents) ? documents : []).forEach(function (doc) {
+      var label = doc.scopeLabel || doc.spaceName || 'Workspace';
+      (groups[label] || (groups[label] = [])).push(doc);
+    });
+    libraryGroups.innerHTML = Object.keys(groups).map(function (label) {
+      var rows = groups[label].map(function (doc) {
+        return '<button class="library-row" type="button" data-path="' + escapeHtml(doc.path || '') + '">'
+          + '<strong>' + escapeHtml(doc.title || doc.fileName || t('home.untitled')) + '</strong>'
+          + '<span>' + escapeHtml((doc.relativePath || doc.fileName || '') + ' · ' + formatDocTime(doc.modifiedAt)) + '</span></button>';
+      }).join('');
+      return '<section class="library-group"><h3>' + escapeHtml(label) + '</h3>' + rows + '</section>';
+    }).join('') || '<p class="home-hint">' + escapeHtml(t('home.hintDefault')) + '</p>';
+  }
+
+  function setLibraryOpen(open) {
+    if (!libraryDrawer || !libraryBackdrop) return;
+    libraryDrawer.classList.toggle('open', !!open);
+    libraryDrawer.setAttribute('aria-hidden', open ? 'false' : 'true');
+    libraryBackdrop.hidden = !open;
+    if (open) requestRecentDocuments();
+  }
+
+  if (appLibrary) appLibrary.addEventListener('click', function () { setLibraryOpen(true); });
+  if (libraryClose) libraryClose.addEventListener('click', function () { setLibraryOpen(false); });
+  if (libraryBackdrop) libraryBackdrop.addEventListener('click', function () { setLibraryOpen(false); });
+  if (libraryGroups) libraryGroups.addEventListener('click', function (event) {
+    var row = event.target && event.target.closest ? event.target.closest('.library-row') : null;
+    var docPath = row && row.getAttribute('data-path');
+    if (!docPath || !api || !api.postMessage) return;
+    setLibraryOpen(false);
+    loadingFromHome = true;
+    setStatus(t('status.opening'));
+    api.postMessage({ type: 'loadPath', path: docPath });
+  });
+
   // Set while a Home-card click is in flight, so the `document` reply below
   // can turn "正在打开…" into a completion message instead of leaving it
   // to linger (or getting silently swallowed by the "isFirst" branch, which
@@ -666,6 +760,7 @@
 
   function updateEmptyState() {
     empty.hidden = hasDocument();
+    document.body.classList.toggle('has-document', hasDocument());
     if (actions) actions.hidden = !html;
     // Refresh whenever the home page comes back into view: mtimes change while
     // a document is open, and a file may have been created since last render.
@@ -673,9 +768,9 @@
   }
 
   function showPane() {
-    editPane.classList.toggle('active', mode === 'edit');
-    previewPane.classList.toggle('active', mode === 'preview');
-    if (mode === 'edit' && cm) requestAnimationFrame(function () { cm.layout(); });
+    editPane.classList.toggle('active', isAppView ? hasDocument() : mode === 'edit');
+    previewPane.classList.toggle('active', isAppView ? hasDocument() : mode === 'preview');
+    if ((isAppView || mode === 'edit') && cm) requestAnimationFrame(function () { cm.layout(); });
   }
 
   function setPanelTitle(title) {
@@ -741,15 +836,6 @@
       { id: 'save', icon: saveIcon, label: saveLabel, tooltip: saveTooltip, disabled: !dirty },
       { type: 'separator' },
       {
-        // Labeled, unlike 'open': annotate is a mode toggle (checked state)
-        // rather than a one-shot action, so a visible label makes the
-        // on/off state legible at a glance instead of relying on hover.
-        // Both this and preview need an open document to mean anything.
-        id: 'annotate', icon: 'ext:markdown-editor-icons/file-pen-line', label: t('toolbar.annotate.label'),
-        tooltip: hasDoc ? (annotationsEnabled ? t('toolbar.annotate.tooltipOn') : t('toolbar.annotate.tooltipOff')) : t('toolbar.needDoc'),
-        checked: annotationsEnabled, disabled: !hasDoc,
-      },
-      {
         // Label stays "预览" no matter which mode is active — the swatch
         // icon plus `checked` already communicate on/off; flipping the word
         // itself between "预览"/"编辑" read as ambiguous ("is this the mode
@@ -807,12 +893,62 @@
     ];
   }
 
+  function appMenuButton(id, label, checked) {
+    return '<button type="button" data-app-action="' + id + '"' + (checked ? ' class="checked"' : '') + '><span>' + label + '</span>' + (checked ? '<span>✓</span>' : '') + '</button>';
+  }
+
+  function renderAppMenus() {
+    if (appStyleMenu) {
+      var presets = ['kami', 'bauhaus', 'blueprint', 'botanical', 'newsprint', 'retro', 'sketch', 'terminal'];
+      var markup = presets.map(function (name) { return appMenuButton('style:' + name, name[0].toUpperCase() + name.slice(1), style === name); }).join('') + '<hr>';
+      for (var i = 0; i < 3; i++) {
+        var slot = styleSlots[i];
+        markup += slot ? appMenuButton('style:slot-use:' + i, t('toolbar.style.customSlot', { n: i + 1, label: slot.label }), style === 'custom' && customCss === slot.css) : appMenuButton('style:slot-use:' + i, t('toolbar.style.customSlotEmpty', { n: i + 1 }), false);
+      }
+      appStyleMenu.innerHTML = markup;
+    }
+    if (appFontMenu) appFontMenu.innerHTML = appMenuButton('comfort:read', t('toolbar.comfort.read'), !comfortWriting)
+      + appMenuButton('comfort:write', t('toolbar.comfort.write'), comfortWriting) + '<hr>'
+      + appMenuButton('font-size:14', t('toolbar.fontSize.small'), editorFontSize === 14)
+      + appMenuButton('font-size:16', t('toolbar.fontSize.medium'), editorFontSize === 16)
+      + appMenuButton('font-size:18', t('toolbar.fontSize.large'), editorFontSize === 18) + '<hr>'
+      + appMenuButton('font-family:rounded', t('toolbar.fontFamily.default'), editorFont === 'rounded')
+      + appMenuButton('font-family:songti', t('toolbar.fontFamily.serif'), editorFont === 'songti');
+    if (appMoreMenu) appMoreMenu.innerHTML = appMenuButton('reload', t('toolbar.more.reload'), false)
+      + appMenuButton('reveal', t('toolbar.more.reveal'), false) + '<hr>' + appMenuButton('about', t('toolbar.more.about'), false);
+  }
+
+  function syncAppToolbar() {
+    if (!isAppView) return;
+    var hasDoc = hasDocument();
+    if (appSave) {
+      appSave.disabled = !dirty;
+      appSave.classList.toggle('dirty', dirty);
+      var saveTooltip = savedFlash ? 'toolbar.save.tooltipSaved' : dirty ? 'toolbar.save.tooltipDirty' : 'toolbar.save.tooltipDefault';
+      appSave.setAttribute('data-tooltip', t(saveTooltip));
+      var icSave = appSave.querySelector('.ic-save');
+      var icCheck = appSave.querySelector('.ic-save-check');
+      if (icSave) icSave.hidden = savedFlash;
+      if (icCheck) icCheck.hidden = !savedFlash;
+    }
+    if (appFocus) { appFocus.disabled = !hasDoc; appFocus.classList.toggle('checked', focusMode); }
+    if (appPreview) { appPreview.disabled = !hasDoc; appPreview.classList.toggle('checked', previewVisible); }
+    if (appOpen) appOpen.disabled = nativePickPending;
+    if (appStyle) appStyle.disabled = !hasDoc;
+    if (appFont) appFont.disabled = !hasDoc;
+    if (appDocumentTitle) appDocumentTitle.textContent = fileName || t('home.title');
+    if (appDocumentPath) appDocumentPath.textContent = sourcePath || '';
+    renderAppMenus();
+  }
+
   function syncToolbar() {
-    if (api) api.postMessage({ type: 'setToolbar', toolbar: buildToolbar() });
+    if (isAppView) syncAppToolbar();
+    else if (api) api.postMessage({ type: 'setToolbar', toolbar: buildToolbar() });
   }
 
   function setMode(next) {
     closePopup();
+    if (isAppView) { mode = 'edit'; showPane(); render(); syncToolbar(); return; }
     mode = next;
     showPane();
     syncToolbar();
@@ -855,6 +991,7 @@
       updateEmptyState();
       setDirty(true);
       scheduleDraftSave();
+      scheduleLivePreview();
     },
     onOpenLink: function (url) {
       if (api && api.postMessage) api.postMessage({ type: 'openLink', url: url });
@@ -874,6 +1011,7 @@
       api.postMessage({ type: 'openImage', url: url });
     },
     onPasteImage: pasteImageToHost,
+    onAiHintTrigger: openAiPromptBar,
   });
   cm.setFontSize(editorFontSize);
   cm.setFontFamily(EDITOR_FONTS[editorFont]);
@@ -884,6 +1022,12 @@
   // ---- Markdown <-> bm.md rendering ----
 
   function activeCustomCss() { return style === 'custom' ? customCss : ''; }
+
+  function scheduleLivePreview() {
+    if (!isAppView) return;
+    if (liveRenderTimer) clearTimeout(liveRenderTimer);
+    liveRenderTimer = setTimeout(function () { liveRenderTimer = 0; render(); }, 420);
+  }
 
   function render() {
     if (!markdown || !api) return;
@@ -1054,11 +1198,21 @@
       var boxes = rects.map(function (r) {
         return { top: frameRect.top + r.top, left: frameRect.left + r.left, width: r.width, height: r.height };
       });
-      var rect = range.getBoundingClientRect();
+      // First and last client rect are the selection's first and last line
+      // boxes, which is exactly the pair the popup anchors to (above the
+      // start, or below the end when there's no room above). The bounding
+      // box would collapse a multi-line selection into one rectangle and
+      // lose the start line's own left edge.
+      var firstRect = rects[0] || range.getBoundingClientRect();
+      var lastRect = rects[rects.length - 1] || firstRect;
       var sourceRange = findRenderedSourceRange(markdown, text);
       var lines = sourceRange ? lineRangeForOffsets(markdown, sourceRange.start, sourceRange.end) : null;
-      scheduleOpenPopup(text, frameRect.top + rect.top, frameRect.top + rect.bottom,
-        frameRect.left + rect.left + rect.width / 2, boxes, lines, 'preview');
+      scheduleOpenPopup(text, {
+        startTop: frameRect.top + firstRect.top,
+        startLeft: frameRect.left + firstRect.left,
+        endBottom: frameRect.top + lastRect.bottom,
+        endLeft: frameRect.left + lastRect.left,
+      }, boxes, lines, 'preview');
     }
     d.addEventListener('mouseup', picked);
     d.addEventListener('mousedown', function () { cancelScheduledPopup(); closePopup(); });
@@ -1088,10 +1242,16 @@
 
   // Selection popups appear after a short delay so a still-in-progress drag
   // selection doesn't flash the popup at every intermediate position.
-  function scheduleOpenPopup(text, top, bottom, centerX, boxes, lines, origin) {
+  //
+  // `anchor` describes where the popup should sit, in viewport coordinates:
+  //   startTop/startLeft — top-left of the selection's FIRST line
+  //   endBottom/endLeft  — bottom-left of the selection's LAST line
+  //   width              — optional fixed width (the inline prompt bar)
+  //   focus              — whether to take keyboard focus on open
+  function scheduleOpenPopup(text, anchor, boxes, lines, origin) {
     cancelScheduledPopup();
     popupDelayTimer = setTimeout(function () {
-      openPopup(text, top, bottom, centerX, boxes, lines, origin);
+      openPopup(text, anchor, boxes, lines, origin);
     }, 300);
   }
 
@@ -1099,32 +1259,60 @@
     if (popupDelayTimer) { clearTimeout(popupDelayTimer); popupDelayTimer = 0; }
   }
 
-  function openPopup(text, top, bottom, centerX, boxes, lines, origin) {
+  function openPopup(text, anchor, boxes, lines, origin, popupMode) {
     selection.text = text;
     selection.lines = lines || null;
     selection.origin = origin || '';
+    selection.mode = popupMode || 'replace';
+    updatePopupPlaceholder();
     popup.classList.remove('hidden');
+    popup.classList.toggle('popup-bar', !!(anchor && anchor.width));
     popupInput.value = '';
     showFakeSelection(boxes);
     requestAnimationFrame(function () {
-      positionPopup(top, bottom, centerX);
-      popupInput.focus();
+      positionPopup(anchor);
+      // A selection popup deliberately does NOT steal focus: it would drop
+      // the editor's own selection highlight and put the caret somewhere
+      // the reader didn't ask for. Click into it to start typing. The
+      // inline prompt bar is the opposite — it only exists because the
+      // writer just pressed a key to summon it, so it focuses itself.
+      if (anchor && anchor.focus) popupInput.focus();
     });
   }
 
-  // Anchors the popup to the end-top of the selection (cursor) position:
-  // its left edge lines up with the cursor x and it opens above when
-  // there's room, so the popup sits above-right of where you stopped
-  // selecting, not floating centered over (or to the left of) it.
-  function positionPopup(top, bottom, cursorX) {
+  // Preferred position is directly above the START of the selection, so the
+  // popup never covers the text it is about to rewrite. When the selection
+  // starts too close to the top of the window there is no room there, and
+  // it drops below the END of the selection instead — still clear of the
+  // selected text, just on the other side of it.
+  function positionPopup(anchor) {
     var margin = 8;
+    var gap = 10;
+    var a = anchor || {};
+    // AppView's 48px toolbar sits fixed at the top of the same viewport
+    // these coordinates are measured in; without accounting for it, a
+    // selection near the top of the document places the popup right under
+    // (or behind) the toolbar instead of below the top of the actual
+    // editing surface.
+    var topMargin = isAppView ? margin + 48 : margin;
+    // The inline prompt bar replaces the blank line it was summoned on:
+    // fixed width, sitting exactly where that line is, so it reads as the
+    // line turning into an input rather than as a popup floating over it.
+    popup.style.width = a.width ? a.width + 'px' : '';
+    if (a.width) {
+      popup.style.left = Math.max(margin, a.startLeft || 0) + 'px';
+      popup.style.top = Math.max(topMargin, Math.min(a.startTop || 0,
+        window.innerHeight - (popup.offsetHeight || 44) - margin)) + 'px';
+      return;
+    }
     var w = popup.offsetWidth || 300;
     var h = popup.offsetHeight || 44;
-    var left = Math.max(margin, Math.min(cursorX, window.innerWidth - w - margin));
-    var y = (top - margin >= h + 10) ? (top - h - 10) : (bottom + 10);
-    y = Math.max(margin, Math.min(y, window.innerHeight - h - margin));
-    popup.style.left = left + 'px';
-    popup.style.top = y + 'px';
+    var above = (a.startTop || 0) - gap - h;
+    var fitsAbove = above >= topMargin;
+    var y = fitsAbove ? above : (a.endBottom || 0) + gap;
+    var x = fitsAbove ? (a.startLeft || 0) : (a.endLeft != null ? a.endLeft : a.startLeft || 0);
+    popup.style.left = Math.max(margin, Math.min(x, window.innerWidth - w - margin)) + 'px';
+    popup.style.top = Math.max(topMargin, Math.min(y, window.innerHeight - h - margin)) + 'px';
   }
 
   // iframe selection highlighting disappears when focus moves to the popup.
@@ -1149,13 +1337,47 @@
     fakeSelBoxes = [];
   }
 
+  // ---- Rewrite-popup focus shortcut: Cmd+Control+E / Ctrl+Alt+E ----
+  //
+  // macOS keeps Command and Control as two distinct modifier keys, so its
+  // idiomatic 2-modifier chord is Cmd+Ctrl. Windows and Linux only have one
+  // "Ctrl", so the equivalent 2-modifier chord there is Ctrl+Alt — using
+  // plain Ctrl+E alone would collide with the browser/OS's own bindings
+  // (address-bar search, etc.) on those platforms.
+  var uaPlatform = (navigator.platform || navigator.userAgent || '');
+  var isMacPlatform = /Mac|iPhone|iPod|iPad/.test(uaPlatform);
+
+  function isRewriteFocusShortcut(e) {
+    if (String(e.key).toLowerCase() !== 'e') return false;
+    if (e.shiftKey) return false;
+    return isMacPlatform
+      ? (e.metaKey && e.ctrlKey && !e.altKey)
+      : (e.ctrlKey && e.altKey && !e.metaKey);
+  }
+
+  // Each OS's own shortest customary notation: macOS shows bare symbols
+  // with no separators (⌘⌃E), Windows/Linux spell modifier names joined
+  // with "+" (Ctrl+Alt+E) since they have no single-glyph convention for
+  // Alt/Ctrl the way macOS does for Cmd/Ctrl.
+  (function renderPopupShortcutHint() {
+    if (!popupShortcut) return;
+    var keys = isMacPlatform ? ['⌘', '⌃', 'E'] : ['Ctrl', 'Alt', 'E'];
+    var sep = isMacPlatform ? '' : '+';
+    popupShortcut.innerHTML = keys.map(function (k) {
+      return '<kbd>' + k + '</kbd>';
+    }).join(sep ? '<span class="popup-shortcut-sep">' + sep + '</span>' : '');
+  })();
+
   function closePopup(restoreEditorFocus) {
     var shouldRestore = restoreEditorFocus === true && selection.origin === 'editor' && mode === 'edit';
     cancelScheduledPopup();
     popup.classList.add('hidden');
+    popup.classList.remove('popup-bar');
+    popup.style.width = '';
     selection.text = '';
     selection.lines = null;
     selection.origin = '';
+    selection.mode = 'replace';
     clearFakeSelection();
     if (shouldRestore) requestAnimationFrame(function () { cm.focus(); });
   }
@@ -1167,6 +1389,18 @@
   });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && !popup.classList.contains('hidden')) closePopup(true);
+  });
+  // Cmd+Control+E (mac) / Ctrl+Alt+E (Windows & Linux) jumps straight into
+  // the rewrite popup's input without a click — it only does something
+  // while the popup is already open (selecting text opens it by default
+  // now, see annotationsEnabled), so this is purely a "start typing faster"
+  // shortcut, not a way to summon the popup out of nowhere.
+  document.addEventListener('keydown', function (e) {
+    if (!isRewriteFocusShortcut(e)) return;
+    if (popup.classList.contains('hidden')) return;
+    e.preventDefault();
+    popupInput.focus();
+    popupInput.select();
   });
   // Clicking anywhere outside the popup cancels the pending/open popup and
   // drops the fake selection highlight. The editor and toolbar are part of
@@ -1193,7 +1427,10 @@
 
   async function submitAnnotation() {
     var comment = popupInput.value.trim();
-    if (!selection.text || !api || !api.composer) return;
+    var isContinue = selection.mode === 'continue';
+    // Continue mode has no selected text by design — a line number is the
+    // target instead — so it skips the "must have selected text" guard.
+    if ((!selection.text && !isContinue) || !api) return;
     // The prompt tells the AI it can read/overwrite the file at `sourcePath`
     // directly — but if there are unsaved edits, disk still has the old
     // content: the AI would read stale context (or, if it applies a
@@ -1210,6 +1447,19 @@
         return;
       }
     }
+    if (isAppView) {
+      if (!sourcePath || !api.postMessage) { setStatus(t('status.noSourceFile'), true); return; }
+      api.postMessage({
+        type: 'requestRewrite', path: sourcePath, selectedText: selection.text,
+        requirement: comment, startLine: selection.lines && selection.lines.start,
+        endLine: selection.lines && selection.lines.end,
+        rewriteMode: isContinue ? 'continue' : 'replace',
+      });
+      closePopup(true);
+      setStatus(isContinue ? t('appview.continuing') : t('appview.rewriting'));
+      return;
+    }
+    if (!api.composer || !selection.text) { closePopup(true); return; }
     try {
       await api.composer.addContexts([{
         type: 'annotation',
@@ -1232,15 +1482,54 @@
 
   // ---- Editor selection ----
 
+  // Shared by the drag-selection path (gated on the "改写" toggle) and the
+  // AppView right-click path (an explicit action, so it works regardless of
+  // that toggle).
+  function offerEditorSelectionNow() {
+    var picked = cm.getSelection();
+    if (!picked) return false;
+    var text = picked.text.trim();
+    if (!text) return false;
+    var lines = lineRangeForOffsets(cm.getValue(), picked.start, picked.end);
+    scheduleOpenPopup(text, {
+      startTop: picked.startRect.top,
+      startLeft: picked.startRect.left,
+      endBottom: picked.rect.bottom,
+      endLeft: picked.rect.left,
+    }, null, lines, 'editor');
+    return true;
+  }
+
   function offerEditorSelection() {
     if (!annotationsEnabled) return;
-    var picked = cm.getSelection();
-    if (!picked) return;
-    var text = picked.text.trim();
-    if (!text) return;
-    var lines = lineRangeForOffsets(cm.getValue(), picked.start, picked.end);
-    scheduleOpenPopup(text, picked.rect.top, picked.rect.bottom,
-      (picked.rect.left + picked.rect.right) / 2, null, lines, 'editor');
+    offerEditorSelectionNow();
+  }
+
+  // ---- Blank-line AI prompt bar (AppView) ----
+  //
+  // The editor hints "press space to bring in the AI" on any blank line the
+  // caret rests on; pressing space there swaps that line for a full-width
+  // input instead of typing a space. Whatever is typed becomes a
+  // continue-writing instruction anchored to that line. This replaces an
+  // earlier right-click menu: the affordance is now visible in place, so
+  // there is nothing hidden behind a context menu to discover.
+  function openAiPromptBar(info) {
+    if (!isAppView || !hasDocument() || !info) return false;
+    cancelScheduledPopup();
+    // Span the editor's text column rather than the whole pane so the bar
+    // lines up with the writing it will extend. `.cm-line` is the reading
+    // column (50rem capped at 88%, centered), which is narrower than
+    // `.cm-content` — measuring the content element would start the bar out
+    // in the left margin, visibly off from the text it continues.
+    var column = editor.querySelector('.cm-line') || editor.querySelector('.cm-content');
+    var box = (column || editor).getBoundingClientRect();
+    openPopup('', {
+      startTop: info.rect.top,
+      startLeft: box.left,
+      width: Math.max(240, box.width),
+      focus: true,
+    }, null, { start: info.line, end: info.line }, 'editor', 'continue');
+    return true;
   }
 
   editor.addEventListener('mouseup', offerEditorSelection);
@@ -1393,6 +1682,11 @@
     // an external save), rather than a switch to a different file? Must be
     // decided before `sourcePath` is reassigned below.
     var revisesOpenDocument = savedMarkdown !== null && (!nextPath || !sourcePath || nextPath === sourcePath);
+    // A document opened from Home always starts with the rewrite popup
+    // available on selection — mirrors the true default above; only
+    // resetToHome() (no document open) turns it off, and only an explicit
+    // toolbar toggle should keep it off once a document is on screen.
+    if (!revisesOpenDocument) annotationsEnabled = true;
     markdown = nextMarkdown;
     name = nextName;
     if (nextPath) sourcePath = nextPath;
@@ -1414,7 +1708,8 @@
     setDirty(false); // also rebuilds+syncs the whole toolbar, picking up the new sourcePath/fileName below
     setPanelTitle(fileName);
     updateEmptyState();
-    if (mode === 'preview') render();
+    showPane();
+    if (isAppView || mode === 'preview') render();
     return true;
   }
 
@@ -2029,7 +2324,8 @@
 
   function setStyle(next) {
     style = next;
-    if (mode === 'preview') render();
+    if (isAppView || mode === 'preview') render();
+    syncToolbar();
   }
 
   function setEditorFontSize(size) {
@@ -2058,34 +2354,22 @@
 
   function toggleFocusMode() {
     focusMode = !focusMode;
-    // Mirror of the annotate guard in toggleAnnotations: annotate dims
-    // nothing but needs the whole doc readable to pick passages, while
-    // focus deliberately dims everything else — the two modes are
-    // mutually exclusive, so turning focus on forces annotate off.
+    // Selection-triggered rewrite has no on/off toggle anymore (it's
+    // always on), but it still needs the whole doc readable to pick
+    // passages, while focus deliberately dims everything else — so
+    // turning focus on still forces the popup closed and annotate off.
     if (focusMode && annotationsEnabled) {
       annotationsEnabled = false;
       closePopup();
+    } else if (!focusMode && !annotationsEnabled) {
+      // Leaving focus mode restores the (now toggle-less, always-on)
+      // selection popup — there's no button left to turn it back on.
+      annotationsEnabled = true;
     }
     cm.setFocusMode(focusMode);
     try { localStorage.setItem('md-editor-focus-mode', focusMode ? '1' : '0'); } catch (e) {}
     syncToolbar();
     setStatus(focusMode ? t('status.focusOn') : t('status.focusOff'));
-  }
-
-  function toggleAnnotations() {
-    annotationsEnabled = !annotationsEnabled;
-    if (!annotationsEnabled) closePopup();
-    // Annotate and focus mode fight each other: focus dims every non-active
-    // line, which makes it hard to spot the text you're about to annotate
-    // elsewhere in the doc. Turning annotate on forces focus off so the
-    // whole document reads normally while selecting passages.
-    if (annotationsEnabled && focusMode) {
-      focusMode = false;
-      cm.setFocusMode(false);
-      try { localStorage.setItem('md-editor-focus-mode', '0'); } catch (e) {}
-    }
-    syncToolbar();
-    setStatus(annotationsEnabled ? t('status.annotateOn') : t('status.annotateOff'));
   }
 
   // Simple 3-way confirm ("保存并返回" / "不保存" / "取消") resolved as
@@ -2175,7 +2459,6 @@
     if (api && api.postMessage) api.postMessage({ type: 'clientLog', message: 'finch:menu received, itemId=' + itemId });
     if (itemId === 'home') { goHome(); return; }
     if (itemId === 'open') { openFile(); return; }
-    if (itemId === 'annotate') { toggleAnnotations(); return; }
     if (itemId === 'mode') { setMode(mode === 'edit' ? 'preview' : 'edit'); return; }
     if (itemId === 'save') { saveNow(); return; }
     if (itemId === 'reload') { render(); return; }
@@ -2192,6 +2475,92 @@
     if (itemId && itemId.indexOf('style:slot-save:') === 0) { saveStyleSlot(+itemId.slice('style:slot-save:'.length)); return; }
     if (itemId && itemId.indexOf('style:') === 0) { setStyle(itemId.slice(6)); return; }
   }
+
+  function closeAppMenus() {
+    [appStyleMenu, appFontMenu, appMoreMenu].forEach(function (menu) { if (menu) menu.hidden = true; });
+  }
+  function toggleAppMenu(menu) {
+    if (!menu) return;
+    var open = menu.hidden;
+    closeAppMenus();
+    menu.hidden = !open;
+  }
+  function bindAppMenu(trigger, menu) {
+    if (trigger) trigger.addEventListener('click', function (event) { event.stopPropagation(); toggleAppMenu(menu); });
+    if (menu) menu.addEventListener('click', function (event) {
+      var target = event.target && event.target.closest ? event.target.closest('[data-app-action]') : null;
+      var action = target && target.getAttribute('data-app-action');
+      if (!action) return;
+      handleMenu(action);
+      closeAppMenus();
+    });
+  }
+  if (appHome) appHome.addEventListener('click', goHome);
+  if (appOpen) appOpen.addEventListener('click', openFile);
+  if (appSave) appSave.addEventListener('click', saveNow);
+  if (appFocus) appFocus.addEventListener('click', toggleFocusMode);
+  if (appPreview) appPreview.addEventListener('click', function () {
+    previewVisible = !previewVisible;
+    document.body.classList.toggle('preview-hidden', !previewVisible);
+    syncToolbar();
+    if (previewVisible) requestAnimationFrame(function () { cm.layout(); render(); });
+  });
+  bindAppMenu(appStyle, appStyleMenu);
+  bindAppMenu(appFont, appFontMenu);
+  bindAppMenu(appMore, appMoreMenu);
+  document.addEventListener('click', closeAppMenus);
+
+  // Drag-to-resize the AppView preview column. Preview is clamped to
+  // [370px, 560px], default 480px — a fixed range reads more predictably
+  // while dragging than a fraction of the stage width. The CSS variable
+  // drives the grid column (its own fallback mirrors PREVIEW_DEFAULT_WIDTH).
+  var PREVIEW_MIN_WIDTH = 370;
+  var PREVIEW_MAX_WIDTH = 560;
+  var PREVIEW_DEFAULT_WIDTH = 480;
+  if (previewResizer) {
+    previewResizer.addEventListener('mousedown', function (event) {
+      event.preventDefault();
+      var stage = previewResizer.parentElement;
+      if (!stage) return;
+      var startX = event.clientX;
+      var startW = previewPane ? previewPane.getBoundingClientRect().width : PREVIEW_DEFAULT_WIDTH;
+      previewResizer.classList.add('active');
+      // The preview pane's own iframe would otherwise swallow mousemove
+      // once the cursor crosses into it (it has its own document/window),
+      // breaking the drag mid-gesture. A transparent full-viewport overlay
+      // above everything (including the iframe) keeps every move event on
+      // this listener until mouseup.
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;cursor:col-resize;';
+      document.body.appendChild(overlay);
+      function clampedWidth(previewW) {
+        return Math.max(PREVIEW_MIN_WIDTH, Math.min(PREVIEW_MAX_WIDTH, previewW));
+      }
+      function onMove(e) {
+        // Dragging right shrinks the (right-hand) preview pane; dragging
+        // left grows it — so the preview width moves opposite to delta.
+        var delta = e.clientX - startX;
+        stage.style.setProperty('--preview-width', clampedWidth(startW - delta) + 'px');
+      }
+      function onUp() {
+        previewResizer.classList.remove('active');
+        overlay.remove();
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      }
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+  }
+  window.addEventListener('resize', function () {
+    if (!isAppView) return;
+    var stage = previewResizer && previewResizer.parentElement;
+    if (!stage) return;
+    var currentW = parseFloat(getComputedStyle(stage).getPropertyValue('--preview-width')) || PREVIEW_DEFAULT_WIDTH;
+    if (currentW > PREVIEW_MAX_WIDTH || currentW < PREVIEW_MIN_WIDTH) {
+      stage.style.setProperty('--preview-width', Math.max(PREVIEW_MIN_WIDTH, Math.min(PREVIEW_MAX_WIDTH, currentW)) + 'px');
+    }
+  });
 
   function applyStyleSlot(index) {
     var slot = styleSlots[index];
@@ -2276,8 +2645,12 @@
         return;
       }
       if (m.type === 'finch:env') {
-        // Panel scope changed (first open, or Home → Session relocation): rescope
-        // the recent list to this panel's own working directory.
+        isAppView = m.view === 'appView';
+        document.body.classList.toggle('app-view', isAppView);
+        if (appToolbar) appToolbar.hidden = !isAppView;
+        // The blank-line "press space for AI" affordance only exists in the
+        // full-screen shell, where a rewrite session can actually be run.
+        cm.setAiHint(isAppView ? t('appview.hintSpace') : '');
         var incomingCwd = m.cwd || '';
         var incomingSessionId = m.sessionId || '';
         var incomingSpaceId = m.spaceId || '';
@@ -2290,18 +2663,28 @@
           renderHomeCwd();
           renderRecentDocuments([]);
         }
-        if (!empty.hidden) requestRecentDocuments();
+        showPane();
+        syncToolbar();
+        if (isAppView && hasDocument()) render();
+        if (!empty.hidden || isAppView) requestRecentDocuments();
         return;
       }
       if (m.type === 'recentDocuments') {
-        // Ignore a late reply for a directory we no longer belong to.
-        if ((m.cwd || '') !== envCwd) return;
+        if (!m.library && (m.cwd || '') !== envCwd) return;
         fallbackCwd = m.fallbackCwd || '';
         renderHomeCwd();
         renderRecentDocuments(m.documents);
+        if (m.library) renderLibraryDocuments(m.documents);
         return;
       }
       if (m.type === 'status') { setStatus(m.message); return; }
+      if (m.type === 'rewriteSessionStarted') {
+        cm.setAiWorkingLines(Number(m.startLine) || 0, Number(m.endLine) || 0);
+        setStatus(m.rewriteMode === 'continue' ? t('appview.continuing') : t('appview.rewriting'));
+        return;
+      }
+      if (m.type === 'rewriteSessionFinished') { cm.setAiWorkingLines(0, 0); setStatus(t('appview.rewriteDone')); return; }
+      if (m.type === 'rewriteSessionFailed') { cm.setAiWorkingLines(0, 0); setStatus(m.message || 'Rewrite failed.', true); return; }
       if (m.type === 'lastFileUnavailable') { return; }
       if (m.type === 'finch:menu') { handleMenu(m.itemId); return; }
       if (m.type === 'document') {

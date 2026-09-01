@@ -17,13 +17,14 @@ import {
   TableStyle,
   TableTheme,
 } from 'codemirror-markdown-tables';
-import { EditorState, RangeSetBuilder, StateEffect, StateField, type RangeSet, type Text } from '@codemirror/state';
+import { EditorState, RangeSet, RangeSetBuilder, StateEffect, StateField, Transaction, type Text } from '@codemirror/state';
 import { indentLess, indentMore, indentWithTab, defaultKeymap, historyKeymap } from '@codemirror/commands';
 import { searchKeymap } from '@codemirror/search';
 import {
   Decoration,
   type DecorationSet,
   GutterMarker,
+  gutter,
   gutterLineClass,
   keymap,
   ViewPlugin,
@@ -35,7 +36,10 @@ interface EditorSelectionInfo {
   start: number;
   end: number;
   text: string;
+  /** Anchor at the selection's end (tail). */
   rect: { top: number; bottom: number; left: number; right: number };
+  /** Anchor at the selection's start (head of the first line). */
+  startRect: { top: number; bottom: number; left: number; right: number };
 }
 
 interface ExternalChangeSummary {
@@ -60,6 +64,10 @@ interface MarkdownEditorHandle {
   setFontFamily(family: string): void;
   setComfortWriting(on: boolean): void;
   setFocusMode(on: boolean): void;
+  setAiWorkingLines(fromLine: number, toLine: number): void;
+  /** Hint shown on the caret's line while it is empty ("press space to…").
+   * Empty string turns the affordance off (AppPanel). */
+  setAiHint(text: string): void;
   scrollDOM: HTMLElement;
   destroy(): void;
 }
@@ -77,6 +85,10 @@ interface MarkdownEditorOptions {
    * host writes it to disk). Omit to fall back to embedding a data: URL
    * with no host round-trip at all. */
   onPasteImage?(file: File): Promise<string>;
+  /** Space pressed on an otherwise empty line, with the AI hint enabled.
+   * Return true to consume the key (the host opens its own prompt bar in
+   * place of the space that would have been typed), false to type normally. */
+  onAiHintTrigger?(info: { line: number; rect: { top: number; bottom: number; left: number; right: number } }): boolean;
 }
 
 // --- Font-size model ---------------------------------------------------
@@ -428,6 +440,101 @@ const finchTheme = EditorView.theme({
   // classes from the content line decorations.
   '.cm-lineNumbers .cm-gutterElement.cm-gutter-code-line': {
         lineHeight: '22px',
+  },
+  // The line-number gutter keeps its normal position and look; the rewrite
+  // indicator is a separate column placed to its right in the same gutter row.
+  '.cm-gutters .cm-ai-gutter': {
+    width: '22px',
+    fontSize: '10px',
+  },
+  // No flex centering here: a wrapped row is taller than one line box, and
+  // centering in the *whole* row would drop the spinner/corner below the
+  // line number, which sits in the row's first line box (positioned by the
+  // `line-height` band above). Everything inside is absolutely positioned
+  // against this element instead — anchored either to that same first band
+  // (so it lines up with the number) or to the full row height (so rails on
+  // neighbouring rows touch).
+  '.cm-ai-gutter .cm-gutterElement': {
+    position: 'relative',
+    padding: '0',
+    color: 'var(--accent)',
+  },
+  // `gutterLineClass` (see codeGutterLineHighlighter) stamps this same
+  // `cm-gutter-code-line` class onto every gutter's row for a fenced-code
+  // line, not just the line-number gutter — including this one. Rescope
+  // the line-height var locally so the spinner/rail/corner markers below,
+  // which all size themselves off it, shrink to match the code gutter's
+  // real (shorter) 22px row instead of the prose row height. Without this
+  // the spinner circle on a code line overflows into the row underneath it.
+  '.cm-ai-gutter .cm-gutterElement.cm-gutter-code-line': {
+    '--md-gutter-line-height': '22px',
+  },
+  '.cm-ai-working-mark': {
+    position: 'absolute',
+    inset: '0',
+  },
+  // Same band the line number is centered in, so the two align exactly.
+  '.cm-ai-working-spinner': {
+    position: 'absolute',
+    top: '0',
+    left: '0',
+    right: '0',
+    height: 'var(--md-gutter-line-height, 32px)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  '.cm-ai-gutter svg': {
+    width: '13px',
+    height: '13px',
+    animation: 'cm-ai-spin 1s linear infinite',
+  },
+  // Edge-to-edge so it meets the rail on the rows above and below with no
+  // seam. `.cm-ai-working-rail-below` is the head row's continuation: it
+  // starts just under the spinner instead of at the top of the row.
+  '.cm-ai-working-rail': {
+    position: 'absolute',
+    top: '0',
+    bottom: '0',
+    left: '50%',
+    width: '1.5px',
+    marginLeft: '-0.75px',
+    borderRadius: '1px',
+    backgroundColor: 'var(--accent)',
+    opacity: '0.45',
+  },
+  '.cm-ai-working-rail.cm-ai-working-rail-below': {
+    top: 'calc(var(--md-gutter-line-height, 32px) - 7px)',
+  },
+  // The closing `╰`: down to the middle of the last row's first line box
+  // (level with its line number), then a short rounded turn to the right.
+  '.cm-ai-working-corner': {
+    position: 'absolute',
+    top: '0',
+    left: '50%',
+    width: '6px',
+    height: 'calc(var(--md-gutter-line-height, 32px) / 2)',
+    marginLeft: '-0.75px',
+    borderLeft: '1.5px solid var(--accent)',
+    borderBottom: '1.5px solid var(--accent)',
+    borderBottomLeftRadius: '5px',
+    opacity: '0.45',
+  },
+  // The hint text itself comes from `--cm-ai-hint` (set by the host, empty
+  // when the affordance is off) so this stays out of the editable content.
+  '.cm-ai-hint-line::after': {
+    content: 'var(--cm-ai-hint, "")',
+    color: 'var(--muted)',
+    opacity: '0.5',
+    pointerEvents: 'none',
+    userSelect: 'none',
+    // An empty line is otherwise zero-width, so without a hard nowrap the
+    // hint text is free to wrap onto a second visual row — which inflates
+    // that one line's height and knocks every line below it out of
+    // alignment with its own gutter number (the exact bug this line
+    // exists to avoid). It's a fixed short phrase, never long enough to
+    // need wrapping on purpose.
+    whiteSpace: 'nowrap',
   },
   '.cm-activeLine': {
     backgroundColor: 'color-mix(in srgb, var(--text) 7%, transparent)',
@@ -1036,6 +1143,139 @@ const codeGutterLineField = StateField.define<RangeSet<GutterMarker>>({
 });
 
 const codeGutterLineHighlighter = [codeGutterLineField, gutterLineClass.from(codeGutterLineField)];
+
+// A rewrite runs in a Space-bound Agent Session, outside the editor process.
+// Mark its exact source lines in a dedicated gutter column to the right of the
+// line numbers (side: 'after'), so the writing surface itself never shifts.
+// The markers come from a StateField — when the field's RangeSet changes, the
+// gutter re-compares it and repaints that column automatically.
+// Only the first touched line gets the working spinner; a multi-line hunk
+// draws a connecting rail below it (a plain vertical bar for interior lines,
+// finishing with a corner turn on the last line) so the whole group reads as
+// one in-flight edit instead of a column of separate spinners.
+//
+// The rail is drawn with absolutely positioned boxes rather than the box
+// glyphs `│`/`╰`: a glyph only fills its own font line-box, so consecutive
+// rows rendered that way show a gap wherever the row is taller than the
+// glyph. Each rail box instead spans its gutter element edge to edge
+// (`top:0` → `bottom:0`), and gutter rows stack without gaps, so the strokes
+// meet exactly and read as one unbroken line.
+function aiWorkingMarkRoot(): HTMLElement {
+  const root = document.createElement('span');
+  root.className = 'cm-ai-working-mark';
+  return root;
+}
+function aiWorkingRail(extra?: string): HTMLElement {
+  const rail = document.createElement('span');
+  rail.className = extra ? `cm-ai-working-rail ${extra}` : 'cm-ai-working-rail';
+  return rail;
+}
+// `hasMore` distinguishes a single-line hunk (spinner only) from the head of
+// a multi-line one (spinner plus a rail continuing to the row below).
+class AiWorkingStartMarker extends GutterMarker {
+  constructor(private readonly hasMore: boolean) { super(); }
+  elementClass = 'cm-ai-working cm-ai-working-start';
+  toDOM(): HTMLElement {
+    const root = aiWorkingMarkRoot();
+    const spinner = document.createElement('span');
+    spinner.className = 'cm-ai-working-spinner';
+    spinner.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>';
+    root.appendChild(spinner);
+    if (this.hasMore) root.appendChild(aiWorkingRail('cm-ai-working-rail-below'));
+    return root;
+  }
+}
+class AiWorkingLineMarker extends GutterMarker {
+  elementClass = 'cm-ai-working cm-ai-working-line';
+  toDOM(): HTMLElement {
+    const root = aiWorkingMarkRoot();
+    root.appendChild(aiWorkingRail());
+    return root;
+  }
+}
+class AiWorkingEndMarker extends GutterMarker {
+  elementClass = 'cm-ai-working cm-ai-working-end';
+  toDOM(): HTMLElement {
+    const root = aiWorkingMarkRoot();
+    const corner = document.createElement('span');
+    corner.className = 'cm-ai-working-corner';
+    root.appendChild(corner);
+    return root;
+  }
+}
+const aiWorkingStartMarker = new AiWorkingStartMarker(false);
+const aiWorkingStartRailMarker = new AiWorkingStartMarker(true);
+const aiWorkingLineMarker = new AiWorkingLineMarker();
+const aiWorkingEndMarker = new AiWorkingEndMarker();
+const setAiWorkingLines = StateEffect.define<{ fromLine: number; toLine: number } | null>();
+
+function computeAiWorkingMarks(doc: Text, range: { fromLine: number; toLine: number } | null): RangeSet<GutterMarker> {
+  if (!range) return RangeSet.empty;
+  const builder = new RangeSetBuilder<GutterMarker>();
+  const from = Math.max(1, Math.min(range.fromLine, doc.lines));
+  const to = Math.max(from, Math.min(range.toLine, doc.lines));
+  for (let lineNo = from; lineNo <= to; lineNo++) {
+    const marker = lineNo === from
+      ? (to > from ? aiWorkingStartRailMarker : aiWorkingStartMarker)
+      : lineNo === to ? aiWorkingEndMarker : aiWorkingLineMarker;
+    builder.add(doc.line(lineNo).from, doc.line(lineNo).from, marker);
+  }
+  return builder.finish();
+}
+
+const aiWorkingGutterField = StateField.define<RangeSet<GutterMarker>>({
+  create: () => RangeSet.empty,
+  update: (marks, transaction) => {
+    let next = marks.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (effect.is(setAiWorkingLines)) next = computeAiWorkingMarks(transaction.state.doc, effect.value);
+    }
+    return next;
+  },
+});
+
+const aiWorkingGutter = gutter({
+  class: 'cm-ai-gutter',
+  markers: (view) => view.state.field(aiWorkingGutterField),
+  initialSpacer: () => aiWorkingStartMarker,
+});
+
+// ---- "Press space for AI" hint on an empty line ---------------------------
+//
+// A line decoration rather than a widget: the hint text is delivered through
+// the `--cm-ai-hint` custom property and painted by a `::after` pseudo
+// element, so nothing is ever inserted into the editable DOM where it could
+// be selected, copied, or confuse CodeMirror's input handling. Setting that
+// property to an empty string (the AppPanel shell) makes the rule paint
+// nothing, which is also how the feature is switched off.
+const aiHintLine = Decoration.line({ class: 'cm-ai-hint-line' });
+
+/** True when the caret sits, without a selection, on a blank line. */
+function aiHintTargetLine(state: EditorState): number | null {
+  const range = state.selection.main;
+  if (!range.empty) return null;
+  const line = state.doc.lineAt(range.head);
+  return line.text.trim() ? null : line.number;
+}
+
+const aiHintPlugin = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+  constructor(view: EditorView) { this.decorations = this.build(view); }
+  update(update: ViewUpdate): void {
+    // `focusChanged` matters too: the hint is an affordance for the caret,
+    // so it should not linger on a blurred editor.
+    if (update.docChanged || update.selectionSet || update.focusChanged || update.viewportChanged) {
+      this.decorations = this.build(update.view);
+    }
+  }
+  build(view: EditorView): DecorationSet {
+    if (!view.hasFocus) return Decoration.none;
+    const lineNo = aiHintTargetLine(view.state);
+    if (lineNo == null) return Decoration.none;
+    const line = view.state.doc.line(lineNo);
+    return Decoration.set([aiHintLine.range(line.from)]);
+  }
+}, { decorations: (plugin) => plugin.decorations });
 
 class BulletWidget extends WidgetType {
   toDOM(): HTMLElement {
@@ -2011,14 +2251,43 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     scheduleCenterActiveLine();
   }
   window.addEventListener('mouseup', onWindowMouseUp);
+
+  // "Press space to bring in the AI." Only fires while the hint is actually
+  // on screen — the host enabled it (AppView) and the caret sits alone on a
+  // blank line — and only consumes the key if the host says it took over,
+  // so Space always falls through to typing a space otherwise.
+  let aiHintText = '';
+  const aiHintKeymap = keymap.of([{
+    key: 'Space',
+    run: (target) => {
+      if (!aiHintText || !options.onAiHintTrigger) return false;
+      const lineNo = aiHintTargetLine(target.state);
+      if (lineNo == null) return false;
+      const coords = target.coordsAtPos(target.state.doc.line(lineNo).from);
+      if (!coords) return false;
+      return options.onAiHintTrigger({
+        line: lineNo,
+        rect: { top: coords.top, bottom: coords.bottom, left: coords.left, right: coords.right },
+      });
+    },
+  }]);
+
   const view = new EditorView({
     doc: options.value ?? '',
     parent: options.parent,
     extensions: [
+      // Listed before `markdownEditorKeymap` (and therefore before
+      // basicSetup's default bindings) so the empty-line Space hand-off
+      // gets first refusal on the key; it declines whenever the hint is
+      // off or the caret is not on a blank line, and Space types normally.
+      aiHintKeymap,
       markdownEditorKeymap,
       basicSetup,
       EditorState.phrases.of(searchPhrases),
       codeGutterLineHighlighter,
+      aiWorkingGutterField,
+      aiWorkingGutter,
+      aiHintPlugin,
       markdownSupport,
       // Typing `|` on an empty line pops a table-size picker (2x2/3x3/4x4)
       // via CodeMirror's own autocompletion (basicSetup already includes
@@ -2087,7 +2356,15 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     setValue(value) {
       if (value === view.state.doc.toString()) return;
       suppressChange = true;
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
+      // This is "load a different document" / "clear the editor", not a
+      // user edit — it must never become an undo step. Without
+      // addToHistory:false, opening a file makes the very first Cmd/Ctrl+Z
+      // wipe the whole document back to whatever empty/placeholder doc the
+      // view started with, which reads as data loss rather than undo.
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: value },
+        annotations: Transaction.addToHistory.of(false),
+      });
       suppressChange = false;
     },
     applyExternalValue(value) {
@@ -2157,11 +2434,16 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
         view.coordsAtPos(end, -1) ??
         view.coordsAtPos(end) ??
         view.dom.getBoundingClientRect();
+      // The head anchor above pins the popup's fallback position (below the
+      // selection); `startRect` is its preferred one — above the selection's
+      // first line — so the popup never covers the text being rewritten.
+      const head = view.coordsAtPos(start) ?? view.coordsAtPos(start, -1) ?? anchor;
       return {
         start,
         end,
         text,
         rect: { top: anchor.top, bottom: anchor.bottom, left: anchor.left, right: anchor.right },
+        startRect: { top: head.top, bottom: head.bottom, left: head.left, right: head.right },
       };
     },
     hasFocus: () => view.hasFocus,
@@ -2195,6 +2477,17 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       view.dom.style.setProperty('--md-focus-opacity', on ? '0.5' : '1');
       if (on) scheduleCenterActiveLine();
       view.requestMeasure();
+    },
+    setAiWorkingLines(fromLine, toLine) {
+      const active = fromLine > 0 && toLine >= fromLine;
+      view.dispatch({ effects: setAiWorkingLines.of(active ? { fromLine, toLine } : null) });
+    },
+    setAiHint(text) {
+      aiHintText = text || '';
+      // `content` needs a CSS string literal, so quote/escape the phrase
+      // rather than interpolating it raw. Empty text leaves an empty
+      // literal, which paints nothing — that is the "off" state.
+      view.dom.style.setProperty('--cm-ai-hint', aiHintText ? JSON.stringify(aiHintText) : '""');
     },
     scrollDOM: view.scrollDOM,
     destroy() {

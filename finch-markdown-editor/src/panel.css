@@ -95,6 +95,22 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .popup input{width:147px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:4px 6px}
 .popup button{font:inherit;border:0;background:var(--accent);color:#fff;border-radius:6px;padding:5px 10px;cursor:pointer;white-space:nowrap}
 .popup button:hover{opacity:.9}
+/* Plain muted text, no chip/border — this is a passive hint ("here's the
+   shortcut if you want it"), not a clickable control, so it shouldn't look
+   like one. Both focused and unfocused states show exactly the same
+   elements (input + shortcut hint + send button); nothing toggles by
+   focus, so the popup never resizes when you click into it. */
+.popup-shortcut{display:flex;align-items:center;gap:3px;padding:0 4px;color:var(--muted);white-space:nowrap;cursor:default;font-size:11px}
+.popup-shortcut kbd{font:inherit;font-size:11px}
+/* Round send button, icon-only — sits in the same slot regardless of
+   focus state so the popup's overall size never shifts. */
+.popup-send{flex:none;width:28px;height:28px;padding:0;border-radius:999px;display:flex;align-items:center;justify-content:center}
+.popup-send svg{width:15px;height:15px}
+/* Inline prompt bar: the blank line the writer pressed space on turns into
+   a full-width input. Width comes from JS (the editor's text column), so the
+   input just needs to fill whatever it is given. */
+.popup.popup-bar{border-radius:8px;padding:5px 6px;box-shadow:0 4px 16px rgba(0,0,0,.18)}
+.popup.popup-bar input{flex:1;width:auto;white-space:nowrap;text-overflow:ellipsis}
 /* Unsaved-changes confirm, deliberately a plain in-page overlay rather than
    `window.finch.ui.confirm()`: the only entry point that can trigger it is
    the toolbar's "home" button, which reaches this page as a `finch:menu`
@@ -123,7 +139,7 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .actions{position:absolute;right:32px;bottom:32px;z-index:8;display:flex;align-items:center;gap:3px;padding:5px;border-radius:11px;background:var(--card);border:1px solid var(--border);box-shadow:0 6px 20px rgba(0,0,0,.18);transition:gap .15s ease}
 .actions[hidden]{display:none}
 .actions button{position:relative;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:0;border-radius:7px;background:transparent;color:var(--text);font:inherit;cursor:pointer;white-space:nowrap}
-.actions button:hover:not(:disabled){background:var(--bg)}
+.actions button:hover:not(:disabled){background:var(--finch-bg-hover,var(--bg))}
 .actions button[data-tooltip]::after{content:attr(data-tooltip);position:absolute;left:50%;bottom:calc(100% + 8px);z-index:20;padding:6px 8px;border:1px solid var(--border);border-radius:7px;background:linear-gradient(135deg,color-mix(in srgb,var(--card) 96%,#fff),var(--bg));box-shadow:0 5px 16px rgba(0,0,0,.2);color:var(--text);font-size:12px;line-height:1;white-space:nowrap;pointer-events:none;opacity:0;transform:translate(-50%,3px);transition:opacity .16s ease,transform .16s ease}
 .actions button[data-tooltip]:hover::after{opacity:1;transform:translate(-50%,0)}
 /* Center tooltips over ordinary buttons; at either end of the floating bar,
@@ -145,3 +161,38 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .actions.collapsed #actCopyWx{padding:0 7px}
 .actions.collapsed #actCopyWx .act-label{display:none}
 .actions.collapsed .act-toggle svg{transform:rotate(0deg)}
+
+/* Full-screen App View shell. The same document remains a compact, host-toolbar-
+   driven Panel App until finch:env explicitly identifies the appView surface. */
+.app-toolbar{height:48px;flex:none;align-items:center;gap:12px;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--card)}
+body.app-view .app-toolbar{display:flex!important}
+.app-toolbar-group{display:flex;align-items:center;gap:6px;flex:none}
+.app-toolbar-end{margin-left:auto}
+.app-tool{height:32px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--text);font:12px var(--finch-font-body,system-ui);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;min-width:32px;padding:0 8px;gap:6px}
+.app-tool svg{width:19px;height:19px;stroke-width:1.8}.app-tool:hover:not(:disabled){background:var(--finch-bg-hover,var(--bg))}
+.app-tool:disabled{opacity:.4;cursor:default}.app-tool.checked{color:var(--text);background:var(--finch-bg-active,color-mix(in srgb,var(--text) 10%,transparent))}.app-tool.dirty{color:var(--accent);background:transparent}
+.app-tool-label{min-width:auto;padding:0 9px}.app-menu-wrap{position:relative}.app-menu{position:absolute;z-index:32;top:calc(100% + 7px);right:0;min-width:174px;padding:5px;border:1px solid var(--border);border-radius:9px;background:var(--card);box-shadow:0 8px 24px rgba(0,0,0,.2)}
+.app-menu button{display:flex;width:100%;align-items:center;justify-content:space-between;gap:12px;padding:7px 9px;border:0;border-radius:6px;background:transparent;color:var(--text);font:12px var(--finch-font-body,system-ui);text-align:left;cursor:pointer}.app-menu button:hover{background:var(--finch-bg-hover,var(--bg))}.app-menu button.checked{color:var(--text);background:var(--finch-bg-active,color-mix(in srgb,var(--text) 10%,transparent));font-weight:600}.app-menu hr{margin:5px 3px;border:0;border-top:1px solid var(--border)}
+.app-document-meta{min-width:0;display:flex;flex-direction:column;gap:1px}.app-document-meta strong,.app-document-meta span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.app-document-meta strong{font-size:13px}.app-document-meta span{max-width:34vw;color:var(--muted);font-size:11px}
+body.app-view .stage{display:grid;grid-template-columns:minmax(0,1fr) 6px var(--preview-width,480px);background:var(--bg)}
+body.app-view .pane{position:relative;inset:auto;min-width:0;min-height:0}
+body.app-view .pane.active{display:block}
+body.app-view.has-document #editPane,body.app-view.has-document #previewPane{display:block}
+body.app-view #editPane{border-right:1px solid var(--border)}
+body.app-view .preview-shell{padding:20px;display:flex;justify-content:center;align-items:stretch}
+body.app-view #article{width:100%;border:1px solid var(--border)}
+body.app-view.preview-hidden .stage{grid-template-columns:minmax(0,1fr)}body.app-view.preview-hidden #previewPane,body.app-view.preview-hidden .preview-resizer{display:none!important}
+body:not(.app-view) .cm-ai-gutter{display:none!important}
+@keyframes cm-ai-spin{to{transform:rotate(360deg)}}
+.preview-resizer{position:relative;z-index:10;width:6px;cursor:col-resize;background:var(--border);opacity:0;transition:opacity .15s ease}.preview-resizer:hover,.preview-resizer.active{opacity:1}
+.app-tool{position:relative}.app-tool[data-tooltip]::after{content:attr(data-tooltip);position:absolute;left:50%;top:calc(100% + 8px);z-index:40;padding:6px 8px;border:1px solid var(--border);border-radius:7px;background:var(--card);box-shadow:0 5px 16px rgba(0,0,0,.2);color:var(--text);font-size:12px;line-height:1;white-space:nowrap;pointer-events:none;opacity:0;transform:translate(-50%,-3px);transition:opacity .16s ease,transform .16s ease}.app-tool[data-tooltip]:hover::after{opacity:1;transform:translate(-50%,0)}
+body.app-view .empty{grid-column:1/-1;background:var(--bg);padding:54px 38px}
+body.app-view .home{max-width:1040px}body.app-view #emptyNew{display:none}
+body.app-view .actions{right:24px;bottom:24px}
+.library-backdrop{position:fixed;z-index:39;inset:0;background:rgba(0,0,0,.24)}
+.library-drawer{position:fixed;z-index:40;top:0;bottom:0;left:0;width:min(390px,88vw);padding:0;background:var(--card);border-right:1px solid var(--border);transform:translateX(-102%);transition:transform .18s ease;display:flex;flex-direction:column}
+.library-drawer.open{transform:translateX(0)}.library-drawer>header{height:58px;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border)}
+.library-drawer>header div{display:flex;flex-direction:column}.library-drawer>header span{font-size:11px;color:var(--muted)}.library-drawer>header button{border:0;background:transparent;color:var(--muted);font-size:24px;cursor:pointer}
+.library-groups{flex:1;overflow:auto;padding:12px}.library-group{margin-bottom:18px}.library-group h3{margin:0 0 7px;padding:0 3px;font-size:12px;color:var(--muted);font-weight:600}
+.library-row{display:block;width:100%;padding:9px 10px;border:0;border-radius:8px;background:transparent;color:var(--text);text-align:left;cursor:pointer}.library-row:hover{background:var(--finch-bg-hover,var(--bg))}.library-row strong,.library-row span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.library-row strong{font-size:13px}.library-row span{margin-top:2px;font-size:11px;color:var(--muted)}
+@media(max-width:850px){body.app-view .stage{grid-template-columns:minmax(0,1fr) 6px min(var(--preview-width,480px),40vw)}.app-document-meta span{display:none}.app-toolbar{gap:6px}.app-tool-label{padding:0 8px}}

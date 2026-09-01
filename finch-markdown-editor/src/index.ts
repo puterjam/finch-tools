@@ -17,6 +17,9 @@ interface RecentDocument {
   title: string;
   preview: string;
   modifiedAt: number;
+  spaceId?: string;
+  spaceName?: string;
+  scopeLabel?: string;
 }
 
 interface PanelMessage {
@@ -44,6 +47,11 @@ interface PanelMessage {
   cwd?: string;
   sessionId?: string;
   spaceId?: string;
+  requirement?: string;
+  selectedText?: string;
+  startLine?: number;
+  endLine?: number;
+  rewriteMode?: 'replace' | 'continue';
 }
 
 // Pasted-image extension → file extension. Kept tiny and explicit rather
@@ -142,6 +150,8 @@ interface LastPathState {
   sessions?: Record<string, string>;
   /** @deprecated Legacy pre-0.6 global value; still read as a fallback for the '__global__' bucket. */
   lastPath?: string;
+  /** Per-file rewrite Session id, so successive rewrites reuse one conversation. */
+  rewriteSessions?: Record<string, string>;
 }
 
 function stateFile(ctx: finch.MiniToolContext): string {
@@ -232,6 +242,23 @@ function addRecentPath(state: LastPathState, scope: string, sourcePath: string):
   };
 }
 
+function pathBelongsTo(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+}
+
+async function resolveDocumentScope(ctx: finch.MiniToolContext, sourcePath: string): Promise<{ scope: string; spaceId?: string; spaceName?: string; scopeLabel: string }> {
+  const spaces = await ctx.spaces.list().catch(() => []);
+  const matches = spaces
+    .filter((space) => path.isAbsolute(space.directoryPath ?? '') && pathBelongsTo(space.directoryPath!, sourcePath))
+    .sort((a, b) => (b.directoryPath?.length ?? 0) - (a.directoryPath?.length ?? 0));
+  const space = matches[0];
+  if (space?.directoryPath) return { scope: space.directoryPath, spaceId: space.id, spaceName: space.name, scopeLabel: space.name };
+  const workspaceRoot = ctx.workspace.projectPath;
+  if (workspaceRoot && pathBelongsTo(workspaceRoot, sourcePath)) return { scope: workspaceRoot, scopeLabel: 'Workspace' };
+  return { scope: path.dirname(sourcePath), scopeLabel: 'External files' };
+}
+
 /** Records the panel's actual finch:env scope and migrates its current file
  * into that scope. This handles opens/creates that happened just before the
  * panel received its first env push. */
@@ -262,7 +289,11 @@ async function rememberLastPath(ctx: finch.MiniToolContext, panel: finch.AppPane
     // prefer the Panel id on reads so Home scopes in different Spaces cannot
     // overwrite one shared '__global__' bucket.
     state.sessions = { ...state.sessions, [sessionBucketKey(panel)]: sourcePath };
-    const scope = state.panelRecentScopes?.[panel.id];
+    let scope = state.panelRecentScopes?.[panel.id];
+    if (!scope && panel.view === 'appView') {
+      scope = (await resolveDocumentScope(ctx, sourcePath)).scope;
+      state.panelRecentScopes = { ...state.panelRecentScopes, [panel.id]: scope };
+    }
     if (scope) addRecentPath(state, scope, sourcePath);
     await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
   } catch (error) {
@@ -397,6 +428,36 @@ async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: 
   };
 }
 
+async function collectLibraryDocuments(ctx: finch.MiniToolContext): Promise<RecentDocument[]> {
+  const state = await readLastPathState(ctx);
+  const candidates = Object.values(state.recentPathsByScope ?? {}).flat()
+    .concat(Object.values(state.panels ?? {}))
+    .filter((value, index, values) => path.isAbsolute(value) && isMarkdownPath(value) && values.indexOf(value) === index);
+  const documents = await Promise.all(candidates.map(async (filePath): Promise<RecentDocument | undefined> => {
+    try {
+      const [info, markdown, scope] = await Promise.all([stat(filePath), readFile(filePath, 'utf8'), resolveDocumentScope(ctx, filePath)]);
+      if (!info.isFile()) return undefined;
+      const fileName = path.basename(filePath);
+      return {
+        path: filePath,
+        relativePath: path.relative(scope.scope, filePath),
+        fileName,
+        title: deriveTitle(markdown, fileName.replace(/\.[^.]+$/, '')),
+        preview: derivePreview(markdown),
+        modifiedAt: info.mtimeMs,
+        spaceId: scope.spaceId,
+        spaceName: scope.spaceName,
+        scopeLabel: scope.scopeLabel,
+      };
+    } catch {
+      return undefined;
+    }
+  }));
+  return documents.filter((entry): entry is RecentDocument => Boolean(entry))
+    .sort((a, b) => b.modifiedAt - a.modifiedAt)
+    .slice(0, RECENT_LIMIT);
+}
+
 // The document currently being delivered to each live Panel. This is
 // deliberately in-memory only: Home must start document-neutral on a later
 // open, but a Home panel that is still loading/rebinding must not lose a
@@ -442,10 +503,9 @@ function payloadPath(panel: finch.AppPanel): string | undefined {
  * installed. Prefer persisted per-Panel state; the retained opening payload
  * covers a tool's first-open race before persistence completes. */
 async function restoreDocument(ctx: finch.MiniToolContext, panel: finch.AppPanel): Promise<boolean> {
-  // Home is a document-neutral launch point: it must always show the empty
-  // state and let the user explicitly open a file or ask the AI to create
-  // one. Only Session-scoped panels may restore their last working document.
-  if (!panel.sessionId) return false;
+  // Home is document-neutral, but the application-level App View is a stable
+  // writing workspace and restores its own last document by panel id.
+  if (!panel.sessionId && panel.view !== 'appView') return false;
   // Persisted state wins after the user opens a different file from inside an
   // existing single-instance panel; payload is the first-open race fallback.
   const sourcePath = await readLastPath(ctx, panel) ?? payloadPath(panel);
@@ -563,6 +623,89 @@ async function revealInFileManager(ctx: finch.MiniToolContext, targetPath: strin
   }
 }
 
+async function readRewriteSession(ctx: finch.MiniToolContext, sourcePath: string): Promise<string | undefined> {
+  const state = await readLastPathState(ctx);
+  const id = state.rewriteSessions?.[sourcePath];
+  if (!id) return undefined;
+  // The persisted id may point at a deleted/archived Session — only reuse it
+  // while it still resolves, otherwise fall through to creating a fresh one.
+  const session = await ctx.sessions.get(id).catch(() => undefined);
+  return session ? id : undefined;
+}
+
+async function rememberRewriteSession(ctx: finch.MiniToolContext, sourcePath: string, sessionId: string): Promise<void> {
+  try {
+    const state = await readLastPathState(ctx);
+    state.rewriteSessions = { ...state.rewriteSessions, [sourcePath]: sessionId };
+    await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+  } catch (error) {
+    ctx.logger.warn(`Could not persist rewrite session: ${String(error)}`);
+  }
+}
+
+async function startRewriteSession(ctx: finch.MiniToolContext, panel: finch.AppPanel, message: PanelMessage): Promise<void> {
+  const sourcePath = String(message.path ?? '').trim();
+  const selectedText = String(message.selectedText ?? '').trim();
+  // 'continue' comes from a right-click with no selection: the user wants the
+  // AI to write new content after a specific line rather than rewrite one.
+  const rewriteMode = message.rewriteMode === 'continue' ? 'continue' : 'replace';
+  const requirement = String(message.requirement ?? '').trim()
+    || (rewriteMode === 'continue' ? '自然地承接上下文继续写作' : '让表达更清晰、自然，并保持原意');
+  const hasTarget = rewriteMode === 'continue' ? !!message.startLine : !!selectedText;
+  if (panel.view !== 'appView' || !path.isAbsolute(sourcePath) || !hasTarget) {
+    await panel.postMessage({ type: 'rewriteSessionFailed', message: '改写需要 App View 中已保存的本地文档和选中文本或续写位置。' });
+    return;
+  }
+  const scope = await resolveDocumentScope(ctx, sourcePath);
+  // Successive rewrites of the same file reuse one persistent conversation so
+  // the session accumulates context instead of restarting from scratch.
+  let sessionId = await readRewriteSession(ctx, sourcePath);
+  if (!sessionId) {
+    const session = await ctx.sessions.create({
+      ...(scope.spaceId ? { space: { spaceId: scope.spaceId } } : {}),
+      title: `改写：${path.basename(sourcePath)}`,
+      activity: 'interactive',
+      permissionMode: 'acceptCalls',
+    });
+    sessionId = session.sessionId;
+    await rememberRewriteSession(ctx, sourcePath, sessionId);
+  }
+  const lineText = message.startLine
+    ? `位置：第 ${message.startLine}${message.endLine && message.endLine !== message.startLine ? `–${message.endLine}` : ''} 行。`
+    : '';
+  // Continue mode is summoned from an EMPTY line (the writer pressed space
+  // on a blank line to ask for AI text right there) — the new content
+  // belongs ON that line, replacing its emptiness, not inserted as a new
+  // line after it. Telling the model to "insert after line N" would leave
+  // the blank line N in place and push the new text down to N+1, which
+  // reads as the AI having continued on the wrong line.
+  const prompt = rewriteMode === 'continue'
+    ? `请在下面这份 Markdown 文件的指定位置续写内容，并把结果写回文件。\n\n文件：${sourcePath}\n${lineText}\n要求：${requirement}\n\n请读取文件当前内容：第 ${message.startLine} 行当前是一个空行，请把续写的新内容直接写入这一行本身（把这个空行替换成新内容），不要在它前后额外插入新的空行，也不要改动第 ${message.startLine} 行之外的原有内容；调用 markdown_editor_document 的 apply，以 edits 做精确的局部替换。不要只给建议，不要重发全文；完成写回后简短说明。`
+    : `请直接改写下面这段 Markdown，并把结果写回文件。\n\n文件：${sourcePath}\n${lineText}\n要求：${requirement}\n\n原文：\n${selectedText}\n\n请读取文件当前内容，调用 markdown_editor_document 的 apply，以 edits 做唯一、精确的局部替换。不要只给建议，不要重发全文；完成写回后简短说明。`;
+  const receipt = await ctx.sessions.send(sessionId, {
+    text: prompt,
+    idempotencyKey: `rewrite-${createHash('sha256').update(`${sourcePath}:${rewriteMode}:${selectedText}:${requirement}:${message.startLine ?? ''}:${Date.now()}`).digest('hex')}`,
+  });
+  if (receipt.state === 'rejected') {
+    await panel.postMessage({ type: 'rewriteSessionFailed', message: '改写会话队列繁忙，请稍后重试。' });
+    return;
+  }
+  await panel.postMessage({
+    type: 'rewriteSessionStarted', sessionId, spaceName: scope.spaceName,
+    title: `${rewriteMode === 'continue' ? '续写' : '改写'}：${path.basename(sourcePath)}`,
+    startLine: message.startLine, endLine: message.endLine ?? message.startLine,
+    rewriteMode,
+  });
+  void ctx.sessions.waitForTurn(sessionId, receipt.turnId, { timeoutMs: 600_000 }).then(async (result) => {
+    const verb = rewriteMode === 'continue' ? '续写' : '改写';
+    await panel.postMessage({
+      type: result.state === 'completed' ? 'rewriteSessionFinished' : 'rewriteSessionFailed',
+      sessionId,
+      message: result.state === 'completed' ? `${verb}已完成。` : result.state === 'timeout' ? `${verb}仍在会话中继续。` : `${verb}会话未完成。`,
+    }).catch(() => {});
+  });
+}
+
 async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, raw: unknown): Promise<void> {
   const message = raw as PanelMessage;
   switch (message.type) {
@@ -631,6 +774,7 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
         const handle = ctx.ui.pickFile({
           title: '选择Markdown文件',
           filter: { extensions: ['.md', '.markdown'] },
+          allowSpaceSwitch: panel.view === 'appView',
         });
         ctx.logger.info('ctx.ui.pickFile() call returned a handle, awaiting resolution…');
         const picked = await handle;
@@ -710,19 +854,26 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       return;
     }
     case 'requestRecentDocuments': {
-      // The page owns the cwd (it arrives with `finch:env`), so it tells us
-      // which directory to scope the list to instead of us guessing per panel.
       const cwd = String(message.cwd ?? '').trim();
       const sessionId = String(message.sessionId ?? '').trim();
       const spaceId = String(message.spaceId ?? '').trim();
       try {
-        await rememberPanelRecentScope(ctx, panel, cwd, sessionId, spaceId);
-        const recent = await collectRecentDocuments(ctx, cwd, sessionId, spaceId);
-        await panel.postMessage({ type: 'recentDocuments', cwd, documents: recent.documents, fallbackCwd: recent.fallbackCwd });
+        if (panel.view === 'appView') {
+          const documents = await collectLibraryDocuments(ctx);
+          await panel.postMessage({ type: 'recentDocuments', cwd, documents, library: true });
+        } else {
+          await rememberPanelRecentScope(ctx, panel, cwd, sessionId, spaceId);
+          const recent = await collectRecentDocuments(ctx, cwd, sessionId, spaceId);
+          await panel.postMessage({ type: 'recentDocuments', cwd, documents: recent.documents, fallbackCwd: recent.fallbackCwd });
+        }
       } catch (error) {
         ctx.logger.warn(`Could not collect recent documents: ${String(error)}`);
-        await panel.postMessage({ type: 'recentDocuments', cwd, documents: [] });
+        await panel.postMessage({ type: 'recentDocuments', cwd, documents: [], library: panel.view === 'appView' });
       }
+      return;
+    }
+    case 'requestRewrite': {
+      await startRewriteSession(ctx, panel, message);
       return;
     }
     case 'saveMarkdown': {

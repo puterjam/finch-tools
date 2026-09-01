@@ -53,6 +53,14 @@
           "label": "写字图标"
         }
       ],
+      "appView": {
+        "icon": "newspaper",
+        "description": "A full-screen Markdown writing workspace with live WeChat preview.",
+        "source": {
+          "type": "local",
+          "path": "dist/panel.html"
+        }
+      },
       "appPanel": {
         "icon": "newspaper",
         "viewType": "markdown-editor.document",
@@ -177,7 +185,8 @@
     "permissions": {
       "filesystem": "readwrite",
       "network": true,
-      "shell": true
+      "shell": true,
+      "sessions": true
     }
   },
   "devDependencies": {
