@@ -83,17 +83,17 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 /* Lines an external revision (AI apply, or an on-disk edit) just rewrote.
    The decoration is dropped again after the animation, so the highlight is
    purely transient — it marks the change without leaving the doc annotated.
-   It eases in rather than appearing at full strength, and leaves a thin
-   change-bar on the left the way a diff view would, so the eye reads it as
-   "this got rewritten" instead of a highlighter pen being slapped down. */
+   It eases in rather than appearing at full strength, and it's just the
+   background fading — no left change-bar, so it reads as a soft glow
+   rather than a diff-view gutter mark. */
 .cm-line.cm-ai-changed{border-radius:6px;animation:ai-edit-flash 1.9s cubic-bezier(.33,0,.2,1) both}
 @keyframes ai-edit-flash{
-  0%{background:transparent;box-shadow:inset 2px 0 0 transparent}
-  26%{background:color-mix(in srgb,var(--accent) 13%,transparent);box-shadow:inset 2px 0 0 color-mix(in srgb,var(--accent) 52%,transparent)}
-  55%{background:color-mix(in srgb,var(--accent) 11%,transparent);box-shadow:inset 2px 0 0 color-mix(in srgb,var(--accent) 44%,transparent)}
-  100%{background:transparent;box-shadow:inset 2px 0 0 transparent}
+  0%{background:transparent}
+  26%{background:color-mix(in srgb,var(--accent) 13%,transparent)}
+  55%{background:color-mix(in srgb,var(--accent) 11%,transparent)}
+  100%{background:transparent}
 }
-@media (prefers-reduced-motion:reduce){.cm-line.cm-ai-changed{animation:none;background:transparent;box-shadow:none}}
+@media (prefers-reduced-motion:reduce){.cm-line.cm-ai-changed{animation:none;background:transparent}}
 .popup{position:fixed;z-index:20;display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);border-radius:9px;box-shadow:0 8px 22px rgba(0,0,0,.22);padding:5px;transform-origin:center bottom;animation:popup-in .18s cubic-bezier(.2,.8,.2,1)}
 .popup.hidden{display:none}
 @keyframes popup-in{from{opacity:0;transform:translateY(5px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
