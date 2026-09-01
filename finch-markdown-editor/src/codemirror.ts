@@ -20,7 +20,7 @@ import {
 import { EditorState, RangeSet, RangeSetBuilder, StateEffect, StateField, Transaction, type Text } from '@codemirror/state';
 import { indentLess, indentMore, indentWithTab, defaultKeymap, historyKeymap } from '@codemirror/commands';
 import { searchKeymap } from '@codemirror/search';
-import { type Completion, type CompletionContext } from '@codemirror/autocomplete';
+import { autocompletion, type Completion, type CompletionContext } from '@codemirror/autocomplete';
 import {
   Decoration,
   type DecorationSet,
@@ -703,9 +703,48 @@ const finchTheme = EditorView.theme({
     backgroundColor: 'var(--card)',
     border: '1px solid var(--border)',
   },
+  // Slash-block completion is visually aligned with AppView's font menu:
+  // rounded white/card surface, a quiet shallow elevation, compact rows,
+  // and delimiter details held to the right rather than reading inline.
+  '.cm-tooltip.cm-tooltip-autocomplete': {
+    borderRadius: '10px',
+    padding: '5px',
+    boxShadow: '0 2px 8px rgba(0,0,0,.12)',
+    overflow: 'hidden',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul': {
+    minWidth: '188px',
+    fontFamily: 'var(--finch-font-body, system-ui)',
+    fontSize: '13px',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0',
+    padding: '4px 7px',
+    borderRadius: '6px',
+  },
   '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
     color: 'var(--text)',
-    backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
+    backgroundColor: 'var(--finch-bg-active, color-mix(in srgb, var(--text) 10%, transparent))',
+  },
+  '.cm-tooltip-autocomplete .cm-completionLabel': {
+    flex: '1',
+  },
+  '.cm-tooltip-autocomplete .cm-completionDetail': {
+    marginLeft: 'auto',
+    color: 'var(--muted)',
+    fontStyle: 'normal',
+    fontSize: '0.86em',
+  },
+  '.cm-tooltip-autocomplete .cm-md-completion-icon': {
+    flex: 'none',
+    width: '16px',
+    height: '16px',
+    paddingRight: '8px',
+    boxSizing: 'content-box',
+    color: 'var(--muted)',
+    opacity: '0.82',
   },
 });
 
@@ -2021,16 +2060,47 @@ const searchPhrases = {
 // `detail` renders as the quiet right-hand delimiter in CodeMirror's native
 // completion list, while `apply` replaces the typed `/…` query on Enter.
 const markdownSlashBlocks: Completion[] = [
-  { label: '标题 1', detail: '#', apply: '# ', type: 'keyword' },
-  { label: '标题 2', detail: '##', apply: '## ', type: 'keyword' },
-  { label: '标题 3', detail: '###', apply: '### ', type: 'keyword' },
-  { label: '符号列表', detail: '-', apply: '- ', type: 'keyword' },
-  { label: '有序列表', detail: '1.', apply: '1. ', type: 'keyword' },
-  { label: '引用', detail: '>', apply: '> ', type: 'keyword' },
-  { label: '分隔线', detail: '---', apply: '---', type: 'keyword' },
-  { label: '代码', detail: '```', apply: '```', type: 'keyword' },
-  { label: '表格', detail: '|', apply: '|', type: 'keyword' },
+  { label: '标题 1', detail: '#', apply: '# ', type: 'md-heading' },
+  { label: '标题 2', detail: '##', apply: '## ', type: 'md-heading' },
+  { label: '标题 3', detail: '###', apply: '### ', type: 'md-heading' },
+  { label: '符号列表', detail: '-', apply: '- ', type: 'md-list' },
+  { label: '有序列表', detail: '1.', apply: '1. ', type: 'md-list-ordered' },
+  { label: '引用', detail: '>', apply: '> ', type: 'md-quote' },
+  { label: '分隔线', detail: '---', apply: '---', type: 'md-minus' },
+  { label: '代码', detail: '```', apply: '```', type: 'md-code' },
+  { label: '表格', detail: '|', apply: '|', type: 'md-table' },
 ];
+
+const markdownCompletionIconPaths: Record<string, string[]> = {
+  // Lucide: heading, list, list-ordered, quote, minus, code-xml, table.
+  'md-heading': ['M6 12h12', 'M6 20V4', 'M18 20V4'],
+  'md-list': ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01'],
+  'md-list-ordered': ['M10 6h11', 'M10 12h11', 'M10 18h11', 'M4 6h1v4', 'M4 10h2', 'M4 14h2a1 1 0 0 1 0 2l-2 2h2'],
+  'md-quote': ['M3 21c3 0 7-1 7-8V5H3v8h4c0 1.5-1.2 3-4 3.5V21z', 'M14 21c3 0 7-1 7-8V5h-7v8h4c0 1.5-1.2 3-4 3.5V21z'],
+  'md-minus': ['M5 12h14'],
+  'md-code': ['m16 18 6-6-6-6', 'm8 6-6 6 6 6'],
+  'md-table': ['M3 3h18v18H3z', 'M3 9h18', 'M3 15h18', 'M9 3v18', 'M15 3v18'],
+};
+
+function renderMarkdownCompletionIcon(completion: Completion): Node | null {
+  const paths = completion.type ? markdownCompletionIconPaths[completion.type] : undefined;
+  if (!paths) return null;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('cm-completionIcon', 'cm-md-completion-icon');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  paths.forEach((d) => {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    svg.appendChild(path);
+  });
+  return svg;
+}
 
 function markdownSlashAutocompleter(context: CompletionContext) {
   const line = context.state.doc.lineAt(context.pos);
@@ -2087,7 +2157,7 @@ function toggleMarkdownDelimiter(view: EditorView, delimiter: string): boolean {
 
 const markdownEditorKeymap = keymap.of([
   { key: 'Mod-b', run: (view) => toggleMarkdownDelimiter(view, '**') },
-  { key: 'Mod-i', run: (view) => toggleMarkdownDelimiter(view, '_') },
+  { key: 'Mod-i', run: (view) => toggleMarkdownDelimiter(view, '*') },
   { key: '`', run: handleFenceTriggerBacktick },
   { key: 'Enter', run: completeOpeningCodeFence },
   { key: 'ArrowUp', run: (view) => moveIntoAdjacentTable(view, -1) || moveIntoSkippedDelimiterLine(view, -1) },
@@ -2371,6 +2441,13 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       aiHintKeymap,
       markdownEditorKeymap,
       basicSetup,
+      // Replace CodeMirror's generic text/keyword glyphs with actual Lucide
+      // SVGs for slash blocks; non-Markdown completion sources simply render
+      // no icon instead of falling back to the default key symbol.
+      autocompletion({
+        icons: false,
+        addToOptions: [{ position: 20, render: renderMarkdownCompletionIcon }],
+      }),
       EditorState.phrases.of(searchPhrases),
       codeGutterLineHighlighter,
       aiWorkingGutterField,
