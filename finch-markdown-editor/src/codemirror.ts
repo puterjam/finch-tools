@@ -352,6 +352,9 @@ const finchTheme = EditorView.theme({
     paddingBottom: '0 !important',
     width: 'calc(50rem - 30px) !important',
     paddingInline: '24px',
+    // Empty-line AI hint is absolutely positioned, so it does not inherit
+    // padding layout. Give it the same content-start offset as code text.
+    '--cm-ai-hint-inline-offset': '24px',
     fontSize: '13px !important',
   },
 
@@ -546,7 +549,10 @@ const finchTheme = EditorView.theme({
     position: 'absolute',
     top: '0',
     bottom: '0',
-    left: '10px',
+    // Normal source lines retain the existing 10px visual inset. Code rows
+    // override this token with their own content padding (24px), keeping the
+    // hint directly to the right of the code cursor rather than at the box edge.
+    left: 'var(--cm-ai-hint-inline-offset, 10px)',
     display: 'flex',
     alignItems: 'center',
     // An empty line is otherwise zero-width. The phrase deliberately never
