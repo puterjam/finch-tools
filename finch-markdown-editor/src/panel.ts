@@ -101,6 +101,7 @@
       'annotate.requirementWith': '要求：{comment}',
       'annotate.requirementDefault': '让表达更清晰',
       'annotate.pathMissing': '（未关联本地文件，请先粘贴/保存全部内容）',
+      'annotate.emptyLine': '（空行：请按批注要求在此处补充或续写内容）',
       'annotate.promptText': '请改写这段 Markdown 内容（位置：{lineLabel}），{requirement}：\n\n{text}\n\n先给出可直接替换的片段；我确认后，用针对这一段的局部替换写回源文件（{path}），不用重发全文。',
       'annotate.reminder': '仅给出改写建议，不要在未确认前直接写入源文件。回复用自然的说法（如“确认后我就改到文件里”），不要提工具名或动作名。【强制要求，不可省略】只要本回合给出了改写建议并等我确认，就必须在回复文本之后、本回合结束前调用一次 Session action=suggest，附上 1–3 个一键确认选项（如“就用这版”“用更短的那版”“再换个语气”）。只写完回复文字、不调用 suggest，视为任务未完成——“把方案写给用户看”和“让用户能一键确认”是同一个任务的两半，缺一不可，不要因为文字已给完就认为确认环节已经处理完毕。',
       'newdoc.needChat': '请在 Finch 对话中使用“新建文档”。',
@@ -258,6 +259,7 @@
       'annotate.requirementWith': 'Requirement: {comment}',
       'annotate.requirementDefault': 'make the wording clearer',
       'annotate.pathMissing': '(No local file linked — ask me to paste/save the full text first)',
+      'annotate.emptyLine': '(Blank line — add or continue content here according to the annotation.)',
       'annotate.promptText': 'Please rewrite this Markdown passage (location: {lineLabel}), {requirement}:\n\n{text}\n\nGive a drop-in replacement snippet first; once I confirm, write it back to the source file ({path}) as a targeted local replacement, not a full resend of the document.',
       'annotate.reminder': "Only propose the rewrite — don't write to the source file before I confirm. Reply in natural language (e.g. “I'll put it into the file once you confirm”); never name the tool or its actions. [MANDATORY, not optional] Whenever this turn proposes a rewrite and is waiting on my confirmation, calling Session action=suggest with 1–3 one-tap confirmations (e.g. “Use this one”, “Use the shorter version”, “Try another tone”) is part of completing that same turn — writing the proposal text is only half the job. Do not treat the turn as done, and do not skip the call, just because the proposal text itself was already sent.",
       'newdoc.needChat': 'Use \u201cNew Document\u201d from the Finch chat instead.',
@@ -1571,9 +1573,10 @@
   async function submitAnnotation() {
     var comment = popupInput.value.trim();
     var isContinue = selection.mode === 'continue';
-    // Continue mode has no selected text by design — a line number is the
-    // target instead — so it skips the "must have selected text" guard.
-    if ((!selection.text && !isContinue) || !api) return;
+    var isLineAnnotation = selection.mode === 'annotate-line';
+    // Continue mode (AppView) and blank-line annotation mode (AppPanel)
+    // intentionally have no selected text — their line number is the target.
+    if ((!selection.text && !isContinue && !isLineAnnotation) || !api) return;
     // The prompt tells the AI it can read/overwrite the file at `sourcePath`
     // directly — but if there are unsaved edits, disk still has the old
     // content: the AI would read stale context (or, if it applies a
@@ -1602,7 +1605,7 @@
       setStatus(isContinue ? t('appview.continuing') : t('appview.rewriting'));
       return;
     }
-    if (!api.composer || !selection.text) { closePopup(true); return; }
+    if (!api.composer || (!selection.text && !isLineAnnotation)) { closePopup(true); return; }
     try {
       await api.composer.addContexts([{
         type: 'annotation',
@@ -1611,7 +1614,7 @@
         promptText: t('annotate.promptText', {
           lineLabel: lineLabel(),
           requirement: comment ? t('annotate.requirementWith', { comment: comment }) : t('annotate.requirementDefault'),
-          text: selection.text,
+          text: selection.text || t('annotate.emptyLine'),
           path: sourcePath || t('annotate.pathMissing'),
         }),
         reminder: t('annotate.reminder'),
@@ -1648,16 +1651,13 @@
     offerEditorSelectionNow();
   }
 
-  // ---- Blank-line AI prompt bar (AppView) ----
+  // ---- Blank-line AI prompt bar -----------------------------------------
   //
-  // The editor hints "press space to bring in the AI" on any blank line the
-  // caret rests on; pressing space there swaps that line for a full-width
-  // input instead of typing a space. Whatever is typed becomes a
-  // continue-writing instruction anchored to that line. This replaces an
-  // earlier right-click menu: the affordance is now visible in place, so
-  // there is nothing hidden behind a context menu to discover.
+  // Both shells expose this visible Space affordance. AppView treats the
+  // blank line as a continue-writing target; AppPanel instead turns it into
+  // a Composer annotation context — no rewrite session is started there.
   function openAiPromptBar(info) {
-    if (!isAppView || !hasDocument() || !info) return false;
+    if (!hasDocument() || !info) return false;
     cancelScheduledPopup();
     // Span the editor's text column rather than the whole pane so the bar
     // lines up with the writing it will extend. `.cm-line` is the reading
@@ -1671,7 +1671,7 @@
       startLeft: box.left,
       width: Math.max(240, box.width),
       focus: true,
-    }, null, { start: info.line, end: info.line }, 'editor', 'continue');
+    }, null, { start: info.line, end: info.line }, 'editor', isAppView ? 'continue' : 'annotate-line');
     return true;
   }
 
@@ -2791,10 +2791,10 @@
         isAppView = m.view === 'appView';
         document.body.classList.toggle('app-view', isAppView);
         if (appToolbar) appToolbar.hidden = !isAppView;
-        // The blank-line AI affordance only exists in the full-screen
-        // shell. Fenced-code blank rows use its short AI-only variant;
-        // slash-formatting is intentionally unavailable in literal code.
-        cm.setAiHint(isAppView ? t('appview.hintSpace') : '', isAppView ? t('appview.hintSpaceCode') : '');
+        // Both AppView and AppPanel expose the blank-line affordance. In
+        // AppPanel, Space opens a Composer annotation input rather than a
+        // rewrite session. Fenced-code rows use the short AI-only variant.
+        cm.setAiHint(t('appview.hintSpace'), t('appview.hintSpaceCode'));
         var incomingCwd = m.cwd || '';
         var incomingSessionId = m.sessionId || '';
         var incomingSpaceId = m.spaceId || '';
