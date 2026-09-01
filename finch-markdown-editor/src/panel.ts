@@ -42,6 +42,7 @@
       'appview.rewriting': '已发起改写，会话正在处理并将直接写回文件。',
       'appview.continuing': '已发起续写，会话正在处理并将直接写回文件。',
       'appview.hintSpace': '按 space（空格）以启用 AI · 按 / 选择格式',
+      'appview.hintSpaceCode': '按 space（空格）以启用 AI',
       'appview.rewriteDone': '改写已完成，文件内容已刷新。',
       'editor.ariaLabel': '写字编辑器',
       'actions.copyToWx': '复制到公众号',
@@ -198,6 +199,7 @@
       'appview.rewriting': 'Rewrite started. The session will apply its revision directly to the file.',
       'appview.continuing': 'Continuation started. The session will write the new text directly to the file.',
       'appview.hintSpace': 'Press space for AI · / for formatting',
+      'appview.hintSpaceCode': 'Press space for AI',
       'appview.rewriteDone': 'Rewrite complete. The document has refreshed.',
       'editor.ariaLabel': 'Writing editor',
       'actions.copyToWx': 'Copy for WeChat',
@@ -2712,9 +2714,10 @@
         isAppView = m.view === 'appView';
         document.body.classList.toggle('app-view', isAppView);
         if (appToolbar) appToolbar.hidden = !isAppView;
-        // The blank-line "press space for AI" affordance only exists in the
-        // full-screen shell, where a rewrite session can actually be run.
-        cm.setAiHint(isAppView ? t('appview.hintSpace') : '');
+        // The blank-line AI affordance only exists in the full-screen
+        // shell. Fenced-code blank rows use its short AI-only variant;
+        // slash-formatting is intentionally unavailable in literal code.
+        cm.setAiHint(isAppView ? t('appview.hintSpace') : '', isAppView ? t('appview.hintSpaceCode') : '');
         var incomingCwd = m.cwd || '';
         var incomingSessionId = m.sessionId || '';
         var incomingSpaceId = m.spaceId || '';

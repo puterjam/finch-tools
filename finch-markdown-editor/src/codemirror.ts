@@ -67,8 +67,10 @@ interface MarkdownEditorHandle {
   setFocusMode(on: boolean): void;
   setAiWorkingLines(fromLine: number, toLine: number): void;
   /** Hint shown on the caret's line while it is empty ("press space to…").
-   * Empty string turns the affordance off (AppPanel). */
-  setAiHint(text: string): void;
+   * `codeText` is used for blank lines inside fenced code blocks, where
+   * Markdown's slash-format menu is intentionally unavailable. Empty text
+   * turns the affordance off (AppPanel). */
+  setAiHint(text: string, codeText?: string): void;
   scrollDOM: HTMLElement;
   destroy(): void;
 }
@@ -553,6 +555,11 @@ const finchTheme = EditorView.theme({
     wordBreak: 'keep-all',
     overflowWrap: 'normal',
   },
+  // Fenced-code blank lines deliberately expose only the AI affordance:
+  // Markdown block syntax is literal code there, so `/` must not be hinted.
+  '.cm-ai-hint-code-line::after': {
+    content: 'var(--cm-ai-hint-code, "")',
+  },
   '.cm-activeLine': {
     backgroundColor: 'color-mix(in srgb, var(--text) 7%, transparent)',
     boxShadow: [
@@ -854,6 +861,18 @@ const blockSpacingPlugin = ViewPlugin.fromClass(
 // line's literal Markdown for predictable editing.
 const INLINE_CODE_RE = /`([^`\n]+)`/g;
 const FENCE_RE = /^\s*```+\s*([^\s`]*)?\s*$/;
+
+/** Whether `lineNo` is a body row inside a fenced code block. The opening
+ * fence itself is not "inside", while every row after an unmatched opening
+ * fence is — including a blank one. */
+function isInsideFencedCodeBlock(doc: Text, lineNo: number): boolean {
+  let inFence = false;
+  for (let current = 1; current < lineNo; current++) {
+    if (FENCE_RE.test(doc.line(current).text)) inFence = !inFence;
+  }
+  return inFence;
+}
+
 const HR_RE = /^\s{0,3}(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$/;
 const UNORDERED_LIST_RE = /^(\s*)([-+*])(?=\s+)/;
 const QUOTE_RE = /^(\s*>\s?)/;
@@ -1305,6 +1324,7 @@ const aiWorkingGutter = gutter({
 // property to an empty string (the AppPanel shell) makes the rule paint
 // nothing, which is also how the feature is switched off.
 const aiHintLine = Decoration.line({ class: 'cm-ai-hint-line' });
+const aiHintCodeLine = Decoration.line({ class: 'cm-ai-hint-line cm-ai-hint-code-line' });
 
 /** True when the caret sits, without a selection, on a blank line. */
 function aiHintTargetLine(state: EditorState): number | null {
@@ -1329,7 +1349,8 @@ const aiHintPlugin = ViewPlugin.fromClass(class {
     const lineNo = aiHintTargetLine(view.state);
     if (lineNo == null) return Decoration.none;
     const line = view.state.doc.line(lineNo);
-    return Decoration.set([aiHintLine.range(line.from)]);
+    const hint = isInsideFencedCodeBlock(view.state.doc, lineNo) ? aiHintCodeLine : aiHintLine;
+    return Decoration.set([hint.range(line.from)]);
   }
 }, { decorations: (plugin) => plugin.decorations });
 
@@ -2068,7 +2089,9 @@ const markdownSlashBlocks: Completion[] = [
   { label: '引用', detail: '>', apply: '> ', type: 'md-quote' },
   { label: '分隔线', detail: '---', apply: '---', type: 'md-minus' },
   { label: '代码', detail: '```', apply: '```', type: 'md-code' },
-  { label: '表格', detail: '|', apply: '|', type: 'md-table' },
+  // A real 2×2 Markdown table (two columns, header + one empty body row),
+  // not a lone pipe that leaves writers to construct the table themselves.
+  { label: '表格', detail: '|', apply: '|   |   |\n| --- | --- |\n|   |   |', type: 'md-table' },
 ];
 
 const markdownCompletionIconPaths: Record<string, string[]> = {
@@ -2104,6 +2127,9 @@ function renderMarkdownCompletionIcon(completion: Completion): Node | null {
 
 function markdownSlashAutocompleter(context: CompletionContext) {
   const line = context.state.doc.lineAt(context.pos);
+  // A slash in a fenced code body is literal source text, not a Markdown
+  // block command. Returning null leaves it to normal code editing.
+  if (isInsideFencedCodeBlock(context.state.doc, line.number)) return null;
   const before = context.state.sliceDoc(line.from, context.pos);
   // Whitespace before `/` is kept intact, so slash blocks also work for an
   // indented list item. Any non-whitespace before the slash means it is
@@ -2650,12 +2676,13 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       const active = fromLine > 0 && toLine >= fromLine;
       view.dispatch({ effects: setAiWorkingLines.of(active ? { fromLine, toLine } : null) });
     },
-    setAiHint(text) {
+    setAiHint(text, codeText) {
       aiHintText = text || '';
-      // `content` needs a CSS string literal, so quote/escape the phrase
-      // rather than interpolating it raw. Empty text leaves an empty
-      // literal, which paints nothing — that is the "off" state.
+      // `content` needs a CSS string literal, so quote/escape both phrases
+      // rather than interpolating them raw. Code rows use the shorter
+      // codeText because slash blocks are disabled inside fenced code.
       view.dom.style.setProperty('--cm-ai-hint', aiHintText ? JSON.stringify(aiHintText) : '""');
+      view.dom.style.setProperty('--cm-ai-hint-code', codeText ? JSON.stringify(codeText) : '""');
     },
     scrollDOM: view.scrollDOM,
     destroy() {
