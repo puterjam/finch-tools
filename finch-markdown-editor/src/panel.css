@@ -181,7 +181,6 @@ body.app-view #editPane{border-right:1px solid var(--border)}
 body.app-view .preview-shell{padding:20px;display:flex;justify-content:center;align-items:stretch}
 body.app-view #article{width:100%;border:1px solid var(--border)}
 body.app-view.preview-hidden .stage{grid-template-columns:minmax(0,1fr)}body.app-view.preview-hidden #previewPane,body.app-view.preview-hidden .preview-resizer{display:none!important}
-body:not(.app-view) .cm-ai-gutter{display:none!important}
 @keyframes cm-ai-spin{to{transform:rotate(360deg)}}
 .preview-resizer{position:relative;z-index:10;width:6px;cursor:col-resize;background:var(--border);opacity:0;transition:opacity .15s ease}.preview-resizer:hover,.preview-resizer.active{opacity:1}
 .app-tool{position:relative}.app-tool[data-tooltip]::after{content:attr(data-tooltip);position:absolute;left:50%;top:calc(100% + 8px);z-index:40;padding:6px 8px;border:1px solid var(--border);border-radius:7px;background:var(--card);box-shadow:0 5px 16px rgba(0,0,0,.2);color:var(--text);font-size:12px;line-height:1;white-space:nowrap;pointer-events:none;opacity:0;transform:translate(-50%,-3px);transition:opacity .16s ease,transform .16s ease}.app-tool[data-tooltip]:hover::after{opacity:1;transform:translate(-50%,0)}

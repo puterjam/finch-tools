@@ -1332,7 +1332,7 @@ const aiWorkingGutterField = StateField.define<RangeSet<GutterMarker>>({
   },
 });
 
-// A completed AI insertion leaves a quiet green dot in this same gutter.
+// A completed AI write or rewrite leaves a quiet green dot in this gutter.
 // It is intentionally a separate field from the in-flight markers so a
 // cursor move can dismiss individual dots without disturbing a new rewrite's
 // spinner/rail state.
@@ -1345,13 +1345,13 @@ class AiAddedLineMarker extends GutterMarker {
   }
 }
 const aiAddedLineMarker = new AiAddedLineMarker();
-const setAiAddedLines = StateEffect.define<number[]>();
+const setAiChangedLines = StateEffect.define<number[]>();
 const aiAddedGutterField = StateField.define<RangeSet<GutterMarker>>({
   create: () => RangeSet.empty,
   update: (marks, transaction) => {
     let next = marks.map(transaction.changes);
     for (const effect of transaction.effects) {
-      if (!effect.is(setAiAddedLines)) continue;
+      if (!effect.is(setAiChangedLines)) continue;
       const builder = new RangeSetBuilder<GutterMarker>();
       for (const lineNo of effect.value) {
         if (lineNo >= 1 && lineNo <= transaction.state.doc.lines) {
@@ -2285,8 +2285,8 @@ interface ExternalDiff {
   changes: ExternalPatch[];
   /** 1-based, inclusive line ranges in the NEW document — what to flash. */
   lines: Array<{ from: number; to: number }>;
-  /** Newly inserted, non-blank lines — eligible for the one-shot AI dot. */
-  addedLines: number[];
+  /** Non-blank AI-written or AI-rewritten lines — eligible for the one-shot dot. */
+  markedLines: number[];
 }
 
 // A single first-difference-to-last-difference span is far too coarse here:
@@ -2378,7 +2378,7 @@ function computeExternalDiff(oldText: string, newText: string): ExternalDiff | n
 
   const changes: ExternalPatch[] = [];
   const lines: Array<{ from: number; to: number }> = [];
-  const addedLines: number[] = [];
+  const markedLines: number[] = [];
   for (const hunk of hunks) {
     const inserted = newLines.slice(hunk.newFrom, hunk.newTo).join('\n');
     const isInsertion = hunk.oldFrom === hunk.oldTo;
@@ -2414,17 +2414,15 @@ function computeExternalDiff(oldText: string, newText: string): ExternalDiff | n
       lines.push({ from: seam, to: seam });
     } else {
       lines.push({ from: hunk.newFrom + 1, to: hunk.newTo });
-      // Only a pure insertion is an AI-added line. A replacement can contain
-      // new wording, but it isn't a newly created row. Blank inserted rows
-      // deliberately stay quiet so layout spacing never looks annotated.
-      if (isInsertion) {
-        for (let lineNo = hunk.newFrom; lineNo < hunk.newTo; lineNo++) {
-          if (newLines[lineNo].trim()) addedLines.push(lineNo + 1);
-        }
+      // Both writing (insertion) and rewriting (replacement) deserve the
+      // same one-shot gutter reminder. Empty rows remain quiet so intentional
+      // whitespace never looks like an AI-authored content change.
+      for (let lineNo = hunk.newFrom; lineNo < hunk.newTo; lineNo++) {
+        if (newLines[lineNo].trim()) markedLines.push(lineNo + 1);
       }
     }
   }
-  return { changes, lines, addedLines };
+  return { changes, lines, markedLines };
 }
 
 const EXTERNAL_HIGHLIGHT_MS = 2000;
@@ -2660,7 +2658,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
         changes,
         effects: [
           setExternalHighlight.of(diff.lines),
-          setAiAddedLines.of(diff.addedLines),
+          setAiChangedLines.of(diff.markedLines),
         ],
         scrollIntoView: false,
       });
