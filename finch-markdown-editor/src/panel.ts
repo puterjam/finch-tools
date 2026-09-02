@@ -1779,6 +1779,11 @@
   // watcher/reconnect snapshot from overwriting a newer AI write already on
   // screen; reset when switching to a different source path.
   var documentRevision = 0;
+  // Latest remote revision withheld because the user has newer local edits.
+  // It remains on disk; this object lets the conflict chooser adopt it or
+  // deliberately keep local work with the correct remote baseline.
+  var pendingExternalDocument = null;
+  var conflictDialogOpen = false;
   var savedFlash = false; // true for ~3s right after a successful save, drives the save-check icon
 
   // ---- Unsaved-draft recovery: mirror edits to a backend sidecar file so a
@@ -1848,6 +1853,14 @@
   }
 
   async function writeToDisk(content) {
+    // Never let an ordinary Save silently overwrite an AI version that was
+    // withheld for local edits. Resolve the conflict first; the user can
+    // save again after deliberately choosing to retain local content.
+    if (pendingExternalDocument) {
+      void resolvePendingExternalDocument();
+      setStatus('请先处理 AI 写回与本地编辑的冲突。', true);
+      return false;
+    }
     if (fileHandle && fileHandle.createWritable) {
       try {
         var writable = await fileHandle.createWritable();
@@ -1910,7 +1923,9 @@
     // blurred mid-edit). The user's own uncommitted work always wins here;
     // the (still-running) draft mirror already backs it up on disk either way.
     if (!force && dirty && savedMarkdown !== null && nextMarkdown !== savedMarkdown) {
+      pendingExternalDocument = { markdown: nextMarkdown, name: nextName, path: nextPath, diskBaseline: diskBaseline };
       setStatus(t('status.externalUpdateSkipped'), true);
+      void resolvePendingExternalDocument();
       return false;
     }
     // Is this a revision of the document already on screen (an AI apply, or
@@ -1946,6 +1961,46 @@
     showPane();
     if (isAppView || mode === 'preview') render();
     return true;
+  }
+
+  async function resolvePendingExternalDocument() {
+    if (conflictDialogOpen || !pendingExternalDocument || !dirty) return;
+    var remote = pendingExternalDocument;
+    var base = savedMarkdown;
+    // The two one-sided cases are genuine automatic merges: no text exists
+    // on the other side that could be lost. Concurrent edits need a choice.
+    if (markdown === base) {
+      pendingExternalDocument = null;
+      applyDocument(remote.markdown, remote.name, remote.path, true, remote.diskBaseline);
+      return;
+    }
+    if (remote.markdown === base) { pendingExternalDocument = null; return; }
+    conflictDialogOpen = true;
+    var choice = await askExternalConflict();
+    conflictDialogOpen = false;
+    // A newer watcher push may have replaced this pending revision while the
+    // dialog was open; only resolve the snapshot the user was asked about.
+    if (pendingExternalDocument !== remote) return;
+    if (choice === 'later') {
+      setStatus('AI 写回已保留在磁盘；可继续编辑后再处理。');
+      return;
+    }
+    pendingExternalDocument = null;
+    if (choice === 'remote') {
+      // The local draft is already mirrored, but accepting AI means it must
+      // not silently resurrect on the next reopen.
+      discardDraftFor(sourcePath);
+      applyDocument(remote.markdown, remote.name, remote.path, true, remote.diskBaseline);
+      return;
+    }
+    if (choice === 'local') {
+      // Keep editing local text, but advance its disk baseline to the AI
+      // version. A future explicit Save is then an intentional overwrite,
+      // not a stale draft that pretends the old base is still current.
+      savedMarkdown = typeof remote.diskBaseline === 'string' ? remote.diskBaseline : remote.markdown;
+      scheduleDraftSave();
+      setStatus('已保留本地编辑；AI 写回版本仍在磁盘上。');
+    }
   }
 
   async function loadFile(f) {
@@ -2624,6 +2679,21 @@
       confirmOverlay.hidden = false;
       confirmSave.focus();
     });
+  }
+  async function askExternalConflict() {
+    // Reuse the in-page confirmation card, but make each result explicit:
+    // escape/cancel preserves the safest state (local text remains untouched).
+    confirmMessage.textContent = 'AI 已写回文件，但你也有未保存编辑。请选择保留本地内容或采用 AI 版本。';
+    confirmCancel.textContent = '稍后处理';
+    confirmDiscard.textContent = '保留本地';
+    confirmSave.textContent = '采用 AI 版本';
+    var choice = await new Promise(function (resolve) {
+      confirmResolve = resolve;
+      confirmOverlay.hidden = false;
+      confirmSave.focus();
+    });
+    applyStaticI18n(confirmOverlay);
+    return choice === 'save' ? 'remote' : choice === 'discard' ? 'local' : 'later';
   }
   if (confirmCancel) confirmCancel.addEventListener('click', function () { closeConfirm('cancel'); });
   if (confirmDiscard) confirmDiscard.addEventListener('click', function () { closeConfirm('discard'); });
