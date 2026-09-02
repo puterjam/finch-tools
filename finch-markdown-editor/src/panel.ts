@@ -114,7 +114,7 @@
       'aiStyle.baseNoteCustom': '当前基础风格是 kami（自定义 CSS 叠加其上）',
       'aiStyle.baseNoteOther': '当前基础风格是 {style}',
       'aiStyle.pathMissing': '（未关联本地文件）',
-      'aiStyle.promptText': '请为这篇公众号文章设计一套自定义排版 CSS。{baseNote}，你的 CSS 会叠加在基础风格之上。要求：只写普通 CSS 规则，选择器限定在 #bm-md 下的标签/结构（如 #bm-md h1、#bm-md p、#bm-md blockquote、#bm-md pre code、#bm-md a、#bm-md strong、#bm-md table 等），不要使用 class（bm.md 输出没有 class，只有内联样式），必要时用 !important 覆盖基础风格。可参考 bm.md 内置风格的设计语言：kami（暖色纸感）、bauhaus（几何撞色）、blueprint（技术蓝图网格）、botanical（清新绿意）、newsprint（报刊衬线）、retro（复古怀旧）、sketch（手绘风）、terminal（等宽暗色终端风）。文章路径：{path}。设计好后直接调用 set_style 应用（只传 css 和简短 label，不要传 slot），不需要先问我要覆盖哪个槽位——面板会自己弹出一个轻量的“保存为自定义风格”按钮，我看到效果后自己决定要不要固化。',
+      'aiStyle.promptText': '请为这篇公众号文章设计一套自定义排版 CSS。{baseNote}，你的 CSS 会叠加在基础风格之上。要求：只写普通 CSS 规则，选择器限定在 #bm-md 下的标签/结构（如 #bm-md h1、#bm-md p、#bm-md blockquote、#bm-md pre code、#bm-md a、#bm-md strong、#bm-md table 等），不要使用 class（bm.md 输出没有 class，只有内联样式），必要时用 !important 覆盖基础风格。可参考 bm.md 内置风格的设计语言：kami（暖色纸感）、bauhaus（几何撞色）、blueprint（技术蓝图网格）、botanical（清新绿意）、newsprint（报刊衬线）、retro（复古怀旧）、sketch（手绘风）、terminal（等宽暗色终端风）。文章路径：{path}。设计好后直接调用 set_style 应用（传 path="{path}"、css 和简短 label，不要传 slot——传 path 能让它准确找到这篇文档对应的预览窗口，即使我已经切换到别的界面），不需要先问我要覆盖哪个槽位——面板会自己弹出一个轻量的“保存为自定义风格”按钮，我看到效果后自己决定要不要固化。',
       'aiStyle.reminder': '不要在应用前先问我选哪个槽位——直接设计并调用 set_style（不传 slot）应用到预览即可，保存与否由我在面板上自己决定。回复用自然的说法，不要提工具名或动作名。',
       'aiStyle.requested': '已请求 AI 设计自定义排版。',
       'aiStyle.applied': 'AI 已设计好排版，效果已应用到预览。',
@@ -277,7 +277,7 @@
       'aiStyle.baseNoteCustom': 'The current base style is kami (your custom CSS layers on top of it)',
       'aiStyle.baseNoteOther': 'The current base style is {style}',
       'aiStyle.pathMissing': '(No local file linked)',
-      'aiStyle.promptText': 'Please design a custom layout CSS for this WeChat article. {baseNote}, and your CSS will layer on top of the base style. Requirements: write plain CSS rules only, with selectors scoped to tags/structure under #bm-md (e.g. #bm-md h1, #bm-md p, #bm-md blockquote, #bm-md pre code, #bm-md a, #bm-md strong, #bm-md table); don\u2019t use classes (bm.md\u2019s output has no classes, only inline styles), and use !important where needed to override the base style. You can draw on bm.md\u2019s built-in style language: kami (warm paper feel), bauhaus (geometric color-blocking), blueprint (technical grid), botanical (fresh green), newsprint (editorial serif), retro (nostalgic), sketch (hand-drawn), terminal (monospace dark). Article path: {path}. Once it\u2019s ready, call set_style directly (just css and a short label, no slot) \u2014 don\u2019t ask me which slot to use first; the panel will pop up a lightweight \u201csave as custom style\u201d button so I can decide after seeing the result.',
+      'aiStyle.promptText': 'Please design a custom layout CSS for this WeChat article. {baseNote}, and your CSS will layer on top of the base style. Requirements: write plain CSS rules only, with selectors scoped to tags/structure under #bm-md (e.g. #bm-md h1, #bm-md p, #bm-md blockquote, #bm-md pre code, #bm-md a, #bm-md strong, #bm-md table); don\u2019t use classes (bm.md\u2019s output has no classes, only inline styles), and use !important where needed to override the base style. You can draw on bm.md\u2019s built-in style language: kami (warm paper feel), bauhaus (geometric color-blocking), blueprint (technical grid), botanical (fresh green), newsprint (editorial serif), retro (nostalgic), sketch (hand-drawn), terminal (monospace dark). Article path: {path}. Once it\u2019s ready, call set_style directly (pass path="{path}", css, and a short label, no slot \u2014 passing path lets it find the right preview panel for this document even if I\u2019ve switched away) \u2014 don\u2019t ask me which slot to use first; the panel will pop up a lightweight \u201csave as custom style\u201d button so I can decide after seeing the result.',
       'aiStyle.reminder': 'Don\u2019t ask which slot to use before applying \u2014 just design it and call set_style (without slot) to apply it to the preview; whether to save it is for me to decide from the panel. Reply in natural language and never name the tool or its actions.',
       'aiStyle.requested': 'Asked AI to design a custom layout.',
       'aiStyle.applied': 'AI designed a layout and applied it to the preview.',
@@ -444,6 +444,10 @@
   var isAppView = false;
   var appViewInitialized = false;
   var previewVisible = true;
+  // Whether an App View AI-style design Session is currently running for
+  // this document — drives the wand icon's loading spinner. Restored from
+  // the host on panelReady if the panel was destroyed/rebound mid-flight.
+  var styleSessionActive = false;
   var liveRenderTimer = 0;
   var pickFileSupported = false; // set from the backend 'ready' message
   var annotationsEnabled = true; // see below — reconciled with focusMode once it's loaded
@@ -2597,12 +2601,24 @@
     writeToDisk(markdown);
   }
 
+  function setStyleSessionLoading(active) {
+    styleSessionActive = active;
+    if (!actAiStyle) return;
+    actAiStyle.classList.toggle('loading', active);
+    actAiStyle.disabled = active;
+    var icon = actAiStyle.querySelector('.ic-ai-style');
+    var spinner = actAiStyle.querySelector('.ic-ai-style-loading');
+    if (icon) icon.hidden = active;
+    if (spinner) spinner.hidden = !active;
+  }
+
   // AppView has no chat Composer to hand this off to (see finch:env's `view`
   // doc), so api.composer is never set there — route it through a small
   // dedicated Agent Session instead, same pattern as continue/rewrite.
   function askAiStyleAppView() {
     if (!markdown || !sourcePath || !api || !api.postMessage) { setStatus(t('status.pleaseOpenArticle'), true); return; }
     api.postMessage({ type: 'requestStyleSession', path: sourcePath, baseStyle: style });
+    setStyleSessionLoading(true);
     setStatus(t('aiStyle.appViewDesigning'));
   }
 
@@ -2907,7 +2923,7 @@
     }
     var label = customStyleLabel || t('common.customStyleDefault');
     if (api && api.postMessage) {
-      api.postMessage({ type: 'saveStyleSlot', slot: index, css: customCss, label: label });
+      api.postMessage({ type: 'saveStyleSlot', slot: index, css: customCss, label: label, path: sourcePath });
     }
   }
 
@@ -3047,9 +3063,9 @@
       }
       if (m.type === 'rewriteSessionFinished') { cm.setAiWorkingLines(0, 0); setStatus(t('appview.rewriteDone')); return; }
       if (m.type === 'rewriteSessionFailed') { cm.setAiWorkingLines(0, 0); setStatus(m.message || 'Rewrite failed.', true); return; }
-      if (m.type === 'styleSessionStarted') { setStatus(t('aiStyle.appViewDesigning')); return; }
-      if (m.type === 'styleSessionFinished') { setStatus(m.message || t('aiStyle.appViewDone')); return; }
-      if (m.type === 'styleSessionFailed') { setStatus(m.message || t('aiStyle.appViewFailed'), true); return; }
+      if (m.type === 'styleSessionStarted') { setStyleSessionLoading(true); setStatus(t('aiStyle.appViewDesigning')); return; }
+      if (m.type === 'styleSessionFinished') { setStyleSessionLoading(false); setStatus(m.message || t('aiStyle.appViewDone')); return; }
+      if (m.type === 'styleSessionFailed') { setStyleSessionLoading(false); setStatus(m.message || t('aiStyle.appViewFailed'), true); return; }
       if (m.type === 'lastFileUnavailable') { return; }
       if (m.type === 'finch:menu') { handleMenu(m.itemId); return; }
       if (m.type === 'document') {

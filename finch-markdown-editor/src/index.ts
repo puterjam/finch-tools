@@ -138,6 +138,25 @@ function result(message: string, isError = false): finch.ToolResult {
 // gets its own stable instance, including different Space Home scopes, and a
 // Home → Session relocation preserves the same id. Older session/global keys
 // remain readable for migration.
+/** In-flight AI-style-design turn, mirrors RewriteOperation — restored on
+ * panelReady so the wand icon's loading spinner survives a panel
+ * destroy/rebind while the Agent Session is still working. */
+interface StyleOperation {
+  sessionId: string;
+  turnId: string;
+  startedAt: number;
+}
+
+/** A style `set_style` produced but that hasn't been saved to a reusable
+ * slot yet. Persisted per-path so it survives the user navigating away
+ * (or the App View panel getting destroyed) before they get a chance to
+ * see the "save as style N" prompt — restored the next time that document's
+ * panel reconnects. Cleared once the user saves any slot for that file. */
+interface PendingStyle {
+  css: string;
+  label: string;
+}
+
 interface RewriteOperation {
   sessionId: string;
   turnId: string;
@@ -169,6 +188,11 @@ interface LastPathState {
   /** In-flight AI turns, retained across a panel destroy/rebind so the new
    * page can restore its loading range and completion state. */
   rewriteOperations?: Record<string, RewriteOperation>;
+  /** In-flight AI-style-design turns, mirrors rewriteOperations. */
+  styleOperations?: Record<string, StyleOperation>;
+  /** Per-file style design that's been applied to the preview but not yet
+   * saved to a slot — see PendingStyle. */
+  pendingStyles?: Record<string, PendingStyle>;
 }
 
 function stateFile(ctx: finch.MiniToolContext): string {
@@ -709,6 +733,40 @@ async function rememberRewriteSession(ctx: finch.MiniToolContext, sourcePath: st
   }
 }
 
+async function rememberStyleOperation(ctx: finch.MiniToolContext, sourcePath: string, operation: StyleOperation): Promise<void> {
+  const state = await readLastPathState(ctx);
+  state.styleOperations = { ...state.styleOperations, [sourcePath]: operation };
+  await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+}
+
+async function clearStyleOperation(ctx: finch.MiniToolContext, sourcePath: string, turnId: string): Promise<void> {
+  const state = await readLastPathState(ctx);
+  if (state.styleOperations?.[sourcePath]?.turnId !== turnId) return;
+  const operations = { ...state.styleOperations };
+  delete operations[sourcePath];
+  state.styleOperations = operations;
+  await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+}
+
+async function rememberPendingStyle(ctx: finch.MiniToolContext, sourcePath: string, pending: PendingStyle): Promise<void> {
+  const state = await readLastPathState(ctx);
+  state.pendingStyles = { ...state.pendingStyles, [sourcePath]: pending };
+  await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+}
+
+async function clearPendingStyle(ctx: finch.MiniToolContext, sourcePath: string): Promise<void> {
+  const state = await readLastPathState(ctx);
+  if (!state.pendingStyles?.[sourcePath]) return;
+  const pending = { ...state.pendingStyles };
+  delete pending[sourcePath];
+  state.pendingStyles = pending;
+  await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+}
+
+function findPanelsForPath(sourcePath: string): finch.AppPanel[] {
+  return Array.from(openPanels.values()).filter((panel) => livePanelDocuments.get(panel.id)?.path === sourcePath);
+}
+
 async function rememberRewriteOperation(ctx: finch.MiniToolContext, sourcePath: string, operation: RewriteOperation): Promise<void> {
   const state = await readLastPathState(ctx);
   state.rewriteOperations = { ...state.rewriteOperations, [sourcePath]: operation };
@@ -847,7 +905,7 @@ async function startStyleSession(ctx: finch.MiniToolContext, panel: finch.AppPan
     sessionId = session.sessionId;
     await rememberStyleSession(ctx, sourcePath, sessionId);
   }
-  const prompt = `请为这篇公众号文章设计一套自定义排版 CSS。${baseNote ? baseNote + '，' : ''}你的 CSS 会叠加在基础风格之上。要求：只写普通 CSS 规则，选择器限定在 #bm-md 下的标签/结构（如 #bm-md h1、#bm-md p、#bm-md blockquote、#bm-md pre code、#bm-md a、#bm-md strong、#bm-md table 等），不要使用 class，必要时用 !important 覆盖基础风格。可参考 bm.md 内置风格的设计语言：kami（暖色纸感）、bauhaus（几何撞色）、blueprint（技术蓝图网格）、botanical（清新绿意）、newsprint（报刊衬线）、retro（复古怀旧）、sketch（手绘风）、terminal（等宽暗色终端风）。文章路径：${sourcePath}。要求：${requirement}。设计好后直接调用 markdown_editor_document 的 set_style（只传 css 和简短 label，不要传 slot），让它应用到预览；不要在这里询问要覆盖哪个槽位——面板会自己给用户一个轻量的“保存为自定义风格”按钮。完成后用一两句话简短说明设计思路即可。`;
+  const prompt = `请为这篇公众号文章设计一套自定义排版 CSS。${baseNote ? baseNote + '，' : ''}你的 CSS 会叠加在基础风格之上。要求：只写普通 CSS 规则，选择器限定在 #bm-md 下的标签/结构（如 #bm-md h1、#bm-md p、#bm-md blockquote、#bm-md pre code、#bm-md a、#bm-md strong、#bm-md table 等），不要使用 class，必要时用 !important 覆盖基础风格。可参考 bm.md 内置风格的设计语言：kami（暖色纸感）、bauhaus（几何撞色）、blueprint（技术蓝图网格）、botanical（清新绿意）、newsprint（报刊衬线）、retro（复古怀旧）、sketch（手绘风）、terminal（等宽暗色终端风）。文章路径：${sourcePath}。要求：${requirement}。设计好后直接调用 markdown_editor_document 的 set_style（传 path="${sourcePath}"，css 和简短 label，不要传 slot——传 path 是为了让它能找到这篇文档对应的预览窗口，即使用户已经切换到别的界面），让它应用到预览；不要在这里询问要覆盖哪个槽位——面板会自己给用户一个轻量的“保存为自定义风格”按钮，用户回到这篇文档时也还能看到。完成后用一两句话简短说明设计思路即可。`;
   const receipt = await ctx.sessions.send(sessionId, {
     text: prompt,
     idempotencyKey: `style-${createHash('sha256').update(`${sourcePath}:${requirement}:${Date.now()}`).digest('hex')}`,
@@ -856,13 +914,21 @@ async function startStyleSession(ctx: finch.MiniToolContext, panel: finch.AppPan
     await panel.postMessage({ type: 'styleSessionFailed', message: '排版设计会话队列繁忙，请稍后重试。' });
     return;
   }
+  await rememberStyleOperation(ctx, sourcePath, { sessionId, turnId: receipt.turnId, startedAt: Date.now() });
   await panel.postMessage({ type: 'styleSessionStarted', sessionId, spaceName: scope.spaceName });
   void ctx.sessions.waitForTurn(sessionId, receipt.turnId, { timeoutMs: 600_000 }).then(async (result) => {
-    await panel.postMessage({
+    await clearStyleOperation(ctx, sourcePath, receipt.turnId);
+    // The panel that asked may have been destroyed/rebound while this ran
+    // (user navigated away and back, closed and reopened the document…) —
+    // resolve fresh targets by path instead of trusting the captured
+    // `panel` reference, so the loading spinner reliably clears wherever
+    // this document is open now, not just where the design was requested.
+    const targets = findPanelsForPath(sourcePath);
+    await Promise.all((targets.length ? targets : [panel]).map((target) => target.postMessage({
       type: result.state === 'completed' ? 'styleSessionFinished' : 'styleSessionFailed',
       sessionId,
       message: result.state === 'completed' ? '排版设计已完成。' : result.state === 'timeout' ? '排版设计仍在会话中继续。' : '排版设计会话未完成。',
-    }).catch(() => {});
+    }).catch(() => {})));
   });
 }
 
@@ -893,12 +959,22 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       // AI turn is still working on this file.
       const currentPath = livePanelDocuments.get(panel.id)?.path;
       if (currentPath) {
-        const operation = (await readLastPathState(ctx)).rewriteOperations?.[currentPath];
+        const state = await readLastPathState(ctx);
+        const operation = state.rewriteOperations?.[currentPath];
         if (operation) await panel.postMessage({
           type: 'rewriteSessionStarted', sessionId: operation.sessionId,
           startLine: operation.startLine, endLine: operation.endLine,
           rewriteMode: operation.rewriteMode,
         });
+        // Same idea for an AI-style-design Session still running for this
+        // file — restores the wand icon's loading spinner.
+        const styleOperation = state.styleOperations?.[currentPath];
+        if (styleOperation) await panel.postMessage({ type: 'styleSessionStarted', sessionId: styleOperation.sessionId });
+        // And a design that already landed but hasn't been saved to a slot
+        // yet — the user may have navigated away before seeing the one-tap
+        // save prompt, so replay it now that they're back on this document.
+        const pendingStyle = state.pendingStyles?.[currentPath];
+        if (pendingStyle) await panel.postMessage({ type: 'customStyleSet', css: pendingStyle.css, label: pendingStyle.label });
       }
       return;
     }
@@ -1189,6 +1265,8 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       }
       try {
         const slots = await writeStyleSlot(ctx, slot, { css, label: String(message.label ?? '').trim() || '自定义风格' });
+        const sourcePath = String(message.path ?? '').trim();
+        if (sourcePath) await clearPendingStyle(ctx, sourcePath);
         await panel.postMessage({ type: 'styleSlots', styleSlots: slots, savedSlot: slot });
       } catch (error) {
         await panel.postMessage({ type: 'error', message: `Could not save style slot: ${error instanceof Error ? error.message : String(error)}` });
@@ -1308,7 +1386,7 @@ action:
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['open', 'create', 'apply', 'set_style'], description: 'Operation to perform.' },
-        path: { type: 'string', description: 'Absolute path to the Markdown file. Required for open, create, and apply. For create, the file must not already exist.' },
+        path: { type: 'string', description: 'Absolute path to the Markdown file. Required for open, create, and apply. For create, the file must not already exist. Recommended (though optional) for set_style: passing it lets Markdown Editor find the right panel for this document even if it is not the most recently focused one — e.g. the user switched away while an App View design Session was still working. Without it, set_style falls back to whichever panel was last focused.' },
         markdown: { type: 'string', description: "Full Markdown content. Required for create. For apply, use this only for a genuine full rewrite — prefer `edits` for a small, targeted change." },
         edits: {
           type: 'array',
@@ -1409,7 +1487,14 @@ action:
       if (action === 'set_style') {
         const css = String(input.css ?? '').trim();
         if (!css) return result('`set_style` requires non-empty `css`.', true);
-        if (!lastPanel) return result('No Markdown Editor panel is open. Ask the user to open a document first.', true);
+        // Prefer resolving the panel(s) actually showing `path` (works even
+        // if that document's panel isn't the most recently focused one, e.g.
+        // a background App View design Session) and only fall back to
+        // `lastPanel` when no path was given, for backward compatibility.
+        const pathHint = String(input.path ?? '').trim();
+        const targets = pathHint ? findPanelsForPath(pathHint) : [];
+        const panel = targets[0] ?? lastPanel;
+        if (!panel && !pathHint) return result('No Markdown Editor panel is open. Ask the user to open a document first.', true);
         try {
           const label = String(input.label ?? '') || 'AI style';
           // `slot` is optional: apply the design to the live preview right
@@ -1420,16 +1505,29 @@ action:
           // user explicitly said "save this as style 2").
           const hasSlot = input.slot !== undefined && input.slot !== null && String(input.slot).trim() !== '';
           if (!hasSlot) {
-            await lastPanel.postMessage({ type: 'customStyleSet', css, label });
-            return result('Custom style applied to the open Markdown Editor preview. It is not saved to a reusable slot yet — the panel now shows a one-tap prompt for the user to save it themselves; do not ask which slot in chat unless the user asks you to save it directly.');
+            // Persist regardless of whether a live panel is open right now —
+            // the user may have navigated away mid-design (App View has no
+            // Composer to keep the request "in view"). The panel replays
+            // this as the same one-tap save prompt the next time it opens
+            // this path, so the design isn't silently lost.
+            if (pathHint) await rememberPendingStyle(ctx, pathHint, { css, label });
+            if (panel) {
+              await panel.postMessage({ type: 'customStyleSet', css, label });
+              return result('Custom style applied to the open Markdown Editor preview. It is not saved to a reusable slot yet — the panel now shows a one-tap prompt for the user to save it themselves; do not ask which slot in chat unless the user asks you to save it directly.');
+            }
+            return result('No Markdown Editor panel is currently open for this document, so the style was saved for later — it will apply automatically (with the same one-tap save prompt) the next time the user opens this file in Markdown Editor.');
           }
           const slot = Number(input.slot);
           if (!Number.isInteger(slot) || slot < 1 || slot > STYLE_SLOT_COUNT) {
             return result('`slot` must be 1, 2, or 3 when provided.', true);
           }
           const slots = await writeStyleSlot(ctx, slot - 1, { css, label });
-          await lastPanel.postMessage({ type: 'customStyleSet', css, label, styleSlots: slots, savedSlot: slot - 1 });
-          return result(`Custom style saved to slot ${slot} and applied to the open Markdown Editor panel.`);
+          if (pathHint) await clearPendingStyle(ctx, pathHint);
+          if (panel) {
+            await panel.postMessage({ type: 'customStyleSet', css, label, styleSlots: slots, savedSlot: slot - 1 });
+            return result(`Custom style saved to slot ${slot} and applied to the open Markdown Editor panel.`);
+          }
+          return result(`Custom style saved to slot ${slot}. No Markdown Editor panel is currently open for this document — it will apply automatically the next time the user opens this file.`);
         } catch (error) {
           return result(`Could not apply custom style: ${error instanceof Error ? error.message : String(error)}`, true);
         }
