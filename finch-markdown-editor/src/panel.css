@@ -80,20 +80,11 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .status a{color:var(--accent);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 .status.error{color:#c54232}
 .status:empty{padding:0;border-top:0}
-/* Lines an external revision (AI apply, or an on-disk edit) just rewrote.
-   The decoration is dropped again after the animation, so the highlight is
-   purely transient — it marks the change without leaving the doc annotated.
-   It eases in rather than appearing at full strength, and it's just the
-   background fading — no left change-bar, so it reads as a soft glow
-   rather than a diff-view gutter mark. */
-.cm-line.cm-ai-changed{border-radius:6px;animation:ai-edit-flash 1.9s cubic-bezier(.33,0,.2,1) both}
-@keyframes ai-edit-flash{
-  0%{background:transparent}
-  26%{background:color-mix(in srgb,var(--accent) 13%,transparent)}
-  55%{background:color-mix(in srgb,var(--accent) 11%,transparent)}
-  100%{background:transparent}
-}
-@media (prefers-reduced-motion:reduce){.cm-line.cm-ai-changed{animation:none;background:transparent}}
+/* Changed glyphs briefly take the accent color, then settle back to normal
+   text. Nested syntax spans receive the same animation; no background flash. */
+.cm-line.cm-ai-changed,.cm-line.cm-ai-changed *{animation:ai-edit-text-flash 1.9s cubic-bezier(.33,0,.2,1) both}
+@keyframes ai-edit-text-flash{0%,26%{color:var(--accent)}100%{color:var(--text)}}
+@media (prefers-reduced-motion:reduce){.cm-line.cm-ai-changed,.cm-line.cm-ai-changed *{animation:none}}
 .popup{position:fixed;z-index:20;display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);border-radius:9px;box-shadow:0 8px 22px rgba(0,0,0,.22);padding:5px;transform-origin:center bottom;animation:popup-in .18s cubic-bezier(.2,.8,.2,1)}
 .popup.hidden{display:none}
 @keyframes popup-in{from{opacity:0;transform:translateY(5px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}

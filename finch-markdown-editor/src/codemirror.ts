@@ -185,12 +185,12 @@ const finchTheme = EditorView.theme({
     width: 'auto !important',
     maxWidth: `min(${CM_LINE_WIDTH}, ${CM_LINE_MAX_WIDTH}) !important`,
     marginInline: 'auto !important',
-    padding: '0 16px 16px 6px !important',
+    padding: '12px 16px 12px 6px !important',
   },
   '.tbl-table-widget .tbl-table-wrapper': {
     // width: 'auto !important',
     maxWidth: '100%',
-    paddingTop: '12px',
+    // paddingTop: '12px',
   },
   '.tbl-table-widget .tbl-table': {
     width: 'auto !important',
@@ -218,6 +218,7 @@ const finchTheme = EditorView.theme({
   '.tbl-cell-view': {
     fontSize: '0.9rem',
     fontFamily: 'var(--md-editor-font-family, var(--finch-font-mono))',
+    minHeight: '82px',
   },
   // Tint the active cell / row / column boundary against dark skins. The
   // outline itself keeps the package's default 2px width — its ::after
@@ -354,7 +355,7 @@ const finchTheme = EditorView.theme({
     paddingInline: '24px',
     // Empty-line AI hint is absolutely positioned, so it does not inherit
     // padding layout. Give it the same content-start offset as code text.
-    '--cm-ai-hint-inline-offset': '24px',
+    '--cm-ai-hint-inline-offset': '26px',
     fontSize: '13px !important',
   },
 
@@ -499,6 +500,22 @@ const finchTheme = EditorView.theme({
     width: '13px',
     height: '13px',
     animation: 'cm-ai-spin 1s linear infinite',
+  },
+  // Completed additions reuse the loading gutter's center point, but reduce
+  // the signal to a small static green dot until the reader reaches the row.
+  '.cm-ai-added-line': {
+    position: 'absolute',
+    inset: '0',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  '.cm-ai-added-dot': {
+    width: '6px',
+    height: '6px',
+    borderRadius: '50%',
+    backgroundColor: '#35a854',
+    boxShadow: '0 0 0 2px color-mix(in srgb, #35a854 16%, transparent)',
   },
   // Edge-to-edge so it meets the rail on the rows above and below with no
   // seam. `.cm-ai-working-rail-below` is the head row's continuation: it
@@ -1315,9 +1332,51 @@ const aiWorkingGutterField = StateField.define<RangeSet<GutterMarker>>({
   },
 });
 
+// A completed AI insertion leaves a quiet green dot in this same gutter.
+// It is intentionally a separate field from the in-flight markers so a
+// cursor move can dismiss individual dots without disturbing a new rewrite's
+// spinner/rail state.
+class AiAddedLineMarker extends GutterMarker {
+  elementClass = 'cm-ai-added-line';
+  toDOM(): HTMLElement {
+    const dot = document.createElement('span');
+    dot.className = 'cm-ai-added-dot';
+    return dot;
+  }
+}
+const aiAddedLineMarker = new AiAddedLineMarker();
+const setAiAddedLines = StateEffect.define<number[]>();
+const aiAddedGutterField = StateField.define<RangeSet<GutterMarker>>({
+  create: () => RangeSet.empty,
+  update: (marks, transaction) => {
+    let next = marks.map(transaction.changes);
+    for (const effect of transaction.effects) {
+      if (!effect.is(setAiAddedLines)) continue;
+      const builder = new RangeSetBuilder<GutterMarker>();
+      for (const lineNo of effect.value) {
+        if (lineNo >= 1 && lineNo <= transaction.state.doc.lines) {
+          builder.add(transaction.state.doc.line(lineNo).from, transaction.state.doc.line(lineNo).from, aiAddedLineMarker);
+        }
+      }
+      next = builder.finish();
+    }
+    // Reaching a marked row acknowledges it. A transaction selection covers
+    // keyboard, mouse, and programmatic cursor moves; editing elsewhere leaves dots in
+    // place and their mapped document positions continue to track changes.
+    if (transaction.selection) {
+      const lineStart = transaction.state.doc.lineAt(transaction.selection.main.head).from;
+      next = next.update({ filter: (from) => from !== lineStart });
+    }
+    return next;
+  },
+});
+
 const aiWorkingGutter = gutter({
   class: 'cm-ai-gutter',
-  markers: (view) => view.state.field(aiWorkingGutterField),
+  markers: (view) => RangeSet.join([
+    view.state.field(aiWorkingGutterField),
+    view.state.field(aiAddedGutterField),
+  ]),
   initialSpacer: () => aiWorkingStartMarker,
 });
 
@@ -2226,6 +2285,8 @@ interface ExternalDiff {
   changes: ExternalPatch[];
   /** 1-based, inclusive line ranges in the NEW document — what to flash. */
   lines: Array<{ from: number; to: number }>;
+  /** Newly inserted, non-blank lines — eligible for the one-shot AI dot. */
+  addedLines: number[];
 }
 
 // A single first-difference-to-last-difference span is far too coarse here:
@@ -2317,6 +2378,7 @@ function computeExternalDiff(oldText: string, newText: string): ExternalDiff | n
 
   const changes: ExternalPatch[] = [];
   const lines: Array<{ from: number; to: number }> = [];
+  const addedLines: number[] = [];
   for (const hunk of hunks) {
     const inserted = newLines.slice(hunk.newFrom, hunk.newTo).join('\n');
     const isInsertion = hunk.oldFrom === hunk.oldTo;
@@ -2352,9 +2414,17 @@ function computeExternalDiff(oldText: string, newText: string): ExternalDiff | n
       lines.push({ from: seam, to: seam });
     } else {
       lines.push({ from: hunk.newFrom + 1, to: hunk.newTo });
+      // Only a pure insertion is an AI-added line. A replacement can contain
+      // new wording, but it isn't a newly created row. Blank inserted rows
+      // deliberately stay quiet so layout spacing never looks annotated.
+      if (isInsertion) {
+        for (let lineNo = hunk.newFrom; lineNo < hunk.newTo; lineNo++) {
+          if (newLines[lineNo].trim()) addedLines.push(lineNo + 1);
+        }
+      }
     }
   }
-  return { changes, lines };
+  return { changes, lines, addedLines };
 }
 
 const EXTERNAL_HIGHLIGHT_MS = 2000;
@@ -2483,6 +2553,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       EditorState.phrases.of(searchPhrases),
       codeGutterLineHighlighter,
       aiWorkingGutterField,
+      aiAddedGutterField,
       aiWorkingGutter,
       aiHintPlugin,
       markdownSupport,
@@ -2587,7 +2658,10 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       suppressChange = true;
       view.dispatch({
         changes,
-        effects: setExternalHighlight.of(diff.lines),
+        effects: [
+          setExternalHighlight.of(diff.lines),
+          setAiAddedLines.of(diff.addedLines),
+        ],
         scrollIntoView: false,
       });
       suppressChange = false;
