@@ -54,6 +54,7 @@ interface PanelMessage {
   startLine?: number;
   endLine?: number;
   rewriteMode?: 'replace' | 'continue';
+  baseStyle?: string;
 }
 
 // Pasted-image extension → file extension. Kept tiny and explicit rather
@@ -163,6 +164,8 @@ interface LastPathState {
   lastPath?: string;
   /** Per-file rewrite Session id, so successive rewrites reuse one conversation. */
   rewriteSessions?: Record<string, string>;
+  /** Per-file AI-style-design Session id (AppView only), mirrors rewriteSessions. */
+  styleSessions?: Record<string, string>;
   /** In-flight AI turns, retained across a panel destroy/rebind so the new
    * page can restore its loading range and completion state. */
   rewriteOperations?: Record<string, RewriteOperation>;
@@ -794,6 +797,75 @@ async function startRewriteSession(ctx: finch.MiniToolContext, panel: finch.AppP
   });
 }
 
+async function readStyleSession(ctx: finch.MiniToolContext, sourcePath: string): Promise<string | undefined> {
+  const state = await readLastPathState(ctx);
+  const id = state.styleSessions?.[sourcePath];
+  if (!id) return undefined;
+  const session = await ctx.sessions.get(id).catch(() => undefined);
+  return session ? id : undefined;
+}
+
+async function rememberStyleSession(ctx: finch.MiniToolContext, sourcePath: string, sessionId: string): Promise<void> {
+  try {
+    const state = await readLastPathState(ctx);
+    state.styleSessions = { ...state.styleSessions, [sourcePath]: sessionId };
+    await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+  } catch (error) {
+    ctx.logger.warn(`Could not persist style session: ${String(error)}`);
+  }
+}
+
+// AppView has no chat Composer to hand an "annotation" context off to
+// (view === 'appView' means no Session and no Composer draft — see
+// AppPanelEnvMessage), so "let AI design a layout" there can't reuse
+// askAiStyle()'s `api.composer.addContexts()` path the way the AppPanel
+// sidebar does. Mirror startRewriteSession() instead: spin up (or reuse) a
+// small Space-bound Agent Session and drive `markdown_editor_document`
+// set_style directly, with no upfront slot question — set_style now applies
+// straight to the live preview when `slot` is omitted, and the panel offers
+// its own lightweight "save to slot" affordance once the CSS lands.
+async function startStyleSession(ctx: finch.MiniToolContext, panel: finch.AppPanel, message: PanelMessage): Promise<void> {
+  const sourcePath = String(message.path ?? '').trim();
+  if (panel.view !== 'appView' || !path.isAbsolute(sourcePath)) {
+    await panel.postMessage({ type: 'styleSessionFailed', message: '让 AI 设计排版需要 App View 中已保存的本地文档。' });
+    return;
+  }
+  const requirement = String(message.requirement ?? '').trim() || '让排版更清晰美观，贴合文章内容和语气';
+  const baseStyle = String(message.baseStyle ?? '').trim();
+  const baseNote = baseStyle === 'custom'
+    ? '当前基础风格是 kami（自定义 CSS 叠加其上）'
+    : baseStyle ? `当前基础风格是 ${baseStyle}` : '';
+  const scope = await resolveDocumentScope(ctx, sourcePath);
+  let sessionId = await readStyleSession(ctx, sourcePath);
+  if (!sessionId) {
+    const session = await ctx.sessions.create({
+      ...(scope.spaceId ? { space: { spaceId: scope.spaceId } } : {}),
+      title: `设计排版：${path.basename(sourcePath)}`,
+      activity: 'interactive',
+      permissionMode: 'acceptCalls',
+    });
+    sessionId = session.sessionId;
+    await rememberStyleSession(ctx, sourcePath, sessionId);
+  }
+  const prompt = `请为这篇公众号文章设计一套自定义排版 CSS。${baseNote ? baseNote + '，' : ''}你的 CSS 会叠加在基础风格之上。要求：只写普通 CSS 规则，选择器限定在 #bm-md 下的标签/结构（如 #bm-md h1、#bm-md p、#bm-md blockquote、#bm-md pre code、#bm-md a、#bm-md strong、#bm-md table 等），不要使用 class，必要时用 !important 覆盖基础风格。可参考 bm.md 内置风格的设计语言：kami（暖色纸感）、bauhaus（几何撞色）、blueprint（技术蓝图网格）、botanical（清新绿意）、newsprint（报刊衬线）、retro（复古怀旧）、sketch（手绘风）、terminal（等宽暗色终端风）。文章路径：${sourcePath}。要求：${requirement}。设计好后直接调用 markdown_editor_document 的 set_style（只传 css 和简短 label，不要传 slot），让它应用到预览；不要在这里询问要覆盖哪个槽位——面板会自己给用户一个轻量的“保存为自定义风格”按钮。完成后用一两句话简短说明设计思路即可。`;
+  const receipt = await ctx.sessions.send(sessionId, {
+    text: prompt,
+    idempotencyKey: `style-${createHash('sha256').update(`${sourcePath}:${requirement}:${Date.now()}`).digest('hex')}`,
+  });
+  if (receipt.state === 'rejected') {
+    await panel.postMessage({ type: 'styleSessionFailed', message: '排版设计会话队列繁忙，请稍后重试。' });
+    return;
+  }
+  await panel.postMessage({ type: 'styleSessionStarted', sessionId, spaceName: scope.spaceName });
+  void ctx.sessions.waitForTurn(sessionId, receipt.turnId, { timeoutMs: 600_000 }).then(async (result) => {
+    await panel.postMessage({
+      type: result.state === 'completed' ? 'styleSessionFinished' : 'styleSessionFailed',
+      sessionId,
+      message: result.state === 'completed' ? '排版设计已完成。' : result.state === 'timeout' ? '排版设计仍在会话中继续。' : '排版设计会话未完成。',
+    }).catch(() => {});
+  });
+}
+
 async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, raw: unknown): Promise<void> {
   const message = raw as PanelMessage;
   switch (message.type) {
@@ -974,6 +1046,10 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
     }
     case 'requestRewrite': {
       await startRewriteSession(ctx, panel, message);
+      return;
+    }
+    case 'requestStyleSession': {
+      await startStyleSession(ctx, panel, message);
       return;
     }
     case 'saveMarkdown': {
@@ -1227,7 +1303,7 @@ action:
   open — read an absolute local Markdown path and open it as an editable WeChat article preview
   create — write brand-new Markdown content to an absolute path that does not exist yet, then open it in Markdown Editor. Use this whenever the user asks to write an article, start writing, write a post, create, or draft a new document — even if they do not mention Markdown. If title/topic or destination is missing, guide the user to provide it; once known, create and open the document rather than returning prose only. If they only want to begin, create a minimal titled starter document. Markdown Editor's own UI has no "new file" button on purpose — this tool action is the intended way to start a new document
   apply — revise a source document (requires path). For a small, targeted change, pass edits instead of markdown: an array of {old_string, new_string} replacements matched against the file's current on-disk content, the same find-and-replace contract as a code editor's Edit tool — this avoids resending the whole document and keeps the on-screen highlight scoped to what actually changed. Reserve markdown (the full updated document) for a genuine full rewrite. Once this conversation has started editing a .md document through Markdown Editor, always use this apply/edits path for subsequent changes to that same file before considering the built-in Edit tool: it refreshes the panel and highlights the exact change. Fall back to the built-in Edit tool only after this apply actually fails. The open panel refreshes in place, no Diff window. Whenever you propose a rewrite and wait for approval before applying it, calling Session action=suggest with 1-3 one-tap confirmations is MANDATORY, not optional, and part of that same turn — sending the proposal text alone does not complete the confirmation step, so do not end the turn without also calling it
-  set_style — apply an AI-designed custom CSS layout to the currently open Markdown Editor preview (requires css). Write plain CSS scoped under #bm-md using tag/id selectors (no classes), use !important where needed to override the base style, and take inspiration from bm.md's built-in styles: kami (warm paper), bauhaus (geometric primary colors), blueprint (technical grid), botanical (soft green), newsprint (editorial serif), retro (nostalgic), sketch (hand-drawn), terminal (monospace dark).`,
+  set_style — apply an AI-designed custom CSS layout to the currently open Markdown Editor preview (requires css). Apply it right away, without asking the user which reusable slot to use first — omit \`slot\` and it only updates the live preview; the panel itself then shows a lightweight one-tap prompt so the user decides whether to save it into a reusable custom-style slot, no chat back-and-forth needed. Only pass \`slot\` when the user already told you which of the 3 slots (1/2/3) to save into. Write plain CSS scoped under #bm-md using tag/id selectors (no classes), use !important where needed to override the base style, and take inspiration from bm.md's built-in styles: kami (warm paper), bauhaus (geometric primary colors), blueprint (technical grid), botanical (soft green), newsprint (editorial serif), retro (nostalgic), sketch (hand-drawn), terminal (monospace dark).`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -1249,7 +1325,7 @@ action:
         },
         css: { type: 'string', description: 'Custom CSS to layer on top of the current base style, required for set_style.' },
         label: { type: 'string', description: 'Short label describing the custom style, optional for set_style.' },
-        slot: { type: 'number', enum: [1, 2, 3], description: 'Required for AI-designed styles: user-selected reusable custom style slot to overwrite.' },
+        slot: { type: 'number', enum: [1, 2, 3], description: 'Optional for set_style. Omit it to just apply the design to the live preview — the panel will offer the user a one-tap way to save it afterward. Only pass this when the user already picked which of the 3 reusable custom style slots (1, 2, or 3) to overwrite.' },
       },
       required: ['action'],
     },
@@ -1336,9 +1412,20 @@ action:
         if (!lastPanel) return result('No Markdown Editor panel is open. Ask the user to open a document first.', true);
         try {
           const label = String(input.label ?? '') || 'AI style';
+          // `slot` is optional: apply the design to the live preview right
+          // away and let the panel itself offer a light one-tap "save to
+          // slot" affordance, instead of forcing a chat round-trip asking
+          // which of the 3 reusable slots to overwrite before anything shows.
+          // Only persist here if the caller already knows the slot (e.g. the
+          // user explicitly said "save this as style 2").
+          const hasSlot = input.slot !== undefined && input.slot !== null && String(input.slot).trim() !== '';
+          if (!hasSlot) {
+            await lastPanel.postMessage({ type: 'customStyleSet', css, label });
+            return result('Custom style applied to the open Markdown Editor preview. It is not saved to a reusable slot yet — the panel now shows a one-tap prompt for the user to save it themselves; do not ask which slot in chat unless the user asks you to save it directly.');
+          }
           const slot = Number(input.slot);
           if (!Number.isInteger(slot) || slot < 1 || slot > STYLE_SLOT_COUNT) {
-            return result('Ask the user which reusable custom style slot (1, 2, or 3) to overwrite, then call `set_style` again with that `slot`.', true);
+            return result('`slot` must be 1, 2, or 3 when provided.', true);
           }
           const slots = await writeStyleSlot(ctx, slot - 1, { css, label });
           await lastPanel.postMessage({ type: 'customStyleSet', css, label, styleSlots: slots, savedSlot: slot - 1 });

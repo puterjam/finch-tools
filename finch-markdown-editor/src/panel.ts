@@ -114,9 +114,14 @@
       'aiStyle.baseNoteCustom': '当前基础风格是 kami（自定义 CSS 叠加其上）',
       'aiStyle.baseNoteOther': '当前基础风格是 {style}',
       'aiStyle.pathMissing': '（未关联本地文件）',
-      'aiStyle.promptText': '请为这篇公众号文章设计一套自定义排版 CSS。{baseNote}，你的 CSS 会叠加在基础风格之上。要求：只写普通 CSS 规则，选择器限定在 #bm-md 下的标签/结构（如 #bm-md h1、#bm-md p、#bm-md blockquote、#bm-md pre code、#bm-md a、#bm-md strong、#bm-md table 等），不要使用 class（bm.md 输出没有 class，只有内联样式），必要时用 !important 覆盖基础风格。可参考 bm.md 内置风格的设计语言：kami（暖色纸感）、bauhaus（几何撞色）、blueprint（技术蓝图网格）、botanical（清新绿意）、newsprint（报刊衬线）、retro（复古怀旧）、sketch（手绘风）、terminal（等宽暗色终端风）。文章路径：{path}。动手生成 CSS 前，先询问用户要覆盖「自定义风格 1、2、3」中的哪一个槽位；用户选择后，再把设计好的 CSS 应用到那个槽位（需要 css、简短标签和槽位编号 1/2/3）。这会覆盖并持久化那个槽位，同时立即应用到预览。',
-      'aiStyle.reminder': '必须先询问槽位，不能自行猜测或覆盖；用户明确选定 1/2/3 后才应用。回复用自然的说法，不要提工具名或动作名。【强制要求，不可省略】询问槽位时必须在回合结束前调用一次 Session action=suggest，给出“用自定义风格 1/2/3”三个一键选项，不要让我手打。只在文字里问选哪个槽位、不调 suggest，视为询问未完成。',
+      'aiStyle.promptText': '请为这篇公众号文章设计一套自定义排版 CSS。{baseNote}，你的 CSS 会叠加在基础风格之上。要求：只写普通 CSS 规则，选择器限定在 #bm-md 下的标签/结构（如 #bm-md h1、#bm-md p、#bm-md blockquote、#bm-md pre code、#bm-md a、#bm-md strong、#bm-md table 等），不要使用 class（bm.md 输出没有 class，只有内联样式），必要时用 !important 覆盖基础风格。可参考 bm.md 内置风格的设计语言：kami（暖色纸感）、bauhaus（几何撞色）、blueprint（技术蓝图网格）、botanical（清新绿意）、newsprint（报刊衬线）、retro（复古怀旧）、sketch（手绘风）、terminal（等宽暗色终端风）。文章路径：{path}。设计好后直接调用 set_style 应用（只传 css 和简短 label，不要传 slot），不需要先问我要覆盖哪个槽位——面板会自己弹出一个轻量的“保存为自定义风格”按钮，我看到效果后自己决定要不要固化。',
+      'aiStyle.reminder': '不要在应用前先问我选哪个槽位——直接设计并调用 set_style（不传 slot）应用到预览即可，保存与否由我在面板上自己决定。回复用自然的说法，不要提工具名或动作名。',
       'aiStyle.requested': '已请求 AI 设计自定义排版。',
+      'aiStyle.applied': 'AI 已设计好排版，效果已应用到预览。',
+      'aiStyle.saveToSlot': '存为风格{n}',
+      'aiStyle.appViewDesigning': 'AI 正在设计排版…',
+      'aiStyle.appViewDone': '排版设计已完成。',
+      'aiStyle.appViewFailed': '排版设计未完成。',
       'status.saved': '已保存。',
       'status.savedWithNewChanges': '已保存，编辑器中仍有新改动。',
       'status.saveFailed': '保存失败：{err}',
@@ -272,9 +277,14 @@
       'aiStyle.baseNoteCustom': 'The current base style is kami (your custom CSS layers on top of it)',
       'aiStyle.baseNoteOther': 'The current base style is {style}',
       'aiStyle.pathMissing': '(No local file linked)',
-      'aiStyle.promptText': 'Please design a custom layout CSS for this WeChat article. {baseNote}, and your CSS will layer on top of the base style. Requirements: write plain CSS rules only, with selectors scoped to tags/structure under #bm-md (e.g. #bm-md h1, #bm-md p, #bm-md blockquote, #bm-md pre code, #bm-md a, #bm-md strong, #bm-md table); don\u2019t use classes (bm.md\u2019s output has no classes, only inline styles), and use !important where needed to override the base style. You can draw on bm.md\u2019s built-in style language: kami (warm paper feel), bauhaus (geometric color-blocking), blueprint (technical grid), botanical (fresh green), newsprint (editorial serif), retro (nostalgic), sketch (hand-drawn), terminal (monospace dark). Article path: {path}. Before generating any CSS, ask the user which of \u201cCustom style 1/2/3\u201d slots to overwrite; once they choose, apply the CSS you designed to that slot (it needs the css, a short label, and the slot number 1/2/3). That overwrites and persists the slot and applies it to the preview immediately.',
-      'aiStyle.reminder': 'Always ask which slot first — never guess or overwrite on your own; apply it only after the user picks 1/2/3. Reply in natural language and never name the tool or its actions. [MANDATORY, not optional] Asking which slot must always be paired with calling Session action=suggest (“Use custom style 1/2/3” as one-tap options) before the turn ends — the question is not considered asked until that call happens, not merely the text of the question.',
+      'aiStyle.promptText': 'Please design a custom layout CSS for this WeChat article. {baseNote}, and your CSS will layer on top of the base style. Requirements: write plain CSS rules only, with selectors scoped to tags/structure under #bm-md (e.g. #bm-md h1, #bm-md p, #bm-md blockquote, #bm-md pre code, #bm-md a, #bm-md strong, #bm-md table); don\u2019t use classes (bm.md\u2019s output has no classes, only inline styles), and use !important where needed to override the base style. You can draw on bm.md\u2019s built-in style language: kami (warm paper feel), bauhaus (geometric color-blocking), blueprint (technical grid), botanical (fresh green), newsprint (editorial serif), retro (nostalgic), sketch (hand-drawn), terminal (monospace dark). Article path: {path}. Once it\u2019s ready, call set_style directly (just css and a short label, no slot) \u2014 don\u2019t ask me which slot to use first; the panel will pop up a lightweight \u201csave as custom style\u201d button so I can decide after seeing the result.',
+      'aiStyle.reminder': 'Don\u2019t ask which slot to use before applying \u2014 just design it and call set_style (without slot) to apply it to the preview; whether to save it is for me to decide from the panel. Reply in natural language and never name the tool or its actions.',
       'aiStyle.requested': 'Asked AI to design a custom layout.',
+      'aiStyle.applied': 'AI designed a layout and applied it to the preview.',
+      'aiStyle.saveToSlot': 'Save as style {n}',
+      'aiStyle.appViewDesigning': 'AI is designing a layout…',
+      'aiStyle.appViewDone': 'Layout design finished.',
+      'aiStyle.appViewFailed': 'Layout design did not finish.',
       'status.saved': 'Saved.',
       'status.savedWithNewChanges': "Saved — but the editor already has newer changes.",
       'status.saveFailed': 'Save failed: {err}',
@@ -1119,7 +1129,8 @@
   function renderAppMenus() {
     if (appStyleMenu) {
       var presets = ['kami', 'bauhaus', 'blueprint', 'botanical', 'newsprint', 'retro', 'sketch', 'terminal'];
-      var markup = presets.map(function (name) { return appMenuButton('style:' + name, name[0].toUpperCase() + name.slice(1), style === name); }).join('') + '<hr>';
+      var markup = appMenuButton('style:ai-design', t('aiStyle.note'), false) + '<hr>'
+        + presets.map(function (name) { return appMenuButton('style:' + name, name[0].toUpperCase() + name.slice(1), style === name); }).join('') + '<hr>';
       for (var i = 0; i < 3; i++) {
         var slot = styleSlots[i];
         markup += slot ? appMenuButton('style:slot-use:' + i, t('toolbar.style.customSlot', { n: i + 1, label: slot.label }), style === 'custom' && customCss === slot.css) : appMenuButton('style:slot-use:' + i, t('toolbar.style.customSlotEmpty', { n: i + 1 }), false);
@@ -2587,8 +2598,18 @@
     writeToDisk(markdown);
   }
 
+  // AppView has no chat Composer to hand this off to (see finch:env's `view`
+  // doc), so api.composer is never set there — route it through a small
+  // dedicated Agent Session instead, same pattern as continue/rewrite.
+  function askAiStyleAppView() {
+    if (!markdown || !sourcePath || !api || !api.postMessage) { setStatus(t('status.pleaseOpenArticle'), true); return; }
+    api.postMessage({ type: 'requestStyleSession', path: sourcePath, baseStyle: style });
+    setStatus(t('aiStyle.appViewDesigning'));
+  }
+
   async function askAiStyle() {
-    if (!markdown || !api || !api.composer) { setStatus(t('status.pleaseOpenArticle'), true); return; }
+    if (!markdown) { setStatus(t('status.pleaseOpenArticle'), true); return; }
+    if (!api || !api.composer) { askAiStyleAppView(); return; }
     var baseNote = style === 'custom' ? t('aiStyle.baseNoteCustom') : t('aiStyle.baseNoteOther', { style: style });
     try {
       await api.composer.addContexts([{
@@ -2771,8 +2792,9 @@
     if (itemId === 'comfort:write') { setComfortWriting(true); return; }
     if (itemId === 'focus') { toggleFocusMode(); return; }
     if (itemId === 'about') { showRendererAbout(); return; }
-    // These two must be checked before the generic 'style:' fallback below,
-    // since both also start with the literal prefix "style:".
+    // These must be checked before the generic 'style:' fallback below,
+    // since they also start with the literal prefix "style:".
+    if (itemId === 'style:ai-design') { askAiStyle(); return; }
     if (itemId && itemId.indexOf('style:slot-use:') === 0) { applyStyleSlot(+itemId.slice('style:slot-use:'.length)); return; }
     if (itemId && itemId.indexOf('style:slot-save:') === 0) { saveStyleSlot(+itemId.slice('style:slot-save:'.length)); return; }
     if (itemId && itemId.indexOf('style:') === 0) { setStyle(itemId.slice(6)); return; }
@@ -2886,6 +2908,34 @@
     }
   }
 
+  // Light, non-blocking confirmation for "should this AI-designed layout be
+  // kept?" — three inline one-tap buttons in the status bar instead of a
+  // modal dialog. Clicking one reuses saveStyleSlot(); the host's resulting
+  // 'styleSlots' reply already renders its own confirmation text, and the
+  // whole thing quietly expires like any other status message if ignored.
+  function promptSaveStyleSlot() {
+    if (statusHideTimer) { clearTimeout(statusHideTimer); statusHideTimer = 0; }
+    statusEl.replaceChildren(document.createTextNode(t('aiStyle.applied') + ' '));
+    statusEl.className = 'status status-style-prompt';
+    for (var i = 0; i < 3; i++) {
+      (function (index) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'status-inline-btn';
+        btn.textContent = t('aiStyle.saveToSlot', { n: index + 1 });
+        var existing = styleSlots[index];
+        if (existing) btn.title = existing.label;
+        btn.addEventListener('click', function () { saveStyleSlot(index); });
+        statusEl.appendChild(btn);
+      })(i);
+    }
+    statusHideTimer = setTimeout(function () {
+      statusHideTimer = 0;
+      statusEl.replaceChildren();
+      statusEl.className = 'status';
+    }, 12000);
+  }
+
   // ---- Backend messages ----
 
   if (api && api.onMessage) {
@@ -2994,6 +3044,9 @@
       }
       if (m.type === 'rewriteSessionFinished') { cm.setAiWorkingLines(0, 0); setStatus(t('appview.rewriteDone')); return; }
       if (m.type === 'rewriteSessionFailed') { cm.setAiWorkingLines(0, 0); setStatus(m.message || 'Rewrite failed.', true); return; }
+      if (m.type === 'styleSessionStarted') { setStatus(t('aiStyle.appViewDesigning')); return; }
+      if (m.type === 'styleSessionFinished') { setStatus(m.message || t('aiStyle.appViewDone')); return; }
+      if (m.type === 'styleSessionFailed') { setStatus(m.message || t('aiStyle.appViewFailed'), true); return; }
       if (m.type === 'lastFileUnavailable') { return; }
       if (m.type === 'finch:menu') { handleMenu(m.itemId); return; }
       if (m.type === 'document') {
@@ -3087,11 +3140,18 @@
         customCss = m.css || '';
         customStyleLabel = m.label || t('common.customStyleDefault');
         style = 'custom';
-        styleSlots = Array.isArray(m.styleSlots) ? m.styleSlots : styleSlots;
-        setStatus(t('status.savedAppliedToSlot', {
-          labelPrefix: m.label ? m.label + ' · ' : '',
-          slot: typeof m.savedSlot === 'number' ? m.savedSlot + 1 : '',
-        }));
+        if (typeof m.savedSlot === 'number') {
+          styleSlots = Array.isArray(m.styleSlots) ? m.styleSlots : styleSlots;
+          setStatus(t('status.savedAppliedToSlot', {
+            labelPrefix: m.label ? m.label + ' · ' : '',
+            slot: m.savedSlot + 1,
+          }));
+        } else {
+          // Applied straight to the preview without being asked which slot
+          // to overwrite (the AI-style flow no longer forces that upfront) —
+          // offer a light one-tap way to keep it instead of a heavy dialog.
+          promptSaveStyleSlot();
+        }
         if (mode === 'preview') render(); else setMode('preview');
         syncToolbar();
         return;
