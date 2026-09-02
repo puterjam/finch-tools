@@ -308,13 +308,56 @@ const finchTheme = EditorView.theme({
     outlineOffset: '2px',
     borderRadius: '10px',
   },
+  '.cm-md-image-frame': {
+    position: 'relative',
+    display: 'inline-block',
+    width: 'fit-content',
+    maxWidth: '100%',
+    alignSelf: 'flex-start',
+    lineHeight: '0',
+  },
   '.cm-md-image-wrapper img': {
     display: 'block',
     maxHeight: '80vh',
     maxWidth: '100%',
     width: 'auto',
+    height: 'auto',
     borderRadius: '8px',
     cursor: 'zoom-in',
+  },
+  '.cm-md-image-resize-handle': {
+    position: 'absolute',
+    right: '6px',
+    bottom: '6px',
+    width: '12px',
+    height: '12px',
+    boxSizing: 'border-box',
+    borderRight: '1.75px solid var(--accent)',
+    borderBottom: '1.75px solid var(--accent)',
+    borderRadius: '0 0 4px 0',
+    cursor: 'nwse-resize',
+    touchAction: 'none',
+    opacity: '0',
+    pointerEvents: 'none',
+    // filter: 'drop-shadow(0 1px 1px color-mix(in srgb, var(--card) 80%, transparent))',
+    transition: 'opacity 120ms ease',
+  },
+  // '.cm-md-image-resize-handle::before': {
+  //   content: '""',
+  //   position: 'absolute',
+  //   right: '4px',
+  //   bottom: '4px',
+  //   width: '8px',
+  //   height: '8px',
+  //   borderRight: '2px solid var(--accent)',
+  //   borderBottom: '2px solid var(--accent)',
+  // },
+  '.cm-md-image-selected .cm-md-image-resize-handle, .cm-md-image-resizing .cm-md-image-resize-handle': {
+    opacity: '1',
+    pointerEvents: 'auto',
+  },
+  '.cm-md-image-resizing': {
+    userSelect: 'none',
   },
   // Caption is a separate contenteditable node so users can rename the
   // image's alt text without ever falling back to raw Markdown source —
@@ -960,11 +1003,43 @@ function clickableLinkMark(href: string): Decoration {
 //   <https://…>  -> clickable URL (angle brackets hidden)
 //   https://…    -> clickable URL
 // Entering/selecting a link restores its full source for editing.
+const MIN_MARKDOWN_IMAGE_WIDTH = 48;
+
+interface ParsedMarkdownImageAlt {
+  caption: string;
+  width: number | null;
+}
+
+function parseMarkdownImageAlt(rawAlt: string): ParsedMarkdownImageAlt {
+  const sized = /^(.*)\|(\d+)(?:x\d+)?$/.exec(rawAlt);
+  if (!sized) return { caption: rawAlt, width: null };
+  const width = Number(sized[2]);
+  return {
+    caption: sized[1],
+    width: Number.isFinite(width) && width > 0 ? Math.round(width) : null,
+  };
+}
+
+function applyMarkdownImageWidth(image: HTMLImageElement, width: number | null): void {
+  image.style.width = width ? `${width}px` : 'auto';
+  image.style.height = 'auto';
+}
+
 class MarkdownImageWidget extends WidgetType {
   private captionEl: HTMLElement | null = null;
 
-  constructor(private readonly src: string, private readonly alt: string, private readonly selected: boolean) { super(); }
-  eq(other: MarkdownImageWidget): boolean { return other.src === this.src && other.alt === this.alt && other.selected === this.selected; }
+  constructor(
+    private readonly src: string,
+    private readonly alt: string,
+    private readonly width: number | null,
+    private readonly selected: boolean,
+  ) { super(); }
+  eq(other: MarkdownImageWidget): boolean {
+    return other.src === this.src
+      && other.alt === this.alt
+      && other.width === this.width
+      && other.selected === this.selected;
+  }
 
   // WidgetType ignores DOM events by default. Clicks on the image itself
   // (open preview) or on the wrapper background still need to reach the
@@ -992,12 +1067,26 @@ class MarkdownImageWidget extends WidgetType {
       event.stopPropagation();
       navigateFromImageWidget(view, wrap, event.key === 'ArrowLeft' ? -1 : 1);
     });
+    const frame = document.createElement('span');
+    frame.className = 'cm-md-image-frame';
     const image = document.createElement('img');
     image.src = this.src;
     image.alt = this.alt;
     image.dataset.mdImageSrc = this.src;
     image.title = this.alt || this.src;
-    wrap.appendChild(image);
+    applyMarkdownImageWidth(image, this.width);
+    frame.appendChild(image);
+
+    const resizeHandle = document.createElement('span');
+    resizeHandle.className = 'cm-md-image-resize-handle';
+    resizeHandle.setAttribute('role', 'separator');
+    resizeHandle.setAttribute('aria-label', 'Resize image width');
+    resizeHandle.title = '拖动调整图片宽度';
+    resizeHandle.addEventListener('pointerdown', (event) => {
+      beginMarkdownImageResize(view, wrap, image, resizeHandle, event, this.width);
+    });
+    frame.appendChild(resizeHandle);
+    wrap.appendChild(frame);
 
     // The caption doubles as the Markdown alt text. Edits commit back into
     // the document on blur/Enter rather than per keystroke, so typing never
@@ -1059,6 +1148,9 @@ class MarkdownImageWidget extends WidgetType {
     if (from.src !== this.src || from.alt !== this.alt) return false;
     dom.classList.toggle('cm-md-image-selected', this.selected);
     dom.setAttribute('aria-selected', this.selected ? 'true' : 'false');
+    const image = dom.querySelector<HTMLImageElement>('img[data-md-image-src]');
+    if (!image) return false;
+    applyMarkdownImageWidth(image, this.width);
     this.captionEl = dom.querySelector('.cm-md-image-caption');
     if (this.selected && !from.selected) queueMicrotask(() => focusSelectedImageWidget(dom));
     return true;
@@ -1120,6 +1212,63 @@ function imageRangeAtWidgetDOM(view: EditorView, widget: HTMLElement): MarkdownI
   }
 }
 
+function beginMarkdownImageResize(
+  view: EditorView,
+  wrap: HTMLElement,
+  image: HTMLImageElement,
+  handle: HTMLElement,
+  event: PointerEvent,
+  storedWidth: number | null,
+): void {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+
+  const range = imageRangeAtWidgetDOM(view, wrap);
+  if (range && !imageSelectionMatches(view.state, range)) {
+    view.dispatch({ selection: { anchor: imageSelectionAnchor(range) } });
+  }
+
+  const startX = event.clientX;
+  const startWidth = image.getBoundingClientRect().width;
+  const lineWidth = wrap.closest<HTMLElement>('.cm-line')?.getBoundingClientRect().width ?? startWidth;
+  const maxWidth = Math.max(MIN_MARKDOWN_IMAGE_WIDTH, Math.floor(lineWidth));
+  let nextWidth = Math.max(MIN_MARKDOWN_IMAGE_WIDTH, Math.round(startWidth));
+  wrap.classList.add('cm-md-image-resizing');
+  handle.setPointerCapture(event.pointerId);
+
+  const cleanup = () => {
+    wrap.classList.remove('cm-md-image-resizing');
+    handle.removeEventListener('pointermove', onMove);
+    handle.removeEventListener('pointerup', onEnd);
+    handle.removeEventListener('pointercancel', onCancel);
+    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+  };
+  const onMove = (moveEvent: PointerEvent) => {
+    if (moveEvent.pointerId !== event.pointerId) return;
+    moveEvent.preventDefault();
+    const draggedWidth = Math.round(startWidth + moveEvent.clientX - startX);
+    nextWidth = Math.max(MIN_MARKDOWN_IMAGE_WIDTH, Math.min(maxWidth, draggedWidth));
+    applyMarkdownImageWidth(image, nextWidth);
+    handle.setAttribute('aria-valuenow', String(nextWidth));
+  };
+  const onEnd = (upEvent: PointerEvent) => {
+    if (upEvent.pointerId !== event.pointerId) return;
+    upEvent.preventDefault();
+    cleanup();
+    commitImageWidth(view, wrap, nextWidth);
+  };
+  const onCancel = (cancelEvent: PointerEvent) => {
+    if (cancelEvent.pointerId !== event.pointerId) return;
+    cleanup();
+    applyMarkdownImageWidth(image, storedWidth);
+  };
+
+  handle.addEventListener('pointermove', onMove);
+  handle.addEventListener('pointerup', onEnd);
+  handle.addEventListener('pointercancel', onCancel);
+}
+
 function focusSelectedImageWidget(widget: HTMLElement): void {
   if (!widget.isConnected || !widget.classList.contains('cm-md-image-selected')) return;
   widget.focus({ preventScroll: true });
@@ -1161,9 +1310,29 @@ function commitImageCaption(view: EditorView, wrap: HTMLElement, previousAlt: st
   const range = imageRangeAtWidgetDOM(view, wrap);
   if (!range) return;
   const source = view.state.sliceDoc(range.from, range.to);
-  const match = /^!\[[^\]]*\](\([^)]*\))/.exec(source);
+  const match = /^!\[([^\]]*)\](\([^)]*\))/.exec(source);
   if (!match) return;
-  view.dispatch({ changes: { from: range.from, to: range.to, insert: `![${nextAlt}]${match[1]}` } });
+  const parsed = parseMarkdownImageAlt(match[1]);
+  const sizeSuffix = parsed.width ? `|${parsed.width}` : '';
+  view.dispatch({ changes: { from: range.from, to: range.to, insert: `![${nextAlt}${sizeSuffix}]${match[2]}` } });
+}
+
+function commitImageWidth(view: EditorView, wrap: HTMLElement, width: number): void {
+  const range = imageRangeAtWidgetDOM(view, wrap);
+  if (!range) return;
+  const source = view.state.sliceDoc(range.from, range.to);
+  const match = /^!\[([^\]]*)\](\([^)]*\))/.exec(source);
+  if (!match) return;
+  const parsed = parseMarkdownImageAlt(match[1]);
+  const nextWidth = Math.max(MIN_MARKDOWN_IMAGE_WIDTH, Math.round(width));
+  if (parsed.width === nextWidth) return;
+  view.dispatch({
+    changes: {
+      from: range.from,
+      to: range.to,
+      insert: `![${parsed.caption}|${nextWidth}]${match[2]}`,
+    },
+  });
 }
 
 // Replace only the parsed image source, never its containing line. Omitting
@@ -1177,12 +1346,18 @@ function imageWrapperDecorations(state: EditorState): DecorationSet {
       const url = ref.node.getChild('URL');
       if (!url) return false;
       const source = state.sliceDoc(ref.from, ref.to);
-      const alt = /^!\[([^\]]*)\]/.exec(source)?.[1] ?? '';
+      const rawAlt = /^!\[([^\]]*)\]/.exec(source)?.[1] ?? '';
+      const parsedAlt = parseMarkdownImageAlt(rawAlt);
       const src = state.sliceDoc(url.from, url.to).trim();
       if (!src) return false;
       const range = { from: ref.from, to: ref.to };
       decorations.push(Decoration.replace({
-        widget: new MarkdownImageWidget(src, alt, imageSelectionMatches(state, range)),
+        widget: new MarkdownImageWidget(
+          src,
+          parsedAlt.caption,
+          parsedAlt.width,
+          imageSelectionMatches(state, range),
+        ),
       }).range(range.from, range.to));
       return false;
     },
