@@ -1025,6 +1025,29 @@ function applyMarkdownImageWidth(image: HTMLImageElement, width: number | null):
   image.style.height = 'auto';
 }
 
+/** A block widget is measured the moment it lands in the DOM — but an image
+ * that has not decoded yet is still zero-height at that point. CodeMirror
+ * caches that estimate for the whole block, so every line below the image,
+ * and the gutter line numbers rendered beside them, keep sitting where the
+ * collapsed placeholder implied.
+ *
+ * Anything that later forces a re-measure papers over it, which is exactly
+ * why clicking a line appeared to "fix" the alignment, and why the symptom
+ * was clearest when only blank lines followed the image: nothing down there
+ * ever triggered a measurement on its own. */
+function remeasureWhenImageResolves(view: EditorView, image: HTMLImageElement): void {
+  // A cached image already has its intrinsic size, so the first measure is
+  // correct and no `load` event is coming anyway.
+  if (image.complete) return;
+  const request = (): void => {
+    // Decoding can finish long after this widget — or the whole editor —
+    // has gone away.
+    try { view.requestMeasure(); } catch { /* view already destroyed */ }
+  };
+  image.addEventListener('load', request, { once: true });
+  image.addEventListener('error', request, { once: true });
+}
+
 class MarkdownImageWidget extends WidgetType {
   private captionEl: HTMLElement | null = null;
 
@@ -1075,6 +1098,7 @@ class MarkdownImageWidget extends WidgetType {
     image.dataset.mdImageSrc = this.src;
     image.title = this.alt || this.src;
     applyMarkdownImageWidth(image, this.width);
+    remeasureWhenImageResolves(view, image);
     frame.appendChild(image);
 
     const resizeHandle = document.createElement('span');
@@ -1144,13 +1168,19 @@ class MarkdownImageWidget extends WidgetType {
   // here previously made CodeMirror believe the DOM was already up to date
   // and skip that rebuild entirely, so a finished upload just sat there
   // still showing the "Uploading image…" placeholder forever.
-  updateDOM(dom: HTMLElement, _view: EditorView, from: MarkdownImageWidget): boolean {
+  updateDOM(dom: HTMLElement, view: EditorView, from: MarkdownImageWidget): boolean {
     if (from.src !== this.src || from.alt !== this.alt) return false;
     dom.classList.toggle('cm-md-image-selected', this.selected);
     dom.setAttribute('aria-selected', this.selected ? 'true' : 'false');
     const image = dom.querySelector<HTMLImageElement>('img[data-md-image-src]');
     if (!image) return false;
     applyMarkdownImageWidth(image, this.width);
+    // Width drives height through the aspect ratio, so a resize moves every
+    // line below it. Reusing the DOM node (rather than rebuilding) means
+    // CodeMirror has no reason to re-measure unless we ask.
+    if (from.width !== this.width) {
+      try { view.requestMeasure(); } catch { /* view already destroyed */ }
+    }
     this.captionEl = dom.querySelector('.cm-md-image-caption');
     if (this.selected && !from.selected) queueMicrotask(() => focusSelectedImageWidget(dom));
     return true;
