@@ -503,7 +503,7 @@ const finchTheme = EditorView.theme({
   },
   // A wrapped prose row makes its gutter element taller, but its line number
   // stays aligned with the first line. Limit the dot to that same first-line
-  // band instead of centering it in the entire wrapped paragraph.
+  // band; the dot itself uses the band height below to match the number.
   '.cm-ai-added-line': {
     position: 'absolute',
     top: '0',
@@ -511,12 +511,16 @@ const finchTheme = EditorView.theme({
     right: '0',
     height: 'var(--md-gutter-line-height, 32px)',
     display: 'flex',
-    alignItems: 'center',
+    // alignItems: 'center',
     justifyContent: 'center',
   },
   '.cm-ai-added-dot': {
     width: '6px',
     height: '6px',
+    // Match the line-number glyph's vertical band: 12px at 32px compact,
+    // 16px at 40px comfortable, and 7px on the 22px code-row override.
+    // The -1px is the same optical lift the previous fixed 12px used.
+    marginTop: 'calc((var(--md-gutter-line-height, 32px) - 6px) / 2 - 1px)',
     borderRadius: '50%',
     backgroundColor: '#35a854',
     boxShadow: '0 0 0 2px color-mix(in srgb, #35a854 16%, transparent)',
