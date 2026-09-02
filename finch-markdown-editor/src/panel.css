@@ -186,6 +186,14 @@ body.app-view.preview-hidden .stage{grid-template-columns:minmax(0,1fr)}body.app
 @keyframes cm-ai-spin{to{transform:rotate(360deg)}}
 .ic-ai-style-loading{animation:cm-ai-spin .8s linear infinite}
 .ic-ai-style[hidden],.ic-ai-style-loading[hidden]{display:none}
+/* App View has no Composer to turn "let AI design a layout" into a normal
+   conversation the user can steer — it only had a fire-and-forget Session
+   with no back-and-forth, which was a worse experience than doing this from
+   the sidebar panel where the user can chat with AI about the style directly.
+   Hide the entry point (and its leading separator) here; the sidebar panel
+   keeps the full flow. */
+body.app-view #actAiStyle{display:none!important}
+body.app-view .actions .sep:has(+ #actAiStyle){display:none!important}
 .preview-resizer{position:relative;z-index:10;width:6px;cursor:col-resize;background:var(--border);opacity:0;transition:opacity .15s ease}.preview-resizer:hover,.preview-resizer.active{opacity:1}
 .app-tool{position:relative}.app-tool[data-tooltip]::after{content:attr(data-tooltip);position:absolute;left:50%;top:calc(100% + 8px);z-index:40;padding:6px 8px;border:1px solid var(--border);border-radius:7px;background:var(--card);box-shadow:0 5px 16px rgba(0,0,0,.2);color:var(--text);font-size:12px;line-height:1;white-space:nowrap;pointer-events:none;opacity:0;transform:translate(-50%,-3px);transition:opacity .16s ease,transform .16s ease}.app-tool[data-tooltip]:hover::after{opacity:1;transform:translate(-50%,0)}
 body.app-view .empty{grid-column:1/-1;background:var(--bg);padding:54px 38px}
