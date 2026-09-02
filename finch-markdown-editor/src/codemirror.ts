@@ -2667,6 +2667,10 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
         effects: [
           setExternalHighlight.of(diff.lines),
           setAiChangedLines.of(diff.markedLines),
+          // A file write is the visible completion point. The Agent turn may
+          // still be composing its final text, but its spinner must not
+          // overlap the successful-change dots already shown in this gutter.
+          setAiWorkingLines.of(null),
         ],
         scrollIntoView: false,
       });
