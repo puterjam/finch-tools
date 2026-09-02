@@ -1020,7 +1020,17 @@ class MarkdownImageWidget extends WidgetType {
   // at zero height until the browser has its intrinsic size again, which
   // visibly collapsed the line and yanked the block below it upward for a
   // frame right as the cursor landed at the image's start position.
-  updateDOM(dom: HTMLElement): boolean {
+  //
+  // This must only fire when *just* the selection changed. src/alt changing
+  // is real content — most importantly the upload placeholder's `pasting:`
+  // src being swapped for the real uploaded URL once the host round-trip
+  // resolves — and has to fall through to a full `toDOM()` rebuild so the
+  // new image actually gets requested and painted. Blindly returning true
+  // here previously made CodeMirror believe the DOM was already up to date
+  // and skip that rebuild entirely, so a finished upload just sat there
+  // still showing the "Uploading image…" placeholder forever.
+  updateDOM(dom: HTMLElement, _view: EditorView, from: MarkdownImageWidget): boolean {
+    if (from.src !== this.src || from.alt !== this.alt) return false;
     dom.classList.toggle('cm-md-image-selected', this.selected);
     this.captionEl = dom.querySelector('.cm-md-image-caption');
     return true;
