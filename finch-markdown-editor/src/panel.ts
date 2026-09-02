@@ -1027,6 +1027,15 @@
       { id: 'style:terminal', label: 'Terminal' },
       { id: 'style-sep', label: '', separator: true },
     ];
+    // Same "unsaved custom style" affordance as App View's menu (see
+    // renderAppMenus) — a style landed via set_style without a slot (or the
+    // user is mid-tweak) shouldn't be recoverable only through the transient
+    // 12s status-bar prompt.
+    var isUnsavedCustom = style === 'custom' && !!customCss && !styleSlots.some(function (s) { return s && s.css === customCss; });
+    if (isUnsavedCustom) {
+      for (var j = 0; j < 3; j++) items.push({ id: 'style:slot-save:' + j, label: t('aiStyle.saveToSlot', { n: j + 1 }) });
+      items.push({ id: 'style-save-sep', label: '', separator: true });
+    }
     for (var i = 0; i < 3; i++) {
       var slot = styleSlots[i];
       items.push(slot
@@ -1134,6 +1143,16 @@
     if (appStyleMenu) {
       var presets = ['kami', 'bauhaus', 'blueprint', 'botanical', 'newsprint', 'retro', 'sketch', 'terminal'];
       var markup = presets.map(function (name) { return appMenuButton('style:' + name, name[0].toUpperCase() + name.slice(1), style === name); }).join('') + '<hr>';
+      // A currently-applied custom style (e.g. AI-designed, or one the user
+      // is still tweaking) that hasn't been saved to any of the 3 reusable
+      // slots yet — offer a durable way to save it here, not just the
+      // transient 12s status-bar prompt right after set_style lands. This
+      // is App View's only Style-menu path for it since there's no
+      // Composer/annotation flow to hand a "save this" request off to.
+      var isUnsavedCustom = style === 'custom' && !!customCss && !styleSlots.some(function (s) { return s && s.css === customCss; });
+      if (isUnsavedCustom) {
+        markup += [0, 1, 2].map(function (i) { return appMenuButton('style:slot-save:' + i, t('aiStyle.saveToSlot', { n: i + 1 }), false); }).join('') + '<hr>';
+      }
       for (var i = 0; i < 3; i++) {
         var slot = styleSlots[i];
         markup += slot ? appMenuButton('style:slot-use:' + i, t('toolbar.style.customSlot', { n: i + 1, label: slot.label }), style === 'custom' && customCss === slot.css) : appMenuButton('style:slot-use:' + i, t('toolbar.style.customSlotEmpty', { n: i + 1 }), false);
