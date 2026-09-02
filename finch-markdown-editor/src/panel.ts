@@ -1129,8 +1129,7 @@
   function renderAppMenus() {
     if (appStyleMenu) {
       var presets = ['kami', 'bauhaus', 'blueprint', 'botanical', 'newsprint', 'retro', 'sketch', 'terminal'];
-      var markup = appMenuButton('style:ai-design', t('aiStyle.note'), false) + '<hr>'
-        + presets.map(function (name) { return appMenuButton('style:' + name, name[0].toUpperCase() + name.slice(1), style === name); }).join('') + '<hr>';
+      var markup = presets.map(function (name) { return appMenuButton('style:' + name, name[0].toUpperCase() + name.slice(1), style === name); }).join('') + '<hr>';
       for (var i = 0; i < 3; i++) {
         var slot = styleSlots[i];
         markup += slot ? appMenuButton('style:slot-use:' + i, t('toolbar.style.customSlot', { n: i + 1, label: slot.label }), style === 'custom' && customCss === slot.css) : appMenuButton('style:slot-use:' + i, t('toolbar.style.customSlotEmpty', { n: i + 1 }), false);
@@ -2609,7 +2608,12 @@
 
   async function askAiStyle() {
     if (!markdown) { setStatus(t('status.pleaseOpenArticle'), true); return; }
-    if (!api || !api.composer) { askAiStyleAppView(); return; }
+    // The Bridge always exposes an `api.composer` object, even in App View —
+    // it just throws "This Bridge API is not available in an App View" the
+    // moment addContexts() is actually called there. So the presence check
+    // alone doesn't catch it; check isAppView up front, and still fall back
+    // to the Session-based flow below if the call throws for any reason.
+    if (isAppView || !api || !api.composer) { askAiStyleAppView(); return; }
     var baseNote = style === 'custom' ? t('aiStyle.baseNoteCustom') : t('aiStyle.baseNoteOther', { style: style });
     try {
       await api.composer.addContexts([{
@@ -2624,7 +2628,7 @@
       }]);
       setStatus(t('aiStyle.requested'));
     } catch (e) {
-      setStatus(String(e), true);
+      askAiStyleAppView();
     }
   }
 
@@ -2792,9 +2796,8 @@
     if (itemId === 'comfort:write') { setComfortWriting(true); return; }
     if (itemId === 'focus') { toggleFocusMode(); return; }
     if (itemId === 'about') { showRendererAbout(); return; }
-    // These must be checked before the generic 'style:' fallback below,
-    // since they also start with the literal prefix "style:".
-    if (itemId === 'style:ai-design') { askAiStyle(); return; }
+    // These two must be checked before the generic 'style:' fallback below,
+    // since both also start with the literal prefix "style:".
     if (itemId && itemId.indexOf('style:slot-use:') === 0) { applyStyleSlot(+itemId.slice('style:slot-use:'.length)); return; }
     if (itemId && itemId.indexOf('style:slot-save:') === 0) { saveStyleSlot(+itemId.slice('style:slot-save:'.length)); return; }
     if (itemId && itemId.indexOf('style:') === 0) { setStyle(itemId.slice(6)); return; }
