@@ -539,7 +539,9 @@ async function sendLiveDocument(ctx: finch.MiniToolContext, panel: finch.AppPane
   if (liveDocument.path && path.isAbsolute(liveDocument.path)) {
     try {
       const { markdown, diskMarkdown, draftRestored, draftConflict } = await readFileWithDraft(ctx, liveDocument.path);
-      await sendDocument(panel, { ...liveDocument, markdown, title: documentTitle(markdown, liveDocument.path), draftRestored, draftConflict, diskMarkdown });
+      // A reconnect re-read may observe a newer disk write than the cached
+      // delivery. Drop the cached revision so sendDocument mints a fresh one.
+      await sendDocument(panel, { ...liveDocument, revision: undefined, markdown, title: documentTitle(markdown, liveDocument.path), draftRestored, draftConflict, diskMarkdown });
       return;
     } catch (error) {
       ctx.logger.warn(`Could not re-read ${liveDocument.path} for a reconnecting panel, resending cached copy: ${String(error)}`);
