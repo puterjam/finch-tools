@@ -434,6 +434,7 @@
   var librarySuppressNextClick = false;
 
   var isAppView = false;
+  var appViewInitialized = false;
   var previewVisible = true;
   var liveRenderTimer = 0;
   var pickFileSupported = false; // set from the backend 'ready' message
@@ -2951,6 +2952,12 @@
       }
       if (m.type === 'finch:env') {
         isAppView = m.view === 'appView';
+        if (isAppView && !appViewInitialized) {
+          // AppView starts as a writing surface; preview is opt-in.
+          appViewInitialized = true;
+          previewVisible = false;
+          document.body.classList.add('preview-hidden');
+        }
         document.body.classList.toggle('app-view', isAppView);
         if (appToolbar) appToolbar.hidden = !isAppView;
         // Both AppView and AppPanel expose the blank-line affordance. In

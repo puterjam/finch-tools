@@ -292,6 +292,11 @@ const finchTheme = EditorView.theme({
     lineHeight: '1.4',
     verticalAlign: 'top',
   },
+  '.cm-md-image-block.cm-md-image-selected': {
+    outline: '2px solid var(--accent)',
+    outlineOffset: '2px',
+    borderRadius: '2px',
+  },
   '.cm-md-image-block img': {
     display: 'block',
     maxHeight: '80vh',
@@ -947,8 +952,8 @@ function clickableLinkMark(href: string): Decoration {
 class MarkdownImageWidget extends WidgetType {
   private captionEl: HTMLElement | null = null;
 
-  constructor(private readonly src: string, private readonly alt: string) { super(); }
-  eq(other: MarkdownImageWidget): boolean { return other.src === this.src && other.alt === this.alt; }
+  constructor(private readonly src: string, private readonly alt: string, private readonly selected: boolean) { super(); }
+  eq(other: MarkdownImageWidget): boolean { return other.src === this.src && other.alt === this.alt && other.selected === this.selected; }
 
   // WidgetType ignores DOM events by default. Clicks on the image itself
   // (open preview) or on the wrapper background still need to reach the
@@ -961,7 +966,7 @@ class MarkdownImageWidget extends WidgetType {
 
   toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement('span');
-    wrap.className = 'cm-md-image-block';
+    wrap.className = `cm-md-image-block${this.selected ? ' cm-md-image-selected' : ''}`;
     const image = document.createElement('img');
     image.src = this.src;
     image.alt = this.alt;
@@ -1036,12 +1041,24 @@ function commitImageCaption(view: EditorView, wrap: HTMLElement, previousAlt: st
   view.dispatch({ changes: { from: range.from, to: range.to, insert: `![${nextAlt}]${match[1]}` } });
 }
 
+// The selected image is tracked independently from the regular text cursor,
+// so a rendered widget can retain its visible selection across DOM rebuilds.
+const setSelectedImage = StateEffect.define<{ from: number; to: number } | null>();
+const selectedImageField = StateField.define<{ from: number; to: number } | null>({
+  create: () => null,
+  update(selected, transaction) {
+    for (const effect of transaction.effects) if (effect.is(setSelectedImage)) return effect.value;
+    return selected ? { from: transaction.changes.mapPos(selected.from), to: transaction.changes.mapPos(selected.to, 1) } : null;
+  },
+});
+
 // Block widgets must be delivered through a StateField's direct
 // EditorView.decorations provider. ViewPlugin decorations are computed after
 // viewport layout and may not change vertical layout. Keeping image wrappers
 // in this field makes documents containing images safe to open.
 function imageWrapperDecorations(state: EditorState): DecorationSet {
   const decorations: any[] = [];
+  const selected = state.field(selectedImageField);
   syntaxTree(state).iterate({
     enter: (ref) => {
       if (ref.name !== 'Image') return undefined;
@@ -1058,7 +1075,7 @@ function imageWrapperDecorations(state: EditorState): DecorationSet {
       const src = state.sliceDoc(url.from, url.to).trim();
       if (!src) return false;
       decorations.push(Decoration.replace({
-        widget: new MarkdownImageWidget(src, alt),
+        widget: new MarkdownImageWidget(src, alt, selected?.from === ref.from && selected.to === ref.to),
         inclusive: false,
       }).range(ref.from, ref.to));
       return false;
@@ -1070,10 +1087,11 @@ function imageWrapperDecorations(state: EditorState): DecorationSet {
 const imageWrapperExtension = StateField.define<DecorationSet>({
   create: imageWrapperDecorations,
   update(decorations, transaction) {
-    // Selection no longer changes what an image renders as, so only doc
-    // edits need to recompute this field (cheaper, and avoids needlessly
-    // recreating widget objects — hence caption DOM — on every cursor move).
-    return transaction.docChanged ? imageWrapperDecorations(transaction.state) : decorations.map(transaction.changes);
+    // Only document changes and explicit image-selection effects recreate
+    // widgets; ordinary cursor moves keep caption editing stable.
+    return transaction.docChanged || transaction.effects.some((effect) => effect.is(setSelectedImage))
+      ? imageWrapperDecorations(transaction.state)
+      : decorations.map(transaction.changes);
   },
   provide: (field) => EditorView.decorations.from(field),
 });
@@ -1212,12 +1230,51 @@ function handleMarkdownImageMouseDown(event: MouseEvent): boolean {
   return true;
 }
 
-function handleMarkdownImageClick(event: MouseEvent, onOpenImage?: (src: string) => void): boolean {
-  const src = markdownImageFromEvent(event)?.dataset.mdImageSrc;
-  if (!src) return false;
+function imageRangeAtDOM(view: EditorView, image: HTMLImageElement): { from: number; to: number } | null {
+  const wrap = image.closest<HTMLElement>('.cm-md-image-block');
+  if (!wrap) return null;
+  let pos: number;
+  try { pos = view.posAtDOM(wrap); } catch { return null; }
+  const line = view.state.doc.lineAt(Math.min(pos, view.state.doc.length));
+  let range: { from: number; to: number } | null = null;
+  syntaxTree(view.state).iterate({
+    from: line.from,
+    to: line.to,
+    enter: (ref) => {
+      if (ref.name === 'Image' && ref.from <= pos && pos <= ref.to) {
+        range = { from: ref.from, to: ref.to };
+        return false;
+      }
+      return undefined;
+    },
+  });
+  return range;
+}
+
+function handleMarkdownImageClick(view: EditorView, event: MouseEvent, onOpenImage?: (src: string) => void): boolean {
+  const image = markdownImageFromEvent(event);
+  const src = image?.dataset.mdImageSrc;
+  if (!image || !src) return false;
   event.preventDefault();
   event.stopPropagation();
-  onOpenImage?.(src);
+  const range = imageRangeAtDOM(view, image);
+  const selected = view.state.field(selectedImageField);
+  if (range && selected?.from === range.from && selected.to === range.to) {
+    onOpenImage?.(src);
+    return true;
+  }
+  if (range) view.dispatch({ effects: setSelectedImage.of(range), selection: { anchor: range.from } });
+  return true;
+}
+
+function deleteSelectedImage(view: EditorView): boolean {
+  const selected = view.state.field(selectedImageField);
+  if (!selected) return false;
+  view.dispatch({
+    changes: { from: selected.from, to: selected.to },
+    selection: { anchor: selected.from },
+    effects: setSelectedImage.of(null),
+  });
   return true;
 }
 
@@ -2255,6 +2312,7 @@ function toggleMarkdownDelimiter(view: EditorView, delimiter: string): boolean {
 }
 
 const markdownEditorKeymap = keymap.of([
+  { key: 'Backspace', run: deleteSelectedImage },
   { key: 'Mod-b', run: (view) => toggleMarkdownDelimiter(view, '**') },
   { key: 'Mod-i', run: (view) => toggleMarkdownDelimiter(view, '*') },
   { key: '`', run: handleFenceTriggerBacktick },
@@ -2595,6 +2653,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       finchTheme,
       syntaxHighlighting(markdownHighlight),
       blockSpacingPlugin,
+      selectedImageField,
       imageWrapperExtension,
       imageAtomicRanges,
       externalHighlightField,
@@ -2613,7 +2672,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
           mouseSelecting = true;
           return handleMarkdownImageMouseDown(event) || handleMarkdownLinkMouseDown(event);
         },
-        click: (event) => handleMarkdownImageClick(event, options.onOpenImage) || handleMarkdownLinkClick(event, options.onOpenLink),
+        click: (event, dispatchView) => handleMarkdownImageClick(dispatchView, event, options.onOpenImage) || handleMarkdownLinkClick(event, options.onOpenLink),
         paste: (event, dispatchView) => imagePasteHandler(dispatchView, event, options.onPasteImage),
         drop: (event, dispatchView) => imageDropHandler(dispatchView, event, options.onPasteImage),
       }),
