@@ -412,8 +412,6 @@
   var appFontMenu = document.getElementById('appFontMenu');
   var appMore = document.getElementById('appMore');
   var appMoreMenu = document.getElementById('appMoreMenu');
-  var appDocumentTitle = document.getElementById('appDocumentTitle');
-  var appDocumentPath = document.getElementById('appDocumentPath');
   var libraryDrawer = document.getElementById('libraryDrawer');
   var libraryBackdrop = document.getElementById('libraryBackdrop');
   var libraryClose = document.getElementById('libraryClose');
@@ -1157,8 +1155,6 @@
     if (appOpen) appOpen.disabled = nativePickPending;
     if (appStyle) appStyle.disabled = !hasDoc;
     if (appFont) appFont.disabled = !hasDoc;
-    if (appDocumentTitle) appDocumentTitle.textContent = fileName || t('home.title');
-    if (appDocumentPath) appDocumentPath.textContent = sourcePath || '';
     renderAppMenus();
   }
 
