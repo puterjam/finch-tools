@@ -186,7 +186,7 @@ body.app-view.preview-hidden .stage{grid-template-columns:minmax(0,1fr)}body.app
 .app-tool{position:relative}.app-tool[data-tooltip]::after{content:attr(data-tooltip);position:absolute;left:50%;top:calc(100% + 8px);z-index:40;padding:6px 8px;border:1px solid var(--border);border-radius:7px;background:var(--card);box-shadow:0 5px 16px rgba(0,0,0,.2);color:var(--text);font-size:12px;line-height:1;white-space:nowrap;pointer-events:none;opacity:0;transform:translate(-50%,-3px);transition:opacity .16s ease,transform .16s ease}.app-tool[data-tooltip]:hover::after{opacity:1;transform:translate(-50%,0)}
 body.app-view .empty{grid-column:1/-1;background:var(--bg);padding:54px 38px}
 body.app-view .home{max-width:1040px}body.app-view #emptyNew{display:none}
-body.app-view .actions{right:24px;bottom:24px}
+body.app-view .actions{right:28px;bottom:28px}
 .library-backdrop{position:fixed;z-index:39;inset:0;background:rgba(0,0,0,.24)}
 .library-drawer{position:fixed;z-index:40;top:0;bottom:0;left:0;width:min(390px,88vw);padding:0;background:var(--card);border-right:1px solid var(--border);transform:translateX(-102%);transition:transform .18s ease;display:flex;flex-direction:column}
 .library-drawer.open{transform:translateX(0)}.library-drawer>header{height:58px;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border)}

@@ -18,12 +18,12 @@ No conversion step, no temp files, no "please convert this to text first".
 
 ## Supported formats
 
-| Kind | Extensions |
-|---|---|
-| Word | `.doc` `.docm` `.docx` `.dot` `.dotx` `.odt` `.rtf` |
-| Spreadsheet | `.xls` `.xlsm` `.xlsx` `.ods` `.csv` `.tsv` |
-| Slides | `.ppt` `.pptm` `.pptx` `.odp` |
-| Other | `.pdf` `.epub` |
+| Kind        | Extensions                                          |
+| ----------- | --------------------------------------------------- |
+| Word        | `.doc` `.docm` `.docx` `.dot` `.dotx` `.odt` `.rtf` |
+| Spreadsheet | `.xls` `.xlsm` `.xlsx` `.ods` `.csv` `.tsv`         |
+| Slides      | `.ppt` `.pptm` `.pptx` `.odp`                       |
+| Other       | `.pdf` `.epub`                                      |
 
 Headings, tables (including merged cells), lists, footnotes, links and speaker notes all survive the conversion.
 
@@ -50,12 +50,12 @@ The cached engine lives in AnyDoc's own data directory, `~/.finch/extension-data
 
 You do not need Rust, Node.js or Python installed. The engine is a prebuilt binary and Finch supplies the runtime that loads it.
 
-| Platform | Status |
-|---|---|
-| macOS, Apple Silicon and Intel | works out of the box |
-| Linux x64 / arm64, glibc and musl | works out of the box |
-| Windows x64 | needs the [Microsoft Visual C++ 2015-2022 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe), which most machines already have |
-| Windows on ARM | not supported — upstream publishes no build for it |
+| Platform                          | Status                                                                                                                                       |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS, Apple Silicon and Intel    | works out of the box                                                                                                                         |
+| Linux x64 / arm64, glibc and musl | works out of the box                                                                                                                         |
+| Windows x64                       | needs the [Microsoft Visual C++ 2015-2022 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe), which most machines already have |
+| Windows on ARM                    | not supported — upstream publishes no build for it                                                                                           |
 
 On Windows, AnyDoc checks for the Visual C++ runtime before downloading anything and links you straight to the installer if it is missing, rather than failing later with an unhelpful DLL error.
 
@@ -96,12 +96,12 @@ Finch 本来就能读文本、代码和简单 PDF，但别人发来的 `.docx` �
 
 ## 支持的格式
 
-| 类型 | 扩展名 |
-|---|---|
+| 类型 | 扩展名                                                 |
+| -- | --------------------------------------------------- |
 | 文档 | `.doc` `.docm` `.docx` `.dot` `.dotx` `.odt` `.rtf` |
-| 表格 | `.xls` `.xlsm` `.xlsx` `.ods` `.csv` `.tsv` |
-| 演示 | `.ppt` `.pptm` `.pptx` `.odp` |
-| 其他 | `.pdf` `.epub` |
+| 表格 | `.xls` `.xlsm` `.xlsx` `.ods` `.csv` `.tsv`         |
+| 演示 | `.ppt` `.pptm` `.pptx` `.odp`                       |
+| 其他 | `.pdf` `.epub`                                      |
 
 标题层级、表格（含合并单元格）、列表、脚注、链接和演讲者备注都会保留下来。
 
@@ -128,12 +128,13 @@ npx @finchtoys/minitools add finch-anydoc
 
 你**不需要**安装 Rust、Node.js 或 Python。引擎是预编译二进制，加载它的运行时由 Finch 自己提供。
 
-| 平台 | 状态 |
-|---|---|
-| macOS（Apple Silicon 与 Intel） | 开箱即用 |
-| Linux x64 / arm64（glibc 与 musl） | 开箱即用 |
-| Windows x64 | 需要 [Microsoft Visual C++ 2015-2022 运行库](https://aka.ms/vs/17/release/vc_redist.x64.exe)，绝大多数机器已经装过 |
-| Windows on ARM | 不支持 —— 上游没有提供该平台的构建 |
+
+| 平台                              | 状态                                                                                                 |
+| ------------------------------- | -------------------------------------------------------------------------------------------------- |
+| macOS（Apple Silicon 与 Intel）    | 开箱即用                                                                                               |
+| Linux x64 / arm64（glibc 与 musl） | 开箱即用                                                                                               |
+| Windows x64                     | 需要 [Microsoft Visual C++ 2015-2022 运行库](https://aka.ms/vs/17/release/vc_redist.x64.exe)，绝大多数机器已经装过 |
+| Windows on ARM                  | 不支持 —— 上游没有提供该平台的构建                                                                                |
 
 在 Windows 上，AnyDoc 会在下载任何东西之前先检查 Visual C++ 运行库，缺失时直接给出安装包链接，而不是等到后面报一句看不懂的 DLL 错误。
 

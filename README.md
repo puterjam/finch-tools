@@ -9,6 +9,7 @@ Mini tools that extend [Finch](https://finchwork.app/) with focused, user-facing
 - [`finch-helper`](./finch-helper/) — an assistant that answers questions about Finch usage, features and mini tool development from the official documentation knowledge base.
 - [`finch-delivery`](./finch-delivery/) — tracks and browses deliverables (Markdown, Word, PPT, PDF, Excel, web pages, images) produced by the AI across all sessions, with a card gallery Panel and Markdown text previews.
 - [`finch-tencent-docs`](./finch-tencent-docs/) — lets Finch create, read, search and edit Tencent Docs (docs.qq.com) online documents — smart docs, sheets, slides, Word, mind maps, smart sheets and more — via the official MCP services.
+- [`finch-markdown-editor`](./finch-markdown-editor/) — edits Markdown with contextual AI revisions and bm.md-powered WeChat Official Account previews.
 
 ---
 
@@ -23,3 +24,4 @@ Mini tools that extend [Finch](https://finchwork.app/) with focused, user-facing
 - [`finch-helper`](./finch-helper/)：一个基于官方文档知识库回答 Finch 用法、功能与小程序开发问题的助手。
 - [`finch-delivery`](./finch-delivery/)：记录和浏览 AI 生成的交付物（Markdown、Word、PPT、PDF、Excel、网页、图片），以卡片画廊面板展示，支持 Markdown 文字预览和跨会话浏览。
 - [`finch-tencent-docs`](./finch-tencent-docs/)：让 Finch 创建、读取、搜索和编辑腾讯文档（docs.qq.com）在线文档——智能文档、表格、幻灯片、Word、思维导图、智能表格等，通过官方 MCP 服务连接。
+- [`finch-markdown-editor`](./finch-markdown-editor/)：专注 Markdown 编辑体验，支持上下文 AI 改稿与 bm.md 驱动的公众号预览。
