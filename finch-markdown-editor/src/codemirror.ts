@@ -501,11 +501,15 @@ const finchTheme = EditorView.theme({
     height: '13px',
     animation: 'cm-ai-spin 1s linear infinite',
   },
-  // Completed additions reuse the loading gutter's center point, but reduce
-  // the signal to a small static green dot until the reader reaches the row.
+  // A wrapped prose row makes its gutter element taller, but its line number
+  // stays aligned with the first line. Limit the dot to that same first-line
+  // band instead of centering it in the entire wrapped paragraph.
   '.cm-ai-added-line': {
     position: 'absolute',
-    inset: '0',
+    top: '0',
+    left: '0',
+    right: '0',
+    height: 'var(--md-gutter-line-height, 32px)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
