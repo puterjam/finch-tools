@@ -1186,7 +1186,14 @@
     if (appFocus) { appFocus.disabled = !hasDoc; appFocus.classList.toggle('checked', focusMode); }
     if (appPreview) { appPreview.disabled = !hasDoc; appPreview.classList.toggle('checked', previewVisible); }
     if (appOpen) appOpen.disabled = nativePickPending;
-    if (appStyle) appStyle.disabled = !hasDoc;
+    if (appStyle) {
+      // Style only affects the rendered preview — disable it while the
+      // preview pane itself is toggled off (App View's `previewVisible`,
+      // distinct from the sidebar's edit/preview `mode`), same idea as the
+      // sidebar toolbar disabling style when mode !== 'preview'.
+      appStyle.disabled = !hasDoc || !previewVisible;
+      appStyle.setAttribute('data-tooltip', t(previewVisible ? 'toolbar.style.tooltip' : 'toolbar.style.tooltipNeedsPreview'));
+    }
     if (appFont) appFont.disabled = !hasDoc;
     renderAppMenus();
   }
