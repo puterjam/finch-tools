@@ -166,9 +166,11 @@ const finchTheme = EditorView.theme({
     paddingBottom: 'var(--md-line-pad-y, 2px)',
     lineHeight: 'var(--md-line-height, 1.7rem)',
   },
-  // A block replacement leaves CodeMirror's source-line box immediately
-  // before the widget. Collapse that empty box so the table occupies its
-  // actual first source line instead of appearing one visual row below it.
+  // The table package leaves a source-line box before its block widget and
+  // owns the matching gutter layout, so collapse that package-specific box.
+  // Images deliberately do NOT use this rule: collapsing their content row
+  // while CodeMirror keeps the gutter row creates a permanent one-line
+  // vertical offset for every line after the image.
   '.cm-content > .cm-line:has(+ .tbl-table-widget)': {
     height: '0 !important',
     minHeight: '0 !important',
@@ -277,30 +279,36 @@ const finchTheme = EditorView.theme({
     position: 'relative',
     top: '-0.1em',
   },
-  // Image source is replaced inside its own `.cm-line`, rather than becoming
-  // a separate CodeMirror block. The widget and image therefore inherit the
-  // reading column's width instead of the full editor canvas.
-  '.cm-line > .cm-widget:has(.cm-md-image-block)': {
-    display: 'inline-block',
-    width: '100%',
+  // Keep images inside their native `.cm-line`, just like Obsidian's
+  // image-wrapper. The wrapper participates in normal inline layout, so text
+  // may sit on either side while the line number and active-line background
+  // continue to be owned by CodeMirror's ordinary line view.
+  '.cm-md-image-wrapper': {
+    boxSizing: 'border-box',
+    display: 'inline-flex',
+    flexDirection: 'column',
     maxWidth: '100%',
-  },
-  '.cm-md-image-block': {
-    display: 'inline-block',
-    maxWidth: '100%',
-    margin: '8px 0',
+    margin: '4px 2px',
     lineHeight: '1.4',
-    verticalAlign: 'top',
+    verticalAlign: 'bottom',
+    outline: 'none',
+  },
+  // The hidden document selection that represents an active image must never
+  // leak a native caret at either replacement boundary. The image widget owns
+  // DOM focus while selected, matching the table widget's `focusTable()` path;
+  // this CSS guard also prevents a one-frame caret flash during focus handoff.
+  '.cm-editor:has(.cm-md-image-selected) .cm-cursor': {
+    display: 'none !important',
   },
   // The selection outline wraps only the image itself, not the caption
   // below it — the caption is a separate editable field, not part of the
   // "selected as one atomic unit" affordance.
-  '.cm-md-image-block.cm-md-image-selected img': {
+  '.cm-md-image-wrapper.cm-md-image-selected img': {
     outline: '2px solid var(--accent)',
     outlineOffset: '2px',
     borderRadius: '10px',
   },
-  '.cm-md-image-block img': {
+  '.cm-md-image-wrapper img': {
     display: 'block',
     maxHeight: '80vh',
     maxWidth: '100%',
@@ -969,7 +977,21 @@ class MarkdownImageWidget extends WidgetType {
 
   toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement('span');
-    wrap.className = `cm-md-image-block${this.selected ? ' cm-md-image-selected' : ''}`;
+    wrap.className = `cm-md-image-wrapper${this.selected ? ' cm-md-image-selected' : ''}`;
+    wrap.tabIndex = -1;
+    wrap.setAttribute('aria-selected', this.selected ? 'true' : 'false');
+    wrap.addEventListener('keydown', (event) => {
+      if (event.key === 'Backspace' || event.key === 'Delete') {
+        event.preventDefault();
+        event.stopPropagation();
+        deleteSelectedImage(view);
+        return;
+      }
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      event.preventDefault();
+      event.stopPropagation();
+      navigateFromImageWidget(view, wrap, event.key === 'ArrowLeft' ? -1 : 1);
+    });
     const image = document.createElement('img');
     image.src = this.src;
     image.alt = this.alt;
@@ -980,7 +1002,7 @@ class MarkdownImageWidget extends WidgetType {
     // The caption doubles as the Markdown alt text. Edits commit back into
     // the document on blur/Enter rather than per keystroke, so typing never
     // triggers a decoration rebuild (no flicker, no lost caret).
-    const caption = document.createElement('div');
+    const caption = document.createElement('span');
     caption.className = 'cm-md-image-caption';
     caption.contentEditable = 'plaintext-only' as any;
     if (caption.contentEditable !== 'plaintext-only') caption.contentEditable = 'true';
@@ -993,6 +1015,9 @@ class MarkdownImageWidget extends WidgetType {
       document.execCommand('insertText', false, text.replace(/[\r\n]+/g, ' '));
     });
     caption.addEventListener('keydown', (event) => {
+      // This nested contenteditable owns all of its keyboard navigation.
+      // Never let image-level/root-editor arrow handlers steal its caret.
+      event.stopPropagation();
       if (event.key === 'Enter') {
         event.preventDefault();
         caption.blur();
@@ -1011,15 +1036,16 @@ class MarkdownImageWidget extends WidgetType {
     caption.addEventListener('blur', () => commitImageCaption(view, wrap, this.alt, caption.textContent ?? ''));
     wrap.appendChild(caption);
     this.captionEl = caption;
+    if (this.selected) queueMicrotask(() => focusSelectedImageWidget(wrap));
     return wrap;
   }
 
   // Selecting/deselecting an image only toggles a class — reuse the existing
   // DOM instead of falling through to `toDOM()`. Recreating the wrapper
   // would recreate the `<img>` too, and a freshly (re)inserted <img> renders
-  // at zero height until the browser has its intrinsic size again, which
-  // visibly collapsed the line and yanked the block below it upward for a
-  // frame right as the cursor landed at the image's start position.
+  // at zero height until the browser has its intrinsic size again. Reusing
+  // the node keeps the containing line's measured height stable while the
+  // image enters or leaves its selected state.
   //
   // This must only fire when *just* the selection changed. src/alt changing
   // is real content — most importantly the upload placeholder's `pasting:`
@@ -1032,33 +1058,107 @@ class MarkdownImageWidget extends WidgetType {
   updateDOM(dom: HTMLElement, _view: EditorView, from: MarkdownImageWidget): boolean {
     if (from.src !== this.src || from.alt !== this.alt) return false;
     dom.classList.toggle('cm-md-image-selected', this.selected);
+    dom.setAttribute('aria-selected', this.selected ? 'true' : 'false');
     this.captionEl = dom.querySelector('.cm-md-image-caption');
+    if (this.selected && !from.selected) queueMicrotask(() => focusSelectedImageWidget(dom));
     return true;
   }
 }
 
-// Reads back the Image node that currently owns `wrap` (positions shift as
-// the document is edited elsewhere, so this is resolved fresh on commit
-// rather than captured once at decoration build time) and rewrites just its
-// alt text, leaving the URL and title untouched.
-function commitImageCaption(view: EditorView, wrap: HTMLElement, previousAlt: string, nextAlt: string): void {
-  if (nextAlt === previousAlt) return;
-  let pos: number;
-  try { pos = view.posAtDOM(wrap); } catch { return; }
-  const line = view.state.doc.lineAt(Math.min(pos, view.state.doc.length));
-  const found: Array<{ from: number; to: number }> = [];
-  syntaxTree(view.state).iterate({
-    from: line.from,
-    to: line.to,
+interface MarkdownImageRange { from: number; to: number }
+
+function findImageRange(
+  state: EditorState,
+  matches: (from: number, to: number) => boolean,
+): MarkdownImageRange | null {
+  let range: MarkdownImageRange | null = null;
+  syntaxTree(state).iterate({
     enter: (ref) => {
-      if (ref.name === 'Image' && ref.from <= pos && pos <= ref.to) {
-        found.push({ from: ref.from, to: ref.to });
-        return false;
-      }
-      return undefined;
+      if (ref.name !== 'Image') return undefined;
+      if (!range && matches(ref.from, ref.to)) range = { from: ref.from, to: ref.to };
+      return false;
     },
   });
-  const range = found[0];
+  return range;
+}
+
+function imageSelectionAnchor(range: MarkdownImageRange): number {
+  return Math.min(range.from + 1, range.to);
+}
+
+function selectedImageRange(state: EditorState): MarkdownImageRange | null {
+  const selection = state.selection.main;
+  if (!selection.empty) return null;
+  return findImageRange(state, (from, to) => from < selection.head && selection.head < to);
+}
+
+function imageSelectionMatches(state: EditorState, range: MarkdownImageRange): boolean {
+  const selection = state.selection.main;
+  return selection.empty && selection.head === imageSelectionAnchor(range);
+}
+
+// Inline replacement widgets are surrounded by CodeMirror-owned
+// `.cm-widgetBuffer` nodes. Mapping the DOM offsets immediately before and
+// after the wrapper gives us the replacement's current document range even
+// after edits elsewhere have shifted it.
+function imageRangeAtWidgetDOM(view: EditorView, widget: HTMLElement): MarkdownImageRange | null {
+  const parent = widget.parentNode;
+  if (!parent) return null;
+  const index = Array.prototype.indexOf.call(parent.childNodes, widget) as number;
+  if (index < 0) return null;
+  try {
+    const before = view.posAtDOM(parent, index);
+    const after = view.posAtDOM(parent, index + 1);
+    const from = Math.min(before, after);
+    const to = Math.max(before, after);
+    return findImageRange(view.state, (nodeFrom, nodeTo) => nodeFrom === from && nodeTo === to)
+      ?? findImageRange(view.state, (nodeFrom) => nodeFrom === before)
+      ?? findImageRange(view.state, (_nodeFrom, nodeTo) => nodeTo === after)
+      ?? selectedImageRange(view.state);
+  } catch {
+    return selectedImageRange(view.state);
+  }
+}
+
+function focusSelectedImageWidget(widget: HTMLElement): void {
+  if (!widget.isConnected || !widget.classList.contains('cm-md-image-selected')) return;
+  widget.focus({ preventScroll: true });
+}
+
+function navigateFromImageWidget(view: EditorView, widget: HTMLElement, direction: -1 | 1): void {
+  const range = imageRangeAtWidgetDOM(view, widget);
+  if (!range) return;
+  view.dispatch({
+    selection: { anchor: direction < 0 ? range.from : range.to },
+    scrollIntoView: true,
+  });
+  view.focus();
+}
+
+// The first horizontal arrow at a widget boundary enters its image selection;
+// the next arrow is handled by the focused widget and exits at the opposite
+// boundary. Positions before/after the replacement remain ordinary text
+// cursor positions, including when text and several images share one line.
+function moveIntoAdjacentImage(view: EditorView, direction: -1 | 1): boolean {
+  const selection = view.state.selection.main;
+  if (!selection.empty) return false;
+  const range = findImageRange(view.state, direction > 0
+    ? (from) => from === selection.head
+    : (_from, to) => to === selection.head);
+  if (!range) return false;
+  view.dispatch({
+    selection: { anchor: imageSelectionAnchor(range) },
+    scrollIntoView: true,
+  });
+  return true;
+}
+
+// Re-resolve the inline Image node from its current widget DOM before writing
+// the caption back as alt text. This avoids capturing positions that become
+// stale when the user edits text before the image.
+function commitImageCaption(view: EditorView, wrap: HTMLElement, previousAlt: string, nextAlt: string): void {
+  if (nextAlt === previousAlt) return;
+  const range = imageRangeAtWidgetDOM(view, wrap);
   if (!range) return;
   const source = view.state.sliceDoc(range.from, range.to);
   const match = /^!\[[^\]]*\](\([^)]*\))/.exec(source);
@@ -1066,55 +1166,24 @@ function commitImageCaption(view: EditorView, wrap: HTMLElement, previousAlt: st
   view.dispatch({ changes: { from: range.from, to: range.to, insert: `![${nextAlt}]${match[1]}` } });
 }
 
-// The selected image is tracked independently from the regular text cursor,
-// so a rendered widget can retain its visible selection across DOM rebuilds.
-const setSelectedImage = StateEffect.define<{ from: number; to: number } | null>();
-const selectedImageField = StateField.define<{ from: number; to: number } | null>({
-  create: () => null,
-  update(selected, transaction) {
-    for (const effect of transaction.effects) if (effect.is(setSelectedImage)) return effect.value;
-    if (!selected) return null;
-    const mapped = { from: transaction.changes.mapPos(selected.from), to: transaction.changes.mapPos(selected.to, 1) };
-    // Selection is derived off the plain text cursor rather than a
-    // stand-alone "is selected" flag that only clears on explicit action —
-    // the moment the cursor moves off the image's own range (click
-    // elsewhere, arrow keys, etc.), it is no longer selected. Mirrors how
-    // the table widget's cell selection tracks the cursor instead of
-    // requiring a separate deselect step.
-    if (transaction.selection) {
-      const head = transaction.selection.main.head;
-      if (head < mapped.from || head > mapped.to) return null;
-    }
-    return mapped;
-  },
-});
-
-// Block widgets must be delivered through a StateField's direct
-// EditorView.decorations provider. ViewPlugin decorations are computed after
-// viewport layout and may not change vertical layout. Keeping image wrappers
-// in this field makes documents containing images safe to open.
+// Replace only the parsed image source, never its containing line. Omitting
+// `block` and `inclusive` makes CodeMirror keep a normal `.cm-line` with its
+// native line number, active-line state, surrounding text, and cursor buffers.
 function imageWrapperDecorations(state: EditorState): DecorationSet {
   const decorations: any[] = [];
-  const selected = state.field(selectedImageField);
   syntaxTree(state).iterate({
     enter: (ref) => {
       if (ref.name !== 'Image') return undefined;
-      const line = state.doc.lineAt(ref.from);
-      if (line.text.trim() !== state.sliceDoc(ref.from, ref.to)) return false;
-      // Images stay rendered even while the selection sits on them — the
-      // caption is directly editable and the whole node is deletable as one
-      // atomic unit (see `imageAtomicRanges` below), so there is no need to
-      // ever fall back to raw Markdown source and jar the layout.
       const url = ref.node.getChild('URL');
       if (!url) return false;
       const source = state.sliceDoc(ref.from, ref.to);
       const alt = /^!\[([^\]]*)\]/.exec(source)?.[1] ?? '';
       const src = state.sliceDoc(url.from, url.to).trim();
       if (!src) return false;
+      const range = { from: ref.from, to: ref.to };
       decorations.push(Decoration.replace({
-        widget: new MarkdownImageWidget(src, alt, selected?.from === ref.from && selected.to === ref.to),
-        inclusive: false,
-      }).range(ref.from, ref.to));
+        widget: new MarkdownImageWidget(src, alt, imageSelectionMatches(state, range)),
+      }).range(range.from, range.to));
       return false;
     },
   });
@@ -1124,20 +1193,19 @@ function imageWrapperDecorations(state: EditorState): DecorationSet {
 const imageWrapperExtension = StateField.define<DecorationSet>({
   create: imageWrapperDecorations,
   update(decorations, transaction) {
-    // Only document changes and explicit image-selection effects recreate
-    // widgets; ordinary cursor moves keep caption editing stable.
-    return transaction.docChanged || transaction.effects.some((effect) => effect.is(setSelectedImage))
+    // Selection is the single source of truth for the image outline. Rebuild
+    // the lightweight decorations on selection changes while updateDOM keeps
+    // the existing decoded <img> node alive.
+    return transaction.docChanged || transaction.selection
       ? imageWrapperDecorations(transaction.state)
       : decorations.map(transaction.changes);
   },
   provide: (field) => EditorView.decorations.from(field),
 });
 
-// Treat each image as a single indivisible unit for cursor motion and
-// deletion: arrow keys skip over it in one step, and Backspace/Delete at
-// either boundary removes the whole Markdown source in one keystroke —
-// this is the "select the image and delete it" gesture, no custom
-// selection/keymap handling required.
+// Cursor motion treats each image source as one atomic range. Our horizontal
+// key handler gets first refusal at either boundary so the image can enter its
+// own selected state instead of being skipped immediately.
 const imageAtomicRanges = EditorView.atomicRanges.of((view) => view.state.field(imageWrapperExtension));
 
 function collectLinkPreview(view: EditorView): LinkPreviewResult {
@@ -1257,7 +1325,7 @@ function handleMarkdownLinkClick(event: MouseEvent, onOpenLink?: (href: string) 
 
 function markdownImageFromEvent(event: MouseEvent): HTMLImageElement | null {
   if (event.button !== 0 || !(event.target instanceof Element)) return null;
-  return event.target.closest<HTMLImageElement>('.cm-md-image-block img[data-md-image-src]');
+  return event.target.closest<HTMLImageElement>('.cm-md-image-wrapper img[data-md-image-src]');
 }
 
 function handleMarkdownImageMouseDown(event: MouseEvent): boolean {
@@ -1268,24 +1336,8 @@ function handleMarkdownImageMouseDown(event: MouseEvent): boolean {
 }
 
 function imageRangeAtDOM(view: EditorView, image: HTMLImageElement): { from: number; to: number } | null {
-  const wrap = image.closest<HTMLElement>('.cm-md-image-block');
-  if (!wrap) return null;
-  let pos: number;
-  try { pos = view.posAtDOM(wrap); } catch { return null; }
-  const line = view.state.doc.lineAt(Math.min(pos, view.state.doc.length));
-  let range: { from: number; to: number } | null = null;
-  syntaxTree(view.state).iterate({
-    from: line.from,
-    to: line.to,
-    enter: (ref) => {
-      if (ref.name === 'Image' && ref.from <= pos && pos <= ref.to) {
-        range = { from: ref.from, to: ref.to };
-        return false;
-      }
-      return undefined;
-    },
-  });
-  return range;
+  const wrap = image.closest<HTMLElement>('.cm-md-image-wrapper');
+  return wrap ? imageRangeAtWidgetDOM(view, wrap) : null;
 }
 
 function handleMarkdownImageClick(view: EditorView, event: MouseEvent, onOpenImage?: (src: string) => void): boolean {
@@ -1295,23 +1347,29 @@ function handleMarkdownImageClick(view: EditorView, event: MouseEvent, onOpenIma
   event.preventDefault();
   event.stopPropagation();
   const range = imageRangeAtDOM(view, image);
-  const selected = view.state.field(selectedImageField);
-  if (range && selected?.from === range.from && selected.to === range.to) {
+  if (range && imageSelectionMatches(view.state, range)) {
     onOpenImage?.(src);
     return true;
   }
-  if (range) view.dispatch({ effects: setSelectedImage.of(range), selection: { anchor: range.from } });
+  // Keep the main selection inside the replaced source while the wrapper owns
+  // DOM focus. The containing `.cm-line` remains active, but no text caret is
+  // painted on top of the selected image.
+  if (range) {
+    view.dispatch({ selection: { anchor: imageSelectionAnchor(range) }, scrollIntoView: true });
+  }
   return true;
 }
 
 function deleteSelectedImage(view: EditorView): boolean {
-  const selected = view.state.field(selectedImageField);
-  if (!selected) return false;
+  const selection = view.state.selection.main;
+  if (!selection.empty) return false;
+  const selected = selectedImageRange(view.state);
+  if (!selected || !imageSelectionMatches(view.state, selected)) return false;
   view.dispatch({
     changes: { from: selected.from, to: selected.to },
     selection: { anchor: selected.from },
-    effects: setSelectedImage.of(null),
   });
+  view.focus();
   return true;
 }
 
@@ -2350,10 +2408,13 @@ function toggleMarkdownDelimiter(view: EditorView, delimiter: string): boolean {
 
 const markdownEditorKeymap = keymap.of([
   { key: 'Backspace', run: deleteSelectedImage },
+  { key: 'Delete', run: deleteSelectedImage },
   { key: 'Mod-b', run: (view) => toggleMarkdownDelimiter(view, '**') },
   { key: 'Mod-i', run: (view) => toggleMarkdownDelimiter(view, '*') },
   { key: '`', run: handleFenceTriggerBacktick },
   { key: 'Enter', run: completeOpeningCodeFence },
+  { key: 'ArrowLeft', run: (view) => moveIntoAdjacentImage(view, -1) },
+  { key: 'ArrowRight', run: (view) => moveIntoAdjacentImage(view, 1) },
   { key: 'ArrowUp', run: (view) => moveIntoAdjacentTable(view, -1) || moveIntoSkippedDelimiterLine(view, -1) },
   { key: 'ArrowDown', run: (view) => moveIntoAdjacentTable(view, 1) || moveIntoSkippedDelimiterLine(view, 1) },
   { key: 'Tab', run: (view) => selectionStartsOnListItem(view) && indentMore(view) },
@@ -2690,7 +2751,6 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       finchTheme,
       syntaxHighlighting(markdownHighlight),
       blockSpacingPlugin,
-      selectedImageField,
       imageWrapperExtension,
       imageAtomicRanges,
       externalHighlightField,
@@ -2701,6 +2761,10 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
         // skips straight over it before a normal key binding can transfer
         // focus into its first/last cell.
         keydown: (event, dispatchView) => {
+          if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+            && (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey)) return false;
+          if (event.key === 'ArrowLeft') return moveIntoAdjacentImage(dispatchView, -1);
+          if (event.key === 'ArrowRight') return moveIntoAdjacentImage(dispatchView, 1);
           if (event.key === 'ArrowUp') return moveIntoAdjacentTable(dispatchView, -1);
           if (event.key === 'ArrowDown') return moveIntoAdjacentTable(dispatchView, 1);
           return false;
