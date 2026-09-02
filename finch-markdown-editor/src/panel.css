@@ -174,10 +174,16 @@ body.app-view .status-inline-btn:hover{background:var(--finch-bg-hover,var(--bg)
 body.app-view .app-toolbar{display:flex!important}
 .app-toolbar-group{display:flex;align-items:center;gap:6px;flex:none}
 .app-toolbar-end{margin-left:auto}
-.app-tool{height:32px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--text);font:12px var(--finch-font-body,system-ui);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;min-width:32px;padding:0 8px;gap:6px}
-.app-tool svg{width:19px;height:19px;stroke-width:1.8}.app-tool:hover:not(:disabled){background:var(--finch-bg-hover,var(--bg))}
+.app-tool{height:32px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--text);font:12px var(--finch-font-body,system-ui);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;min-width:32px;padding:0 8px;gap:6px;line-height:0}
+/* `display:block` takes every toolbar icon out of inline/baseline layout —
+   without it, a bare <svg> button (home/library/open) and an icon wrapped
+   in a <span> (save) end up centered by two different rules (flex-item
+   blockification vs. the span's own line-height baseline) and visibly
+   drift a couple of px apart even though both parents are
+   align-items:center flex boxes. */
+.app-tool svg{display:block;width:17px;height:17px;stroke-width:1.8}.app-tool:hover:not(:disabled){background:var(--finch-bg-hover,var(--bg))}
 .app-tool:disabled{opacity:.4;cursor:default}.app-tool.checked{color:var(--text);background:var(--finch-bg-active,color-mix(in srgb,var(--text) 10%,transparent))}.app-tool.dirty{color:var(--accent);background:transparent}
-.app-tool-label{min-width:auto;padding:0 9px}.app-menu-wrap{position:relative}.app-menu{position:absolute;z-index:32;top:calc(100% + 7px);right:0;min-width:174px;padding:5px;border:1px solid var(--border);border-radius:9px;background:var(--card);box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.app-tool-label{min-width:auto;padding:0 9px}.ic-save,.ic-save-check{display:inline-flex;align-items:center}.app-menu-wrap{position:relative}.app-menu{position:absolute;z-index:32;top:calc(100% + 7px);right:0;min-width:174px;padding:5px;border:1px solid var(--border);border-radius:9px;background:var(--card);box-shadow:0 2px 8px rgba(0,0,0,.12)}
 .app-menu button{display:flex;width:100%;align-items:center;justify-content:space-between;gap:12px;padding:7px 9px;border:0;border-radius:6px;background:transparent;color:var(--text);font:12px var(--finch-font-body,system-ui);text-align:left;cursor:pointer}.app-menu button:hover{background:var(--finch-bg-hover,var(--bg))}.app-menu button.checked{color:var(--text);background:var(--finch-bg-active,color-mix(in srgb,var(--text) 10%,transparent));font-weight:600}.app-menu hr{margin:5px 3px;border:0;border-top:1px solid var(--border)}
 .app-document-meta{min-width:0;display:flex;flex-direction:column;gap:1px}.app-document-meta strong,.app-document-meta span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.app-document-meta strong{font-size:13px}.app-document-meta span{max-width:34vw;color:var(--muted);font-size:11px}
 body.app-view .stage{display:grid;grid-template-columns:minmax(0,1fr) 6px var(--preview-width,480px);background:var(--bg)}

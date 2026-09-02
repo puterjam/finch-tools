@@ -131,7 +131,7 @@ const finchTheme = EditorView.theme({
     // the 14px tier render at ~12.6px.
   },
   '.cm-content': {
-    padding: '20px 0',
+    padding: '48px 0',
     caretColor: 'var(--text)',
     minHeight: '100%',
     // Let the content flex down with a narrow panel instead of retaining the
@@ -292,10 +292,13 @@ const finchTheme = EditorView.theme({
     lineHeight: '1.4',
     verticalAlign: 'top',
   },
-  '.cm-md-image-block.cm-md-image-selected': {
+  // The selection outline wraps only the image itself, not the caption
+  // below it — the caption is a separate editable field, not part of the
+  // "selected as one atomic unit" affordance.
+  '.cm-md-image-block.cm-md-image-selected img': {
     outline: '2px solid var(--accent)',
     outlineOffset: '2px',
-    borderRadius: '2px',
+    borderRadius: '10px',
   },
   '.cm-md-image-block img': {
     display: 'block',
@@ -1010,6 +1013,18 @@ class MarkdownImageWidget extends WidgetType {
     this.captionEl = caption;
     return wrap;
   }
+
+  // Selecting/deselecting an image only toggles a class — reuse the existing
+  // DOM instead of falling through to `toDOM()`. Recreating the wrapper
+  // would recreate the `<img>` too, and a freshly (re)inserted <img> renders
+  // at zero height until the browser has its intrinsic size again, which
+  // visibly collapsed the line and yanked the block below it upward for a
+  // frame right as the cursor landed at the image's start position.
+  updateDOM(dom: HTMLElement): boolean {
+    dom.classList.toggle('cm-md-image-selected', this.selected);
+    this.captionEl = dom.querySelector('.cm-md-image-caption');
+    return true;
+  }
 }
 
 // Reads back the Image node that currently owns `wrap` (positions shift as
@@ -1048,7 +1063,19 @@ const selectedImageField = StateField.define<{ from: number; to: number } | null
   create: () => null,
   update(selected, transaction) {
     for (const effect of transaction.effects) if (effect.is(setSelectedImage)) return effect.value;
-    return selected ? { from: transaction.changes.mapPos(selected.from), to: transaction.changes.mapPos(selected.to, 1) } : null;
+    if (!selected) return null;
+    const mapped = { from: transaction.changes.mapPos(selected.from), to: transaction.changes.mapPos(selected.to, 1) };
+    // Selection is derived off the plain text cursor rather than a
+    // stand-alone "is selected" flag that only clears on explicit action —
+    // the moment the cursor moves off the image's own range (click
+    // elsewhere, arrow keys, etc.), it is no longer selected. Mirrors how
+    // the table widget's cell selection tracks the cursor instead of
+    // requiring a separate deselect step.
+    if (transaction.selection) {
+      const head = transaction.selection.main.head;
+      if (head < mapped.from || head > mapped.to) return null;
+    }
+    return mapped;
   },
 });
 
