@@ -1025,27 +1025,33 @@ function applyMarkdownImageWidth(image: HTMLImageElement, width: number | null):
   image.style.height = 'auto';
 }
 
-/** A block widget is measured the moment it lands in the DOM — but an image
- * that has not decoded yet is still zero-height at that point. CodeMirror
- * caches that estimate for the whole block, so every line below the image,
- * and the gutter line numbers rendered beside them, keep sitting where the
- * collapsed placeholder implied.
+/** Watch the wrapper's box size and ask CodeMirror to re-measure once it
+ * becomes non-trivial or changes. An image widget's natural height is not
+ * known until the browser has decoded and laid it out. CodeMirror measures
+ * the line the moment the widget is inserted, which is often *before* that
+ * layout, so the first estimate can be zero or based on the placeholder.
  *
- * Anything that later forces a re-measure papers over it, which is exactly
- * why clicking a line appeared to "fix" the alignment, and why the symptom
- * was clearest when only blank lines followed the image: nothing down there
- * ever triggered a measurement on its own. */
-function remeasureWhenImageResolves(view: EditorView, image: HTMLImageElement): void {
-  // A cached image already has its intrinsic size, so the first measure is
-  // correct and no `load` event is coming anyway.
-  if (image.complete) return;
-  const request = (): void => {
-    // Decoding can finish long after this widget — or the whole editor —
-    // has gone away.
+ * `load` events alone miss cached images and race with the initial layout
+ * pass. A ResizeObserver fires after the browser has actually painted the
+ * final box, which is exactly when the line height needs to be recomputed.
+ *
+ * The observer stays attached for the lifetime of the widget so it also
+ * catches window resizes or width changes from the resize handle. It is
+ * disconnected in `destroy`. */
+function observeImageSize(view: EditorView, wrap: HTMLElement): void {
+  if (typeof ResizeObserver === 'undefined') return;
+  let lastWidth = 0;
+  let lastHeight = 0;
+  const observer = new ResizeObserver((entries) => {
+    const rect = entries[0]?.contentRect;
+    if (!rect) return;
+    if (Math.abs(rect.width - lastWidth) < 2 && Math.abs(rect.height - lastHeight) < 2) return;
+    lastWidth = rect.width;
+    lastHeight = rect.height;
     try { view.requestMeasure(); } catch { /* view already destroyed */ }
-  };
-  image.addEventListener('load', request, { once: true });
-  image.addEventListener('error', request, { once: true });
+  });
+  observer.observe(wrap);
+  (wrap as any).__finchImageResizeObserver = observer;
 }
 
 class MarkdownImageWidget extends WidgetType {
@@ -1064,11 +1070,6 @@ class MarkdownImageWidget extends WidgetType {
       && other.selected === this.selected;
   }
 
-  // WidgetType ignores DOM events by default. Clicks on the image itself
-  // (open preview) or on the wrapper background still need to reach the
-  // EditorView, but the caption is a real contenteditable node and must
-  // handle its own clicks/typing/selection without CodeMirror interfering —
-  // otherwise every keystroke would fight with the main editor selection.
   ignoreEvent(event: Event): boolean {
     return !!(this.captionEl && event.target instanceof Node && this.captionEl.contains(event.target));
   }
@@ -1098,7 +1099,6 @@ class MarkdownImageWidget extends WidgetType {
     image.dataset.mdImageSrc = this.src;
     image.title = this.alt || this.src;
     applyMarkdownImageWidth(image, this.width);
-    remeasureWhenImageResolves(view, image);
     frame.appendChild(image);
 
     const resizeHandle = document.createElement('span');
@@ -1112,9 +1112,6 @@ class MarkdownImageWidget extends WidgetType {
     frame.appendChild(resizeHandle);
     wrap.appendChild(frame);
 
-    // The caption doubles as the Markdown alt text. Edits commit back into
-    // the document on blur/Enter rather than per keystroke, so typing never
-    // triggers a decoration rebuild (no flicker, no lost caret).
     const caption = document.createElement('span');
     caption.className = 'cm-md-image-caption';
     caption.contentEditable = 'plaintext-only' as any;
@@ -1128,8 +1125,6 @@ class MarkdownImageWidget extends WidgetType {
       document.execCommand('insertText', false, text.replace(/[\r\n]+/g, ' '));
     });
     caption.addEventListener('keydown', (event) => {
-      // This nested contenteditable owns all of its keyboard navigation.
-      // Never let image-level/root-editor arrow handlers steal its caret.
       event.stopPropagation();
       if (event.key === 'Enter') {
         event.preventDefault();
@@ -1140,34 +1135,26 @@ class MarkdownImageWidget extends WidgetType {
         caption.blur();
       }
     });
-    // Deleting all text with backspace often leaves a stray <br> behind,
-    // which would defeat the CSS `:empty` check driving the muted/placeholder
-    // color — normalize it away so "no caption yet" always looks muted.
     caption.addEventListener('input', () => {
       if (!caption.textContent) caption.replaceChildren();
     });
     caption.addEventListener('blur', () => commitImageCaption(view, wrap, this.alt, caption.textContent ?? ''));
     wrap.appendChild(caption);
     this.captionEl = caption;
+
+    observeImageSize(view, wrap);
     if (this.selected) queueMicrotask(() => focusSelectedImageWidget(wrap));
     return wrap;
   }
 
-  // Selecting/deselecting an image only toggles a class — reuse the existing
-  // DOM instead of falling through to `toDOM()`. Recreating the wrapper
-  // would recreate the `<img>` too, and a freshly (re)inserted <img> renders
-  // at zero height until the browser has its intrinsic size again. Reusing
-  // the node keeps the containing line's measured height stable while the
-  // image enters or leaves its selected state.
-  //
-  // This must only fire when *just* the selection changed. src/alt changing
-  // is real content — most importantly the upload placeholder's `pasting:`
-  // src being swapped for the real uploaded URL once the host round-trip
-  // resolves — and has to fall through to a full `toDOM()` rebuild so the
-  // new image actually gets requested and painted. Blindly returning true
-  // here previously made CodeMirror believe the DOM was already up to date
-  // and skip that rebuild entirely, so a finished upload just sat there
-  // still showing the "Uploading image…" placeholder forever.
+  destroy(dom: HTMLElement): void {
+    const observer = (dom as any).__finchImageResizeObserver as ResizeObserver | undefined;
+    if (observer) {
+      observer.disconnect();
+      delete (dom as any).__finchImageResizeObserver;
+    }
+  }
+
   updateDOM(dom: HTMLElement, view: EditorView, from: MarkdownImageWidget): boolean {
     if (from.src !== this.src || from.alt !== this.alt) return false;
     dom.classList.toggle('cm-md-image-selected', this.selected);
@@ -1175,9 +1162,6 @@ class MarkdownImageWidget extends WidgetType {
     const image = dom.querySelector<HTMLImageElement>('img[data-md-image-src]');
     if (!image) return false;
     applyMarkdownImageWidth(image, this.width);
-    // Width drives height through the aspect ratio, so a resize moves every
-    // line below it. Reusing the DOM node (rather than rebuilding) means
-    // CodeMirror has no reason to re-measure unless we ask.
     if (from.width !== this.width) {
       try { view.requestMeasure(); } catch { /* view already destroyed */ }
     }
