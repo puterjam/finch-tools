@@ -1775,6 +1775,10 @@
   // user is always in control of what's actually on disk. ----
 
   var dirty = false;
+  // Per-file delivery revision assigned by the host. It prevents a late
+  // watcher/reconnect snapshot from overwriting a newer AI write already on
+  // screen; reset when switching to a different source path.
+  var documentRevision = 0;
   var savedFlash = false; // true for ~3s right after a successful save, drives the save-check icon
 
   // ---- Unsaved-draft recovery: mirror edits to a backend sidecar file so a
@@ -2925,18 +2929,27 @@
         clearNativePickTimer();
         var incoming = m.markdown || '';
         var incomingPath = m.path || '';
+        var incomingRevision = Number(m.revision) || 0;
+        // A delayed snapshot for the same file must never undo a newer host
+        // delivery that the editor already accepted.
+        if (incomingPath && incomingPath === sourcePath && incomingRevision && incomingRevision <= documentRevision) return;
         // A different absolute path means this is a genuine "switch to
         // another document" push (e.g. the AI just created/opened a second
         // file while this panel already had one loaded) — not an echo of our
         // own save, and not an external edit of the file we're currently
         // looking at, so neither of the two guards below should apply to it.
         var isDifferentDocument = !!incomingPath && !!sourcePath && incomingPath !== sourcePath;
-        if (!isDifferentDocument && incoming === savedMarkdown) { syncToolbar(); return; } // echo of our own save
+        if (!isDifferentDocument && incoming === savedMarkdown) {
+          if (incomingRevision) documentRevision = Math.max(documentRevision, incomingRevision);
+          syncToolbar();
+          return;
+        } // echo of our own save
         var isFirst = savedMarkdown === null;
         var wasLoadingFromHome = loadingFromHome;
         loadingFromHome = false;
         var applied = applyDocument(incoming, m.title || t('common.markdownDocDefault'), m.path || sourcePath, openedFromPicker || isFirst || isDifferentDocument, m.diskMarkdown);
         if (!applied) { syncToolbar(); return; } // still clear the "open" button's pending/disabled state
+        documentRevision = incomingRevision || (isDifferentDocument ? 0 : documentRevision);
         if (m.draftRestored) {
           // The buffer we just loaded is an unsaved draft, not what's on
           // disk — keep it marked dirty so Save (or the draft-mirror timer)

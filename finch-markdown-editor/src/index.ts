@@ -137,6 +137,15 @@ function result(message: string, isError = false): finch.ToolResult {
 // gets its own stable instance, including different Space Home scopes, and a
 // Home → Session relocation preserves the same id. Older session/global keys
 // remain readable for migration.
+interface RewriteOperation {
+  sessionId: string;
+  turnId: string;
+  startLine?: number;
+  endLine?: number;
+  rewriteMode: 'continue' | 'replace';
+  startedAt: number;
+}
+
 interface LastPathState {
   /** @deprecated Global pre-0.1.8 list; read only for one-time migration. */
   recentPaths?: string[];
@@ -154,6 +163,9 @@ interface LastPathState {
   lastPath?: string;
   /** Per-file rewrite Session id, so successive rewrites reuse one conversation. */
   rewriteSessions?: Record<string, string>;
+  /** In-flight AI turns, retained across a panel destroy/rebind so the new
+   * page can restore its loading range and completion state. */
+  rewriteOperations?: Record<string, RewriteOperation>;
 }
 
 function stateFile(ctx: finch.MiniToolContext): string {
@@ -479,10 +491,38 @@ async function collectLibraryDocuments(ctx: finch.MiniToolContext): Promise<Rece
 // open, but a Home panel that is still loading/rebinding must not lose a
 // document an AI just created or opened before the page announced `panelReady`.
 const livePanelDocuments = new Map<string, DocumentState>();
+const openPanels = new Map<string, finch.AppPanel>();
+// Every path delivery gets a monotonic revision. A page may receive late
+// watcher/rebind messages, so the guest uses this to ignore an older snapshot
+// that finishes after a newer write has already been delivered.
+const fileRevisions = new Map<string, number>();
+
+function nextFileRevision(sourcePath: string): number {
+  const next = (fileRevisions.get(sourcePath) ?? 0) + 1;
+  fileRevisions.set(sourcePath, next);
+  return next;
+}
 
 async function sendDocument(panel: finch.AppPanel, state: DocumentState): Promise<void> {
-  livePanelDocuments.set(panel.id, state);
-  await panel.postMessage({ type: 'document', ...state });
+  const revision = state.path && path.isAbsolute(state.path)
+    ? (state.revision ?? nextFileRevision(state.path))
+    : state.revision;
+  const delivered = revision === undefined ? state : { ...state, revision };
+  livePanelDocuments.set(panel.id, delivered);
+  await panel.postMessage({ type: 'document', ...delivered });
+}
+
+/** Publish a known successful file write directly to every live panel that
+ * has that exact path open. This is the primary AI-write sync path; fs.watch
+ * remains only a fallback for writes originating outside this mini tool. */
+async function publishFileUpdate(ctx: finch.MiniToolContext, sourcePath: string): Promise<void> {
+  const markdown = await readFile(sourcePath, 'utf8');
+  const revision = nextFileRevision(sourcePath);
+  const state: DocumentState = { path: sourcePath, markdown, title: documentTitle(markdown, sourcePath), revision };
+  const targets = Array.from(openPanels.values()).filter((panel) => livePanelDocuments.get(panel.id)?.path === sourcePath);
+  await Promise.all(targets.map((panel) => sendDocument(panel, state).catch((error) => {
+    ctx.logger.warn(`Could not deliver written file to panel ${panel.id}: ${String(error)}`);
+  })));
 }
 
 /** Sends whatever this panel currently has cached in memory — but re-reads
@@ -564,8 +604,13 @@ function watchSource(ctx: finch.MiniToolContext, panel: finch.AppPanel, sourcePa
     entry.watcher = watch(sourcePath, () => {
       if (entry.timer) clearTimeout(entry.timer);
       entry.timer = setTimeout(async () => {
+        // Snapshot the write revision before the asynchronous read. If an AI
+        // write directly publishes newer content while this read is pending,
+        // this older watcher callback must not later overwrite the panel.
+        const revisionBeforeRead = fileRevisions.get(sourcePath) ?? 0;
         try {
           const markdown = await readFile(sourcePath, 'utf8');
+          if (panelWatchers.get(panel.id) !== entry || (fileRevisions.get(sourcePath) ?? 0) !== revisionBeforeRead) return;
           await sendDocument(panel, { path: sourcePath, markdown, title: documentTitle(markdown, sourcePath) });
         } catch (error) {
           ctx.logger.warn(`Source refresh failed: ${String(error)}`);
@@ -659,6 +704,26 @@ async function rememberRewriteSession(ctx: finch.MiniToolContext, sourcePath: st
   }
 }
 
+async function rememberRewriteOperation(ctx: finch.MiniToolContext, sourcePath: string, operation: RewriteOperation): Promise<void> {
+  const state = await readLastPathState(ctx);
+  state.rewriteOperations = { ...state.rewriteOperations, [sourcePath]: operation };
+  await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+}
+
+async function clearRewriteOperation(ctx: finch.MiniToolContext, sourcePath: string, turnId: string): Promise<void> {
+  const state = await readLastPathState(ctx);
+  if (state.rewriteOperations?.[sourcePath]?.turnId !== turnId) return;
+  const operations = { ...state.rewriteOperations };
+  delete operations[sourcePath];
+  state.rewriteOperations = operations;
+  await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+}
+
+async function notifyRewritePanels(sourcePath: string, message: Record<string, unknown>): Promise<void> {
+  const targets = Array.from(openPanels.values()).filter((panel) => livePanelDocuments.get(panel.id)?.path === sourcePath);
+  await Promise.all(targets.map((panel) => panel.postMessage(message).catch(() => {})));
+}
+
 async function startRewriteSession(ctx: finch.MiniToolContext, panel: finch.AppPanel, message: PanelMessage): Promise<void> {
   const sourcePath = String(message.path ?? '').trim();
   const selectedText = String(message.selectedText ?? '').trim();
@@ -706,19 +771,24 @@ async function startRewriteSession(ctx: finch.MiniToolContext, panel: finch.AppP
     await panel.postMessage({ type: 'rewriteSessionFailed', message: '改写会话队列繁忙，请稍后重试。' });
     return;
   }
-  await panel.postMessage({
+  const operation: RewriteOperation = {
+    sessionId, turnId: receipt.turnId, startLine: message.startLine,
+    endLine: message.endLine ?? message.startLine, rewriteMode, startedAt: Date.now(),
+  };
+  await rememberRewriteOperation(ctx, sourcePath, operation).catch((error) => ctx.logger.warn(`Could not persist rewrite operation: ${String(error)}`));
+  await notifyRewritePanels(sourcePath, {
     type: 'rewriteSessionStarted', sessionId, spaceName: scope.spaceName,
     title: `${rewriteMode === 'continue' ? '续写' : '改写'}：${path.basename(sourcePath)}`,
-    startLine: message.startLine, endLine: message.endLine ?? message.startLine,
-    rewriteMode,
+    startLine: operation.startLine, endLine: operation.endLine, rewriteMode,
   });
   void ctx.sessions.waitForTurn(sessionId, receipt.turnId, { timeoutMs: 600_000 }).then(async (result) => {
     const verb = rewriteMode === 'continue' ? '续写' : '改写';
-    await panel.postMessage({
+    await clearRewriteOperation(ctx, sourcePath, receipt.turnId).catch((error) => ctx.logger.warn(`Could not clear rewrite operation: ${String(error)}`));
+    await notifyRewritePanels(sourcePath, {
       type: result.state === 'completed' ? 'rewriteSessionFinished' : 'rewriteSessionFailed',
       sessionId,
       message: result.state === 'completed' ? `${verb}已完成。` : result.state === 'timeout' ? `${verb}仍在会话中继续。` : `${verb}会话未完成。`,
-    }).catch(() => {});
+    });
   });
 }
 
@@ -743,6 +813,18 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
         await sendLiveDocument(ctx, panel, liveDocument);
       } else if (!await restoreDocument(ctx, panel)) {
         await panel.postMessage({ type: 'lastFileUnavailable' });
+      }
+      // The Agent Session outlives a destroyed/rebound page. Restore its
+      // in-flight range after restoring the document so the writer knows an
+      // AI turn is still working on this file.
+      const currentPath = livePanelDocuments.get(panel.id)?.path;
+      if (currentPath) {
+        const operation = (await readLastPathState(ctx)).rewriteOperations?.[currentPath];
+        if (operation) await panel.postMessage({
+          type: 'rewriteSessionStarted', sessionId: operation.sessionId,
+          startLine: operation.startLine, endLine: operation.endLine,
+          rewriteMode: operation.rewriteMode,
+        });
       }
       return;
     }
@@ -972,6 +1054,7 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
         const current = await readFile(sourcePath, 'utf8');
         const appliedMarkdown = preserveTextEnvelope(current, markdown);
         await writeFile(sourcePath, appliedMarkdown, 'utf8');
+        await publishFileUpdate(ctx, sourcePath);
         await rememberRecentPath(ctx, sourcePath, panel);
         await panel.postMessage({ type: 'applied', path: sourcePath, title: documentTitle(appliedMarkdown, sourcePath) });
       } catch (error) {
@@ -1101,6 +1184,7 @@ export function activate(ctx: finch.MiniToolContext): void {
   }));
 
   ctx.subscriptions.push(ctx.ui.onDidOpenPanel((panel) => {
+    openPanels.set(panel.id, panel);
     if (panel.visible) lastPanel = panel;
     ctx.subscriptions.push(panel.onDidReceiveMessage((message) => {
       // `handleMessage` is async and its rejections are not implicitly awaited
@@ -1120,6 +1204,7 @@ export function activate(ctx: finch.MiniToolContext): void {
     }));
     ctx.subscriptions.push(panel.onDidDispose(() => {
       stopWatching(panel.id);
+      openPanels.delete(panel.id);
       livePanelDocuments.delete(panel.id);
       // The panel is gone for real now (Cmd/Ctrl+W, closing a Session, app
       // quit…) — don't wait out the debounce for whatever draft edit was
@@ -1224,6 +1309,7 @@ action:
             const applied = applyEditSpecs(current, edits);
             if (!applied.ok) return result(applied.error, true);
             await writeFile(sourcePath, applied.content, 'utf8');
+            await publishFileUpdate(ctx, sourcePath);
             await rememberRecentPath(ctx, sourcePath);
             return result(`Applied ${edits.length} targeted edit${edits.length > 1 ? 's' : ''} to ${path.basename(sourcePath)}.`);
           } catch (error) {
@@ -1235,6 +1321,7 @@ action:
         try {
           const current = await readFile(sourcePath, 'utf8');
           await writeFile(sourcePath, preserveTextEnvelope(current, markdown), 'utf8');
+          await publishFileUpdate(ctx, sourcePath);
           await rememberRecentPath(ctx, sourcePath);
           return result(`Applied reviewed Markdown to ${path.basename(sourcePath)}.`);
         } catch (error) {

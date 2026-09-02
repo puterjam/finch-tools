@@ -2,6 +2,9 @@ import path from 'node:path';
 
 export interface DocumentState {
   path?: string;
+  /** Monotonic per-file delivery version. Guests ignore stale pushes that
+   * complete after a newer file write or panel rebind. */
+  revision?: number;
   markdown: string;
   title: string;
   /** True when `markdown` came from a recovered unsaved draft rather than
