@@ -36,6 +36,8 @@
       'appview.libraryHint': '所有空间的最近文档',
       'appview.libraryWorkspace': '工作间文件',
       'appview.libraryOther': '其他',
+      'appview.libraryReorder': '排序',
+      'appview.libraryReorderDone': '已完成',
       'appview.rewrite': '改写',
       'appview.focus': '专注',
       'appview.openSession': '打开改写会话',
@@ -199,6 +201,8 @@
       'appview.libraryHint': 'Recent documents across all Spaces',
       'appview.libraryWorkspace': 'Workspace files',
       'appview.libraryOther': 'Other',
+      'appview.libraryReorder': 'Reorder',
+      'appview.libraryReorderDone': 'Done',
       'appview.rewrite': 'Rewrite',
       'appview.focus': 'Focus',
       'appview.openSession': 'Open rewrite session',
@@ -384,8 +388,13 @@
   var emptyOpen = document.getElementById('emptyOpen');
   var homeRecent = document.getElementById('homeRecent');
   var homeGrid = document.getElementById('homeGrid');
-  var homeCwd = document.getElementById('homeCwd');
   var homeHint = document.getElementById('homeHint');
+  // Last documents payload rendered into the Home grid. Each category's
+  // directory now travels with the documents themselves (`scopePath`), so a
+  // redraw triggered by late-arriving display state (e.g. homeDir, which
+  // only affects "~" abbreviation) can replay from here instead of waiting
+  // on another host round-trip — mirrors libraryDocumentsCache below.
+  var homeDocumentsCache = [];
   var homeTagline = document.getElementById('homeTagline');
   var editPane = document.getElementById('editPane');
   var previewPane = document.getElementById('previewPane');
@@ -425,12 +434,23 @@
   var libraryDrawer = document.getElementById('libraryDrawer');
   var libraryBackdrop = document.getElementById('libraryBackdrop');
   var libraryClose = document.getElementById('libraryClose');
+  var libraryReorder = document.getElementById('libraryReorder');
+  var libraryReorderFooter = document.getElementById('libraryReorderFooter');
+  var libraryReorderDone = document.getElementById('libraryReorderDone');
   var libraryGroups = document.getElementById('libraryGroups');
   var LIBRARY_GROUP_STATE_KEY = 'md-editor-library-groups-v1';
   var libraryGroupOrder = [];
   var libraryCollapsedGroups = {};
   var libraryDragging = null;
   var libraryDragOpenState = null;
+  // Reorder mode: the drawer collapses every group to a flat draggable
+  // header row (no per-document rows, no expand/collapse) so dragging is
+  // the only interaction — entered/exited via the header toggle button,
+  // never auto-triggered by an ordinary drag from the normal browsing view.
+  var libraryReorderMode = false;
+  // Last documents payload rendered into the drawer, so toggling reorder
+  // mode on/off can redraw locally without waiting on another host round-trip.
+  var libraryDocumentsCache = [];
   // Custom pointer-driven drag state, replacing the browser's native HTML5
   // drag-and-drop (whose default translucent "screenshot" ghost can't be
   // restyled). `null` when idle; `active` flips true only past a small
@@ -584,11 +604,10 @@
   var envCwd = '';
   var envSessionId = '';
   var envSpaceId = '';
-  var fallbackCwd = '';
-  // Some Home views arrive without cwd/session. The backend may return the
-  // persisted ordinary-chat homePath as `fallbackCwd`, so empty envCwd must
-  // not block the request. Only "no `finch:env` yet" should, which this
-  // separate flag tracks instead of overloading envCwd.
+  // Some Home views arrive without cwd/session. The backend resolves those
+  // against the persisted ordinary-chat homePath on its side, so empty
+  // envCwd must not block the request. Only "no `finch:env` yet" should,
+  // which this separate flag tracks instead of overloading envCwd.
   var envReceived = false;
   var recentRequested = false;
   var assistantName = '';
@@ -637,8 +656,8 @@
   // Manual front-truncation ("…/end/of/path") instead of CSS text-overflow
   // (which trims the end, hiding the most useful — innermost — folder name).
   // Character-count based rather than pixel-measured: good enough for a
-  // secondary label, and the CSS ellipsis on .home-cwd still backstops any
-  // panel narrower than this budget assumes.
+  // secondary label, and the CSS ellipsis on .home-group-cwd still backstops
+  // any panel narrower than this budget assumes.
   function truncateFriendlyPath(text) {
     var MAX = 46;
     if (!text || text.length <= MAX) return text;
@@ -649,22 +668,13 @@
     return '…' + tail;
   }
 
+  // Each category header renders its own directory from the documents'
+  // `scopePath`, so there is no single cwd element to update anymore. This
+  // just replays the cached list — needed because `homeDir` (which decides
+  // whether a path abbreviates to "~/…") can arrive after the first render.
   function renderHomeCwd() {
-    if (!homeCwd) return;
-    // `fallbackCwd` is the persisted real cwd from an ordinary no-Space
-    // Session, not a virtual filesystem path. It makes the Home view and
-    // that Session share exactly one recent-document scope.
-    var effectiveCwd = envCwd || fallbackCwd;
-    homeCwd.textContent = truncateFriendlyPath(formatFriendlyPath(effectiveCwd));
-    homeCwd.title = effectiveCwd ? t('home.cwdTitle', { path: effectiveCwd }) : '';
-    homeCwd.hidden = !effectiveCwd;
+    renderRecentDocuments(homeDocumentsCache);
   }
-
-  if (homeCwd) homeCwd.addEventListener('click', function () {
-    var effectiveCwd = envCwd || fallbackCwd;
-    if (!effectiveCwd || !api || !api.postMessage) return;
-    api.postMessage({ type: 'openPath', path: effectiveCwd });
-  });
 
   function formatDocTime(ts) {
     var date = new Date(ts);
@@ -686,9 +696,27 @@
     api.postMessage({ type: 'requestRecentDocuments', cwd: envCwd, sessionId: envSessionId, spaceId: envSpaceId });
   }
 
+  // One `.doc-card` button for a single recent document — shared by every
+  // group's sub-grid below.
+  function renderDocCardHtml(doc) {
+    doc = doc || {};
+    var docPath = doc.relativePath || doc.fileName || '';
+    return '<button class="doc-card" type="button" data-path="' + escapeHtml(doc.path || '') + '" title="' + escapeHtml(doc.path || '') + '">'
+      + '<span class="doc-reveal" data-reveal-path="' + escapeHtml(doc.path || '') + '" role="button" tabindex="0" title="' + escapeHtml(t('home.revealInFileManager')) + '" aria-label="' + escapeHtml(t('home.revealInFileManager')) + '">'
+      + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>'
+      + '</span>'
+      + '<div class="doc-preview">' + escapeHtml(doc.preview || t('home.emptyDoc')) + '</div>'
+      + '<div class="doc-foot">'
+      + '<div class="doc-title">' + escapeHtml(doc.title || doc.fileName || t('home.untitled')) + '</div>'
+      + '<div class="doc-sub"><span class="doc-path" data-full-path="' + escapeHtml(docPath) + '">' + escapeHtml(docPath) + '</span>'
+      + '<span class="doc-time">' + escapeHtml(formatDocTime(doc.modifiedAt)) + '</span></div>'
+      + '</div></button>';
+  }
+
   function renderRecentDocuments(documents) {
     if (!homeGrid || !homeRecent || !homeHint) return;
     var list = Array.isArray(documents) ? documents : [];
+    homeDocumentsCache = list;
     if (list.length === 0) {
       homeRecent.hidden = true;
       homeHint.hidden = false;
@@ -697,22 +725,27 @@
         : t('home.hintDefault');
       return;
     }
-    var cards = '';
-    for (var i = 0; i < list.length; i++) {
-      var doc = list[i] || {};
-      var docPath = doc.relativePath || doc.fileName || '';
-      cards += '<button class="doc-card" type="button" data-path="' + escapeHtml(doc.path || '') + '" title="' + escapeHtml(doc.path || '') + '">'
-        + '<span class="doc-reveal" data-reveal-path="' + escapeHtml(doc.path || '') + '" role="button" tabindex="0" title="' + escapeHtml(t('home.revealInFileManager')) + '" aria-label="' + escapeHtml(t('home.revealInFileManager')) + '">'
-        + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>'
-        + '</span>'
-        + '<div class="doc-preview">' + escapeHtml(doc.preview || t('home.emptyDoc')) + '</div>'
-        + '<div class="doc-foot">'
-        + '<div class="doc-title">' + escapeHtml(doc.title || doc.fileName || t('home.untitled')) + '</div>'
-        + '<div class="doc-sub"><span class="doc-path" data-full-path="' + escapeHtml(docPath) + '">' + escapeHtml(docPath) + '</span>'
-        + '<span class="doc-time">' + escapeHtml(formatDocTime(doc.modifiedAt)) + '</span></div>'
-        + '</div></button>';
-    }
-    homeGrid.innerHTML = cards;
+    // Group and order exactly like the Library drawer, so Home is a
+    // read-only preview of the same Space/workspace/other categorization
+    // the user arranged there. Every category always gets its own header
+    // row (label + count on the left, the click-to-reveal cwd path on the
+    // right) with a divider above it — cwd used to live once next to the
+    // overall "最近编辑" title, but now rides along with each category.
+    var groups = groupDocumentsForDisplay(list);
+    homeGrid.innerHTML = groups.map(function (group) {
+      var cards = group.documents.map(renderDocCardHtml).join('');
+      // Each category shows ITS OWN root directory, not the Session cwd —
+      // in AppView the list spans several Spaces at once, so a single shared
+      // cwd would be wrong for every group but one.
+      var cwdHtml = group.scopePath
+        ? '<button type="button" class="home-group-cwd" data-cwd-path="' + escapeHtml(group.scopePath) + '"'
+          + ' title="' + escapeHtml(t('home.cwdTitle', { path: group.scopePath })) + '">'
+          + escapeHtml(truncateFriendlyPath(formatFriendlyPath(group.scopePath))) + '</button>'
+        : '';
+      var header = '<div class="home-group-title"><span class="home-group-label">' + escapeHtml(group.label)
+        + '<span class="home-group-count">' + group.documents.length + '</span></span>' + cwdHtml + '</div>';
+      return '<div class="home-group">' + header + '<div class="home-grid">' + cards + '</div></div>';
+    }).join('');
     homeRecent.hidden = false;
     homeHint.hidden = true;
     // Layout needs to settle (grid columns, card width) before scrollWidth
@@ -749,8 +782,11 @@
     try { localStorage.setItem(LIBRARY_GROUP_STATE_KEY, JSON.stringify({ order: libraryGroupOrder, collapsed: libraryCollapsedGroups })); } catch (e) {}
   }
 
-  function renderLibraryDocuments(documents) {
-    if (!libraryGroups) return;
+  // Shared by both the Library drawer and the Home "recent documents" grid
+  // so the two views always agree on which document belongs to which group
+  // and in what order — Home simply renders the same grouping read-only,
+  // it never has its own opinion about ordering.
+  function groupDocumentsForDisplay(documents) {
     var groups = {};
     (Array.isArray(documents) ? documents : []).forEach(function (doc) {
       // Space labels are supplied by the backend from SpaceSummary.name —
@@ -762,10 +798,15 @@
           : (doc.scopeLabel || doc.spaceName || t('appview.libraryOther'));
       var groupId = kind === 'space' ? 'space:' + (doc.spaceId || label)
         : kind === 'workspace' ? 'workspace' : 'external';
-      if (!groups[groupId]) groups[groupId] = { id: groupId, kind: kind, label: label, documents: [] };
+      if (!groups[groupId]) groups[groupId] = { id: groupId, kind: kind, label: label, scopePath: '', documents: [] };
+      // Every document in a Space/workspace group shares one root directory,
+      // so the first one carrying it defines the group's path. The "external"
+      // bucket is deliberately left blank: it's a mixed bag of unrelated
+      // folders, so there is no single meaningful directory to show.
+      if (kind !== 'external' && !groups[groupId].scopePath && doc.scopePath) groups[groupId].scopePath = doc.scopePath;
       groups[groupId].documents.push(doc);
     });
-    var ordered = Object.keys(groups).map(function (key) { return groups[key]; }).sort(function (a, b) {
+    return Object.keys(groups).map(function (key) { return groups[key]; }).sort(function (a, b) {
       // True external files remain fixed at the bottom. Space/workspace
       // groups follow the user's persisted drag order, then default to the
       // deterministic Space → workspace ordering for newly seen groups.
@@ -777,6 +818,13 @@
       var rankDiff = ranks[a.kind] - ranks[b.kind];
       return rankDiff || a.label.localeCompare(b.label);
     });
+  }
+
+  function renderLibraryDocuments(documents) {
+    if (!libraryGroups) return;
+    libraryDocumentsCache = Array.isArray(documents) ? documents : [];
+    var ordered = groupDocumentsForDisplay(libraryDocumentsCache);
+    if (libraryReorderMode) { renderLibraryReorderList(ordered); return; }
     libraryGroups.innerHTML = ordered.map(function (group) {
       var rows = group.documents.map(function (doc) {
         var docPath = doc.relativePath || doc.fileName || '';
@@ -796,12 +844,39 @@
     }).join('') || '<p class="home-hint">' + escapeHtml(t('home.hintDefault')) + '</p>';
   }
 
+  // Flat, header-only variant used while reorder mode is active: one row
+  // per group (no expand/collapse, no document rows), so the whole row is
+  // both the label and the drag handle. "Other" stays fixed at the bottom
+  // and un-draggable, matching the normal view's behavior.
+  function renderLibraryReorderList(ordered) {
+    libraryGroups.innerHTML = ordered.map(function (group) {
+      var draggable = group.kind !== 'external';
+      return '<div class="library-group library-group-reorder" data-library-group-id="' + escapeHtml(group.id) + '"'
+        + (draggable ? ' data-draggable="true"' : '') + '>'
+        + '<span class="library-reorder-handle" aria-hidden="true">' + (draggable ? '⋮⋮' : '') + '</span>'
+        + '<span class="library-group-title">' + escapeHtml(group.label) + '</span>'
+        + '<span class="library-group-count">' + group.documents.length + '</span></div>';
+    }).join('') || '<p class="home-hint">' + escapeHtml(t('home.hintDefault')) + '</p>';
+  }
+
+  function setLibraryReorderMode(on) {
+    libraryReorderMode = !!on;
+    if (libraryReorder) libraryReorder.classList.toggle('active', libraryReorderMode);
+    if (libraryReorderFooter) libraryReorderFooter.hidden = !libraryReorderMode;
+    // Re-render from the cached payload — no need to round-trip the host
+    // just to switch between the two presentations of the same data.
+    renderLibraryDocuments(libraryDocumentsCache);
+  }
+
   function setLibraryOpen(open) {
     if (!libraryDrawer || !libraryBackdrop) return;
     libraryDrawer.classList.toggle('open', !!open);
     libraryDrawer.setAttribute('aria-hidden', open ? 'false' : 'true');
     libraryBackdrop.hidden = !open;
     if (open) requestRecentDocuments();
+    // Always leave reorder mode behind when the drawer closes, so the next
+    // time it opens it starts back in the normal browsing view.
+    else if (libraryReorderMode) setLibraryReorderMode(false);
   }
 
   function finishLibraryDrag() {
@@ -812,6 +887,10 @@
     libraryGroupOrder = Array.prototype.map.call(libraryGroups.querySelectorAll('.library-group[data-draggable="true"]'), function (group) {
       return group.getAttribute('data-library-group-id');
     }).filter(Boolean);
+    // Home reads the very same `libraryGroupOrder`, so it has to be redrawn
+    // now — otherwise the new order only appears after the next host push,
+    // and closing the drawer would reveal a stale Home ordering.
+    renderRecentDocuments(homeDocumentsCache);
     var openState = libraryDragOpenState || {};
     Array.prototype.forEach.call(libraryGroups.querySelectorAll('.library-group'), function (group) {
       var id = group.getAttribute('data-library-group-id');
@@ -849,11 +928,16 @@
     state.active = true;
     libraryDragging = group;
     libraryDragOpenState = {};
-    Array.prototype.forEach.call(libraryGroups.querySelectorAll('.library-group'), function (item) {
-      var id = item.getAttribute('data-library-group-id');
-      if (id) libraryDragOpenState[id] = !!item.open;
-      item.open = false;
-    });
+    // Reorder-mode rows are already flat header-only <div>s with nothing to
+    // collapse — this open/close snapshot-and-collapse dance only applies
+    // to the normal <details> browsing view.
+    if (!libraryReorderMode) {
+      Array.prototype.forEach.call(libraryGroups.querySelectorAll('.library-group'), function (item) {
+        var id = item.getAttribute('data-library-group-id');
+        if (id) libraryDragOpenState[id] = !!item.open;
+        item.open = false;
+      });
+    }
     group.classList.add('dragging');
     // The clone is built *after* collapsing above, so it mirrors the
     // compact row height actually being dragged, not the (possibly
@@ -898,6 +982,8 @@
   if (appLibrary) appLibrary.addEventListener('click', function () { setLibraryOpen(true); });
   if (libraryClose) libraryClose.addEventListener('click', function () { setLibraryOpen(false); });
   if (libraryBackdrop) libraryBackdrop.addEventListener('click', function () { setLibraryOpen(false); });
+  if (libraryReorder) libraryReorder.addEventListener('click', function () { setLibraryReorderMode(!libraryReorderMode); });
+  if (libraryReorderDone) libraryReorderDone.addEventListener('click', function () { setLibraryReorderMode(false); });
   if (libraryGroups) libraryGroups.addEventListener('click', function (event) {
     var row = event.target && event.target.closest ? event.target.closest('.library-row') : null;
     var docPath = row && row.getAttribute('data-path');
@@ -932,8 +1018,13 @@
     }, true);
     libraryGroups.addEventListener('pointerdown', function (event) {
       if (event.button !== 0) return;
-      var summary = event.target && event.target.closest ? event.target.closest('.library-group summary') : null;
-      var group = summary && summary.closest ? summary.closest('.library-group[data-draggable="true"]') : null;
+      // Reordering is exclusive to reorder mode. In the normal browsing view
+      // a group header is purely an expand/collapse control, so no drag may
+      // start from it — otherwise an ordinary click-and-wobble on a title
+      // silently rearranges the user's categories.
+      if (!libraryReorderMode) return;
+      // Reorder-mode rows have no <summary>: the whole flat row is the handle.
+      var group = event.target && event.target.closest ? event.target.closest('.library-group[data-draggable="true"]') : null;
       if (!group) return;
       libraryDragPointer = { group: group, startX: event.clientX, startY: event.clientY, active: false, ghost: null, offsetX: 0, offsetY: 0 };
     });
@@ -962,6 +1053,15 @@
 
   if (homeGrid) homeGrid.addEventListener('click', function (event) {
     if (!api || !api.postMessage) return;
+    // Delegated: `.home-group-cwd` buttons are re-created on every render
+    // (one per category), so there's no single fixed DOM node to bind to
+    // like the old top-of-section cwd button had.
+    var cwdBtn = event.target && event.target.closest ? event.target.closest('.home-group-cwd') : null;
+    if (cwdBtn) {
+      var cwdPath = cwdBtn.getAttribute('data-cwd-path') || '';
+      if (cwdPath) api.postMessage({ type: 'openPath', path: cwdPath });
+      return;
+    }
     var reveal = event.target && event.target.closest ? event.target.closest('.doc-reveal') : null;
     if (reveal) {
       event.preventDefault();
@@ -2676,8 +2776,46 @@
 
   // ---- Toolbar (finch:menu) ----
 
+  function writingPreferencesPayload() {
+    return {
+      fontSize: editorFontSize,
+      fontFamily: editorFont,
+      comfortWriting: comfortWriting,
+      style: style,
+      customCss: style === 'custom' ? customCss : '',
+      customStyleLabel: style === 'custom' ? customStyleLabel : '',
+    };
+  }
+
+  // The extension host owns the durable copy so these choices survive a
+  // WebView replacement, not just this page's localStorage lifetime.
+  function persistWritingPreferences() {
+    if (api && api.postMessage) api.postMessage({ type: 'saveWritingPreferences', preferences: writingPreferencesPayload() });
+  }
+
+  function applyWritingPreferences(preferences) {
+    if (!preferences || typeof preferences !== 'object') return false;
+    if (preferences.fontSize === 14 || preferences.fontSize === 16 || preferences.fontSize === 18) editorFontSize = preferences.fontSize;
+    if (EDITOR_FONTS[preferences.fontFamily]) editorFont = preferences.fontFamily;
+    comfortWriting = preferences.comfortWriting === true;
+    if (preferences.style === 'custom' && typeof preferences.customCss === 'string' && preferences.customCss) {
+      style = 'custom';
+      customCss = preferences.customCss;
+      customStyleLabel = typeof preferences.customStyleLabel === 'string' ? preferences.customStyleLabel : '';
+    } else if (['kami', 'bauhaus', 'blueprint', 'botanical', 'newsprint', 'retro', 'sketch', 'terminal'].indexOf(preferences.style) !== -1) {
+      style = preferences.style;
+      customCss = '';
+      customStyleLabel = '';
+    }
+    cm.setFontSize(editorFontSize);
+    cm.setFontFamily(EDITOR_FONTS[editorFont]);
+    cm.setComfortWriting(comfortWriting);
+    return true;
+  }
+
   function setStyle(next) {
     style = next;
+    persistWritingPreferences();
     if (isAppView || mode === 'preview') render();
     syncToolbar();
   }
@@ -2687,6 +2825,7 @@
     editorFontSize = size;
     cm.setFontSize(size);
     try { localStorage.setItem('md-editor-font-size', String(size)); } catch (e) {}
+    persistWritingPreferences();
     syncToolbar();
   }
 
@@ -2695,6 +2834,7 @@
     editorFont = font;
     cm.setFontFamily(EDITOR_FONTS[font]);
     try { localStorage.setItem('md-editor-font-family', font); } catch (e) {}
+    persistWritingPreferences();
     syncToolbar();
   }
 
@@ -2702,6 +2842,7 @@
     comfortWriting = !!on;
     cm.setComfortWriting(comfortWriting);
     try { localStorage.setItem('md-editor-comfort-writing', comfortWriting ? '1' : '0'); } catch (e) {}
+    persistWritingPreferences();
     syncToolbar();
     setStatus(comfortWriting ? t('status.comfortWrite') : t('status.comfortRead'));
   }
@@ -2793,7 +2934,13 @@
     if (api && api.postMessage) api.postMessage({ type: 'goHome' });
     updateEmptyState();
     showPane();
-    syncToolbar();
+    // Home has no document at all, so it can never be "dirty" — without
+    // this, a discard-then-return-home leaves the stale `dirty=true` from
+    // the just-abandoned document behind, which both keeps the Home Save
+    // icon lit and makes the *next* goHome()/openFile() wrongly re-prompt
+    // "unsaved changes?" for a document that no longer exists. setDirty()
+    // already calls syncToolbar() internally.
+    setDirty(false);
     setStatus('');
   }
 
@@ -2937,6 +3084,7 @@
     customCss = slot.css;
     customStyleLabel = slot.label;
     style = 'custom';
+    persistWritingPreferences();
     setStatus(t('status.appliedStyleSlot', { label: slot.label }));
     if (mode === 'preview') render(); else setMode('preview');
     syncToolbar();
@@ -2989,6 +3137,12 @@
       if (m.type === 'ready') {
         pickFileSupported = !!m.pickFileSupported;
         styleSlots = Array.isArray(m.styleSlots) ? m.styleSlots : [null, null, null];
+        if (applyWritingPreferences(m.writingPreferences)) {
+          if (isAppView && hasDocument()) render();
+        } else {
+          // One-time migration from the earlier WebView-local cache.
+          persistWritingPreferences();
+        }
         // Reconcile the navigator.language guess (used for the very first,
         // synchronous paint) against the host's real locale (ctx.i18n.locale,
         // forwarded from index.ts). Only re-render if it actually flips zh/en
@@ -3062,9 +3216,7 @@
           envCwd = incomingCwd;
           envSessionId = incomingSessionId;
           envSpaceId = incomingSpaceId;
-          fallbackCwd = '';
           envReceived = true;
-          renderHomeCwd();
           renderRecentDocuments([]);
         }
         showPane();
@@ -3075,8 +3227,6 @@
       }
       if (m.type === 'recentDocuments') {
         if (!m.library && (m.cwd || '') !== envCwd) return;
-        fallbackCwd = m.fallbackCwd || '';
-        renderHomeCwd();
         renderRecentDocuments(m.documents);
         if (m.library) renderLibraryDocuments(m.documents);
         return;
@@ -3185,6 +3335,7 @@
         customCss = m.css || '';
         customStyleLabel = m.label || t('common.customStyleDefault');
         style = 'custom';
+        persistWritingPreferences();
         if (typeof m.savedSlot === 'number') {
           styleSlots = Array.isArray(m.styleSlots) ? m.styleSlots : styleSlots;
           setStatus(t('status.savedAppliedToSlot', {

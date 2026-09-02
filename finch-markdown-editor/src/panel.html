@@ -11,14 +11,16 @@
 <main class="app">
   <header id="appToolbar" class="app-toolbar" hidden>
     <div class="app-toolbar-group">
-      <button id="appHome" class="app-tool" type="button" data-i18n-tooltip="toolbar.home.tooltip" aria-label="Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></button>
       <button id="appLibrary" class="app-tool" type="button" data-i18n-tooltip="appview.library" aria-label="Library"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m14 9 3 3-3 3"/></svg></button>
+      <span class="app-toolbar-sep" aria-hidden="true"></span>
+      <button id="appHome" class="app-tool" type="button" data-i18n-tooltip="toolbar.home.tooltip" aria-label="Home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></button>
       <button id="appOpen" class="app-tool" type="button" data-i18n-tooltip="home.openFile" aria-label="Open File"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg></button>
       <button id="appSave" class="app-tool app-tool-label" type="button" data-i18n-tooltip="toolbar.save.tooltipDefault"><span class="ic-save"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></span><span class="ic-save-check" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.5 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h10.2a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4v4.35"/><path d="m16 19 2 2 4-4"/><path d="M17 15.13V14a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></span><span data-i18n="toolbar.save.label">Save</span></button>
     </div>
     <div class="app-toolbar-group app-toolbar-end">
       <button id="appPreview" class="app-tool app-tool-label checked" type="button" data-i18n-tooltip="toolbar.mode.label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 17a4 4 0 0 1-8 0V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2Z"/><path d="M16.7 13H19a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H7"/><path d="M 7 17h.01"/><path d="m11 8 2.3-2.3a2.4 2.4 0 0 1 3.404.004L18.6 7.6a2.4 2.4 0 0 1 .026 3.434L9.9 19.8"/></svg><span data-i18n="toolbar.mode.label">Preview</span></button>
       <div class="app-menu-wrap"><button id="appStyle" class="app-tool" type="button" data-i18n-tooltip="toolbar.style.tooltip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z"/><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/></svg></button><div id="appStyleMenu" class="app-menu" hidden></div></div>
+      <span class="app-toolbar-sep" aria-hidden="true"></span>
       <button id="appFocus" class="app-tool" type="button" data-i18n-tooltip="appview.focus"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.086 18.412A2 2 0 0 1 12.67 19H5v-7.672a2 2 0 0 1 .586-1.414L11.75 3.75a6 6 0 1 1 8.49 8.49z"/><path d="M16 8 2 22"/><path d="M17.488 15H9"/></svg></button>
       <div class="app-menu-wrap"><button id="appFont" class="app-tool" type="button" data-i18n-tooltip="toolbar.fontSize.tooltipEdit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16"/><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2"/><path d="M9 20h6"/></svg></button><div id="appFontMenu" class="app-menu" hidden></div></div>
       <div class="app-menu-wrap"><button id="appMore" class="app-tool" type="button" data-i18n-tooltip="toolbar.more.tooltip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button><div id="appMoreMenu" class="app-menu" hidden></div></div>
@@ -44,8 +46,8 @@
           </div>
         </header>
         <section id="homeRecent" class="home-recent" hidden>
-          <div class="home-section"><b data-i18n="home.recentLabel">Recent</b><button id="homeCwd" type="button" class="home-cwd"></button></div>
-          <div id="homeGrid" class="home-grid"></div>
+          <div class="home-section"><b data-i18n="home.recentLabel">Recent</b></div>
+          <div id="homeGrid" class="home-groups"></div>
         </section>
         <p id="homeHint" class="home-hint" data-i18n="home.hintDefault">Open a Markdown file — recently edited documents will show up here.</p>
       </div>
@@ -88,8 +90,18 @@
   <div id="status" class="status"></div>
   <div id="libraryBackdrop" class="library-backdrop" hidden></div>
   <aside id="libraryDrawer" class="library-drawer" aria-hidden="true">
-    <header><div><strong data-i18n="appview.library">Library</strong><span data-i18n="appview.libraryHint">Recent documents across Spaces</span></div><button id="libraryClose" type="button" aria-label="Close">×</button></header>
+    <header><div><strong data-i18n="appview.library">Library</strong><span data-i18n="appview.libraryHint">Recent documents across Spaces</span></div>
+      <div class="library-header-actions">
+        <button id="libraryReorder" type="button" class="library-icon-btn" aria-label="Reorder" data-i18n-aria="appview.libraryReorder" data-i18n-tooltip="appview.libraryReorder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/></svg>
+        </button>
+        <button id="libraryClose" type="button" aria-label="Close">×</button>
+      </div>
+    </header>
     <div id="libraryGroups" class="library-groups"></div>
+    <div id="libraryReorderFooter" class="library-reorder-footer" hidden>
+      <button id="libraryReorderDone" type="button" data-i18n="appview.libraryReorderDone">Done</button>
+    </div>
   </aside>
 </main>
 <section id="popup" class="popup hidden">

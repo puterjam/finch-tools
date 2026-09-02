@@ -45,13 +45,20 @@ body{margin:0;background:var(--bg);color:var(--text);font:13px var(--finch-font-
 .home-btn svg{width:14px;height:14px;flex:none}
 .home-section{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 0 10px;font-size:12px;color:var(--muted)}
 .home-section b{font-size:12.5px;font-weight:600;color:var(--text);flex:none}
+/* Wrapper for the recent-documents area: a plain flex column of `.home-group`
+   blocks (one per Space/workspace/other, same grouping+order as the Library
+   drawer). Every block gets its own header row + a divider above it. */
+.home-groups{display:flex;flex-direction:column;gap:18px}
+.home-group-title{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:0 0 10px;padding-top:14px;border-top:1px solid var(--border);font-size:11.5px;font-weight:600;color:var(--muted)}
+.home-group-label{display:flex;align-items:baseline;gap:6px;min-width:0;flex:0 1 auto}
+.home-group-count{font-weight:400;opacity:.7;flex:none}
 /* flex:0 1 auto (not flex:1) so the button hugs its own text — the blank
    space next to a short path stays unclickable. Front-truncation (the "…"
    prefix) happens in JS, not via a direction:rtl CSS trick: mixing a plain
    "~" with rtl reordered the whole string visually ("finch-tools/~" instead
    of "~/finch-tools"), so this box now renders left-to-right like normal. */
-.home-section .home-cwd{flex:0 1 auto;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.75;cursor:pointer;background:none;border:0;padding:0;font:inherit;color:inherit}
-.home-section .home-cwd:hover{opacity:1;color:var(--accent);text-decoration:underline}
+.home-group-cwd{flex:0 1 auto;max-width:55%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.75;cursor:pointer;background:none;border:0;padding:0;font:inherit;font-weight:400;color:inherit}
+.home-group-cwd:hover{opacity:1;color:var(--accent);text-decoration:underline}
 .home-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:12px}
 .doc-card{position:relative;display:flex;flex-direction:column;height:138px;padding:0;text-align:left;border:1px solid var(--border);border-radius:11px;background:var(--bg);color:var(--text);font:inherit;cursor:pointer;overflow:hidden;transition:border-color .15s ease,box-shadow .15s ease,transform .1s ease}
 .doc-card:hover{border-color:var(--accent);box-shadow:0 5px 16px rgba(0,0,0,.1)}
@@ -174,7 +181,8 @@ body.app-view .status-inline-btn:hover{background:var(--finch-bg-hover,var(--bg)
 body.app-view .app-toolbar{display:flex!important}
 .app-toolbar-group{display:flex;align-items:center;gap:6px;flex:none}
 .app-toolbar-end{margin-left:auto}
-.app-tool{height:32px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--text);font:12px var(--finch-font-body,system-ui);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;min-width:32px;padding:0 8px;gap:6px;line-height:0}
+.app-toolbar-sep{width:1px;height:20px;margin:0 2px;background:var(--border);flex:none}
+.app-tool{height:32px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--text);font:14px var(--finch-font-body,system-ui);font-weight:500;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;min-width:32px;padding:0 8px;gap:6px;line-height:0}
 /* `display:block` takes every toolbar icon out of inline/baseline layout —
    without it, a bare <svg> button (home/library/open) and an icon wrapped
    in a <span> (save) end up centered by two different rules (flex-item
@@ -182,7 +190,7 @@ body.app-view .app-toolbar{display:flex!important}
    drift a couple of px apart even though both parents are
    align-items:center flex boxes. */
 .app-tool svg{display:block;width:17px;height:17px;stroke-width:1.8}.app-tool:hover:not(:disabled){background:var(--finch-bg-hover,var(--bg))}
-.app-tool:disabled{opacity:.4;cursor:default}.app-tool.checked{color:var(--text);background:var(--finch-bg-active,color-mix(in srgb,var(--text) 10%,transparent))}.app-tool.dirty{color:var(--accent);background:transparent}
+.app-tool:disabled{opacity:.4;cursor:default}.app-tool.checked{color:var(--text);background:var(--finch-bg-active,color-mix(in srgb,var(--text) 10%,transparent))}.app-tool.dirty{background:transparent}
 .app-tool-label{min-width:auto;padding:0 9px}.ic-save,.ic-save-check{display:inline-flex;align-items:center}.ic-save[hidden],.ic-save-check[hidden]{display:none}.app-menu-wrap{position:relative}.app-menu{position:absolute;z-index:32;top:calc(100% + 7px);right:0;min-width:174px;padding:5px;border:1px solid var(--border);border-radius:9px;background:var(--card);box-shadow:0 2px 8px rgba(0,0,0,.12)}
 .app-menu button{display:flex;width:100%;align-items:center;justify-content:space-between;gap:12px;padding:7px 9px;border:0;border-radius:6px;background:transparent;color:var(--text);font:12px var(--finch-font-body,system-ui);text-align:left;cursor:pointer}.app-menu button:hover{background:var(--finch-bg-hover,var(--bg))}.app-menu button.checked{color:var(--text);background:var(--finch-bg-active,color-mix(in srgb,var(--text) 10%,transparent));font-weight:600}.app-menu hr{margin:5px 3px;border:0;border-top:1px solid var(--border)}
 .app-document-meta{min-width:0;display:flex;flex-direction:column;gap:1px}.app-document-meta strong,.app-document-meta span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.app-document-meta strong{font-size:13px}.app-document-meta span{max-width:34vw;color:var(--muted);font-size:11px}
@@ -213,7 +221,28 @@ body.app-view .actions{right:28px;bottom:28px}
 .library-backdrop{position:fixed;z-index:39;inset:0;background:rgba(0,0,0,.24)}
 .library-drawer{position:fixed;z-index:40;top:0;bottom:0;left:0;width:min(390px,88vw);padding:0;background:var(--card);border-right:1px solid var(--border);transform:translateX(-102%);transition:transform .18s ease;display:flex;flex-direction:column}
 .library-drawer.open{transform:translateX(0)}.library-drawer>header{height:58px;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border)}
-.library-drawer>header div{display:flex;flex-direction:column}.library-drawer>header span{font-size:11px;color:var(--muted)}.library-drawer>header button{border:0;background:transparent;color:var(--muted);font-size:24px;cursor:pointer}
+.library-drawer>header div{display:flex;flex-direction:column}.library-drawer>header span{font-size:11px;color:var(--muted)}.library-drawer>header>button{border:0;background:transparent;color:var(--muted);font-size:24px;cursor:pointer}
+/* Specificity note: `.library-drawer>header div` above sets
+   flex-direction:column for every plain <div> in the header (the title
+   block wants that). This selector must out-specificity it, or the two
+   buttons here stack vertically instead of sitting side by side. */
+.library-drawer>header .library-header-actions{display:flex;flex-direction:row;align-items:center;gap:2px}
+.library-icon-btn{border:0;background:transparent;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:7px;padding:0}
+.library-icon-btn svg{width:16px;height:16px}
+.library-icon-btn:hover{background:var(--finch-bg-hover,var(--bg));color:var(--text)}
+.library-icon-btn.active{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent)}
+.library-header-actions #libraryClose{border:0;background:transparent;color:var(--muted);font-size:24px;cursor:pointer;line-height:1;width:28px;height:28px;border-radius:7px}
+.library-header-actions #libraryClose:hover{background:var(--finch-bg-hover,var(--bg));color:var(--text)}
+/* Reorder mode: groups collapse to flat draggable header rows (no expand/
+   collapse, no per-document rows) so ordering is the only thing to do. */
+.library-group-reorder{display:flex;align-items:center;gap:8px;min-height:38px;padding:0 9px;border-radius:9px;cursor:grab;user-select:none;touch-action:none}
+.library-group-reorder:hover{background:var(--finch-bg-hover,var(--bg))}
+.library-group-reorder.dragging{opacity:.32}
+.library-group-reorder[data-draggable]:not([data-draggable="true"]),.library-group-reorder:not([data-draggable]){cursor:default;opacity:.7}
+.library-reorder-handle{flex:none;width:14px;text-align:center;color:var(--muted);font-size:13px;line-height:1;letter-spacing:-1px}
+.library-reorder-footer{flex:none;padding:10px 14px;border-top:1px solid var(--border)}
+.library-reorder-footer button{width:100%;border:0;border-radius:8px;background:var(--accent);color:#fff;font:inherit;font-size:13px;font-weight:600;padding:9px 0;cursor:pointer}
+.library-reorder-footer button:hover{filter:brightness(1.05)}
 /* Directory-like library: every source group is a native collapsible
    details/summary, while rows separate a readable title from the quieter
    path + time metadata instead of cramming all three into one text run. */

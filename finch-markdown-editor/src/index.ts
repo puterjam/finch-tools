@@ -1,6 +1,6 @@
 import type * as finch from 'finch';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -22,6 +22,13 @@ interface RecentDocument {
   /** User-facing Space name; workspace/other labels localize in the panel. */
   scopeLabel?: string;
   scopeKind?: 'space' | 'workspace' | 'external';
+  /**
+   * Root directory this document was categorized under — the Space's bound
+   * directory, the workspace root, or (for `external`) the file's own parent.
+   * The panel shows it on the right of each category header, so it must be
+   * the *group's* directory, never the current Session's cwd.
+   */
+  scopePath?: string;
 }
 
 interface PanelMessage {
@@ -32,6 +39,7 @@ interface PanelMessage {
   title?: string;
   markdownStyle?: string;
   customCss?: string;
+  preferences?: unknown;
   requestId?: number;
   itemId?: string;
   patch?: { label?: string; icon?: string; tooltip?: string; disabled?: boolean; checked?: boolean };
@@ -127,7 +135,18 @@ interface StyleSlot {
   label: string;
 }
 
+interface WritingPreferences {
+  fontSize: 14 | 16 | 18;
+  fontFamily: 'songti' | 'rounded';
+  comfortWriting: boolean;
+  style: string;
+  customCss: string;
+  customStyleLabel: string;
+}
+
 const STYLE_SLOT_COUNT = 3;
+const WRITING_STYLE_IDS = new Set(['kami', 'bauhaus', 'blueprint', 'botanical', 'newsprint', 'retro', 'sketch', 'terminal', 'custom']);
+const MAX_CUSTOM_STYLE_CSS_LENGTH = 200_000;
 
 function result(message: string, isError = false): finch.ToolResult {
   return { content: [{ type: 'text', text: message }], isError };
@@ -209,6 +228,47 @@ function styleSlotsFile(ctx: finch.MiniToolContext): string {
   return path.join(ctx.storagePath, 'style-slots.json');
 }
 
+// Writing controls are global to the mini tool, just like reusable style
+// slots. They intentionally live outside article Markdown: font choices and
+// editing density are reader preferences, not document content.
+function writingPreferencesFile(ctx: finch.MiniToolContext): string {
+  return path.join(ctx.storagePath, 'writing-preferences.json');
+}
+
+function normalizeWritingPreferences(raw: unknown): WritingPreferences {
+  const value = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  const fontSize = value.fontSize === 16 || value.fontSize === 18 ? value.fontSize : 14;
+  const fontFamily = value.fontFamily === 'songti' ? 'songti' : 'rounded';
+  const customCss = typeof value.customCss === 'string' ? value.customCss.slice(0, MAX_CUSTOM_STYLE_CSS_LENGTH) : '';
+  const requestedStyle = typeof value.style === 'string' ? value.style : 'kami';
+  const style = WRITING_STYLE_IDS.has(requestedStyle) && (requestedStyle !== 'custom' || customCss) ? requestedStyle : 'kami';
+  return {
+    fontSize,
+    fontFamily,
+    comfortWriting: value.comfortWriting === true,
+    style,
+    customCss: style === 'custom' ? customCss : '',
+    customStyleLabel: style === 'custom' && typeof value.customStyleLabel === 'string'
+      ? value.customStyleLabel.slice(0, 120) : '',
+  };
+}
+
+async function readWritingPreferences(ctx: finch.MiniToolContext): Promise<WritingPreferences | undefined> {
+  try {
+    const raw = await readFile(writingPreferencesFile(ctx), 'utf8');
+    return normalizeWritingPreferences(JSON.parse(raw));
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeWritingPreferences(ctx: finch.MiniToolContext, raw: unknown): Promise<WritingPreferences> {
+  const preferences = normalizeWritingPreferences(raw);
+  await mkdir(ctx.storagePath, { recursive: true });
+  await writeFile(writingPreferencesFile(ctx), JSON.stringify(preferences), 'utf8');
+  return preferences;
+}
+
 function normalizeStyleSlots(raw: unknown): (StyleSlot | null)[] {
   const arr = Array.isArray(raw) ? raw : [];
   const slots: (StyleSlot | null)[] = [];
@@ -244,6 +304,10 @@ function sessionBucketKey(panel: finch.AppPanel): string {
   return panel.sessionId || '__global__';
 }
 
+/** Tolerant read for display paths: a bad parse degrades to "nothing known"
+ * rather than throwing. Safe precisely because callers only *render* this —
+ * never use it as the base of a write, or a transient read failure would be
+ * persisted as real data loss (see `loadStateForWrite`). */
 async function readLastPathState(ctx: finch.MiniToolContext): Promise<LastPathState> {
   try {
     const raw = await readFile(stateFile(ctx), 'utf8');
@@ -251,6 +315,60 @@ async function readLastPathState(ctx: finch.MiniToolContext): Promise<LastPathSt
   } catch {
     return {};
   }
+}
+
+/** Strict read used as the base of every mutation. The distinction this
+ * draws is the whole point: a genuinely absent file is an empty state, but
+ * an unreadable or unparseable one is an *error* and must abort the write.
+ * Collapsing both into `{}` (as the tolerant reader does) means one bad read
+ * silently rewrites the file with an empty object and destroys everything
+ * that was in it. */
+async function loadStateForWrite(ctx: finch.MiniToolContext): Promise<LastPathState> {
+  let raw: string;
+  try {
+    raw = await readFile(stateFile(ctx), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return {};
+    throw error;
+  }
+  // An existing-but-empty file is not a fresh install; it is the fingerprint
+  // of an interrupted write. Refuse to build on it.
+  if (!raw.trim()) throw new Error('state file is present but empty');
+  const parsed = JSON.parse(raw) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('state file is not an object');
+  return parsed as LastPathState;
+}
+
+// Every persisted-state write funnels through one promise chain. These
+// mutations are all read-modify-write, and they fire concurrently in normal
+// use (leaving a dirty document posts `goHome` twice while the save itself
+// is still writing). Unserialized, the later read observes a half-written
+// file and the later write then persists that damaged view as the truth.
+let stateWriteChain: Promise<void> = Promise.resolve();
+
+/** Serialized, atomic read-modify-write of the persisted state.
+ *
+ * `mutate` may return false to abort without writing. The write goes to a
+ * temp file and is `rename`d into place, so a concurrent reader always sees
+ * either the whole previous file or the whole next one — never a truncated
+ * one, which is what `writeFile`'s truncate-then-write exposed. */
+async function mutateState(
+  ctx: finch.MiniToolContext,
+  mutate: (state: LastPathState) => void | boolean | Promise<void | boolean>,
+): Promise<void> {
+  const run = stateWriteChain.then(async () => {
+    const state = await loadStateForWrite(ctx);
+    if (await mutate(state) === false) return;
+    await mkdir(ctx.storagePath, { recursive: true });
+    const target = stateFile(ctx);
+    const temp = `${target}.${process.pid}.tmp`;
+    await writeFile(temp, JSON.stringify(state), 'utf8');
+    await rename(temp, target);
+  });
+  // Keep the chain alive after a failure so one bad mutation cannot wedge
+  // every later write, but let this call's own caller see the rejection.
+  stateWriteChain = run.catch(() => {});
+  return run;
 }
 
 interface RecentScopeResolution {
@@ -301,16 +419,62 @@ async function resolveDocumentScope(ctx: finch.MiniToolContext, sourcePath: stri
     const spaceName = space.name || space.alias || path.basename(space.directoryPath);
     return { scope: space.directoryPath, spaceId: space.id, spaceName, scopeLabel: spaceName, scopeKind: 'space' };
   }
-  const workspaceRoot = ctx.workspace.projectPath;
-  if (workspaceRoot && pathBelongsTo(workspaceRoot, sourcePath)) {
-    return { scope: workspaceRoot, scopeKind: 'workspace' };
-  }
-  // AppView Home can have no live cwd, so it falls back to homePath. That
-  // fallback is still a real working directory, not an external location.
+  // The one non-Space "workspace" category is the persisted homePath (the
+  // last real cwd of an ordinary no-Space Session). `ctx.workspace.projectPath`
+  // deliberately is NOT consulted: it is shared across the whole mini tool
+  // process and points at whichever Session happens to be live, so using it
+  // made this classification drift between callers — the same file could be
+  // "workspace" for one panel and "external" for another.
   if (fallbackCwd && path.isAbsolute(fallbackCwd) && pathBelongsTo(fallbackCwd, sourcePath)) {
     return { scope: fallbackCwd, scopeKind: 'workspace' };
   }
   return { scope: path.dirname(sourcePath), scopeKind: 'external' };
+}
+
+/**
+ * Describes the ONE category an AppPanel's recent list lives in.
+ *
+ * AppView and AppPanel have deliberately different shapes: AppView is a
+ * cross-scope library (every Space + workspace, many categories), while an
+ * AppPanel only ever shows the single scope of its own Session. So instead
+ * of resolving a category per document (`resolveDocumentScope`), this
+ * resolves the Session's scope once and stamps every document with it.
+ *
+ * The Session's own `spaceId` is authoritative when present — a Space
+ * Session must be labeled with that Space even if its cwd also happens to
+ * sit inside another Space's directory. Only when there is no `spaceId` do
+ * we fall back to matching the directory, so an ordinary chat rooted inside
+ * a Space folder still reads as that Space rather than a bare "workspace".
+ */
+async function describePanelScope(
+  ctx: finch.MiniToolContext,
+  scopeDir: string,
+  sessionSpaceId: string,
+): Promise<{ spaceId?: string; spaceName?: string; scopeLabel?: string; scopeKind: 'space' | 'workspace'; scopePath: string }> {
+  const spaces = await ctx.spaces.list().catch(() => []);
+  const named = (space: { name?: string; alias?: string; directoryPath?: string; id: string }) =>
+    space.name || space.alias || (space.directoryPath ? path.basename(space.directoryPath) : space.id);
+
+  if (sessionSpaceId) {
+    const space = spaces.find((entry) => entry.id === sessionSpaceId);
+    if (space) {
+      const label = named(space);
+      // A standalone (directory-less) Space still categorizes correctly; it
+      // just has no directory to show, so fall back to the resolved scope.
+      return { spaceId: space.id, spaceName: label, scopeLabel: label, scopeKind: 'space', scopePath: space.directoryPath || scopeDir };
+    }
+  }
+
+  const match = spaces
+    .filter((space) => path.isAbsolute(space.directoryPath ?? '') && pathBelongsTo(space.directoryPath!, scopeDir))
+    .sort((a, b) => (b.directoryPath?.length ?? 0) - (a.directoryPath?.length ?? 0))[0];
+  if (match?.directoryPath) {
+    const label = named(match);
+    return { spaceId: match.id, spaceName: label, scopeLabel: label, scopeKind: 'space', scopePath: match.directoryPath };
+  }
+
+  // No Space anywhere: an ordinary chat Session. Its cwd is the workspace.
+  return { scopeKind: 'workspace', scopePath: scopeDir };
 }
 
 /** Records the panel's actual finch:env scope and migrates its current file
@@ -318,15 +482,15 @@ async function resolveDocumentScope(ctx: finch.MiniToolContext, sourcePath: stri
  * panel received its first env push. */
 async function rememberPanelRecentScope(ctx: finch.MiniToolContext, panel: finch.AppPanel, cwd: string, sessionId: string, spaceId: string): Promise<RecentScopeResolution> {
   try {
-    await mkdir(ctx.storagePath, { recursive: true });
-    const state = await readLastPathState(ctx);
-    const resolved = resolveRecentScope(state, cwd, sessionId, spaceId);
-    if (resolved.scope) {
-      state.panelRecentScopes = { ...state.panelRecentScopes, [panel.id]: resolved.scope };
-      const panelPath = state.panels?.[panel.id];
-      if (panelPath) addRecentPath(state, resolved.scope, panelPath);
-    }
-    await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+    let resolved: RecentScopeResolution = {};
+    await mutateState(ctx, (state) => {
+      resolved = resolveRecentScope(state, cwd, sessionId, spaceId);
+      if (resolved.scope) {
+        state.panelRecentScopes = { ...state.panelRecentScopes, [panel.id]: resolved.scope };
+        const panelPath = state.panels?.[panel.id];
+        if (panelPath) addRecentPath(state, resolved.scope, panelPath);
+      }
+    });
     return resolved;
   } catch (error) {
     ctx.logger.warn(`Could not persist panel recent scope: ${String(error)}`);
@@ -336,20 +500,19 @@ async function rememberPanelRecentScope(ctx: finch.MiniToolContext, panel: finch
 
 async function rememberLastPath(ctx: finch.MiniToolContext, panel: finch.AppPanel, sourcePath: string): Promise<void> {
   try {
-    await mkdir(ctx.storagePath, { recursive: true });
-    const state = await readLastPathState(ctx);
-    state.panels = { ...state.panels, [panel.id]: sourcePath };
-    // Keep the previous shape warm for downgrade compatibility, but always
-    // prefer the Panel id on reads so Home scopes in different Spaces cannot
-    // overwrite one shared '__global__' bucket.
-    state.sessions = { ...state.sessions, [sessionBucketKey(panel)]: sourcePath };
-    let scope = state.panelRecentScopes?.[panel.id];
-    if (!scope && panel.view === 'appView') {
-      scope = (await resolveDocumentScope(ctx, sourcePath)).scope;
-      state.panelRecentScopes = { ...state.panelRecentScopes, [panel.id]: scope };
-    }
-    if (scope) addRecentPath(state, scope, sourcePath);
-    await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+    await mutateState(ctx, async (state) => {
+      state.panels = { ...state.panels, [panel.id]: sourcePath };
+      // Keep the previous shape warm for downgrade compatibility, but always
+      // prefer the Panel id on reads so Home scopes in different Spaces cannot
+      // overwrite one shared '__global__' bucket.
+      state.sessions = { ...state.sessions, [sessionBucketKey(panel)]: sourcePath };
+      let scope = state.panelRecentScopes?.[panel.id];
+      if (!scope && panel.view === 'appView') {
+        scope = (await resolveDocumentScope(ctx, sourcePath)).scope;
+        state.panelRecentScopes = { ...state.panelRecentScopes, [panel.id]: scope };
+      }
+      if (scope) addRecentPath(state, scope, sourcePath);
+    });
   } catch (error) {
     ctx.logger.warn(`Could not persist last-opened path: ${String(error)}`);
   }
@@ -360,15 +523,41 @@ async function rememberLastPath(ctx: finch.MiniToolContext, panel: finch.AppPane
  * write waits for a real ordinary Session to establish homePath first. */
 async function rememberRecentPath(ctx: finch.MiniToolContext, sourcePath: string, panel?: finch.AppPanel): Promise<void> {
   try {
-    await mkdir(ctx.storagePath, { recursive: true });
-    const state = await readLastPathState(ctx);
-    const scope = panel
-      ? state.panelRecentScopes?.[panel.id]
-      : resolveRecentScope(state, ctx.session.cwd ?? '', ctx.session.id ?? '', ctx.session.spaceId ?? '').scope;
-    if (scope) addRecentPath(state, scope, sourcePath);
-    await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+    await mutateState(ctx, (state) => {
+      const scope = panel
+        ? state.panelRecentScopes?.[panel.id]
+        : resolveRecentScope(state, ctx.session.cwd ?? '', ctx.session.id ?? '', ctx.session.spaceId ?? '').scope;
+      if (scope) addRecentPath(state, scope, sourcePath);
+    });
   } catch (error) {
     ctx.logger.warn(`Could not persist recent path: ${String(error)}`);
+  }
+}
+
+/** Records that the user deliberately went back to Home, so a later reopen
+ * lands on Home instead of silently reviving the document they just left.
+ *
+ * The pointer is blanked rather than deleted, and that distinction matters:
+ * a *missing* entry means "nothing known yet", which lets `restoreDocument`
+ * fall through to the retained opening payload and reopen the very file we
+ * were asked to forget. An empty string is a positive "at Home" record that
+ * survives a restart and outranks that fallback.
+ *
+ * Only the last-opened pointer is cleared — `recentPathsByScope` is left
+ * untouched, since leaving a document is not the same as un-editing it and
+ * it must stay in the recent list. */
+async function forgetLastPath(ctx: finch.MiniToolContext, panel: finch.AppPanel): Promise<void> {
+  try {
+    await mutateState(ctx, (state) => {
+      const key = sessionBucketKey(panel);
+      state.panels = { ...state.panels, [panel.id]: '' };
+      // Panel ids are not guaranteed stable across a close/reopen, so the
+      // session-bucket copy has to be blanked too or it would restore instead.
+      state.sessions = { ...state.sessions, [key]: '' };
+      if (key === '__global__' && typeof state.lastPath === 'string') state.lastPath = '';
+    });
+  } catch (error) {
+    ctx.logger.warn(`Could not clear last-opened path: ${String(error)}`);
   }
 }
 
@@ -443,47 +632,52 @@ async function collectRecentDocuments(ctx: finch.MiniToolContext, requestedCwd: 
   const resolved = resolveRecentScope(state, cwd, sessionId, spaceId);
   if (!resolved.scope) return { documents: [] };
   const scope = resolved.scope;
-  const candidates = (state.recentPathsByScope?.[scope] ?? [])
-    .filter((value, index, values) =>
-      typeof value === 'string' &&
-      path.isAbsolute(value) &&
-      isMarkdownPath(value) &&
-      values.indexOf(value) === index,
-    );
+  const descriptor = await describePanelScope(ctx, scope, spaceId);
+  // The Space's own bound directory wins over the raw cwd as the grouping
+  // root, so a Session started in a subdirectory still lists (and shows
+  // relative paths against) the whole Space.
+  const scopeRoot = descriptor.scopePath && path.isAbsolute(descriptor.scopePath) ? descriptor.scopePath : scope;
 
-  const documents = await Promise.all(
-    candidates.map(async (filePath): Promise<RecentDocument | undefined> => {
-      try {
-        const info = await stat(filePath);
-        if (!info.isFile()) return undefined;
-        const markdown = await readFile(filePath, 'utf8');
-        const fileName = path.basename(filePath);
-        return {
-          path: filePath,
-          relativePath: path.relative(scope, filePath),
-          fileName,
-          title: deriveTitle(markdown, fileName.replace(/\.[^.]+$/, '')),
-          preview: derivePreview(markdown),
-          modifiedAt: info.mtimeMs,
-        };
-      } catch {
-        // Deleted, renamed or unreadable — silently drop from the list.
-        return undefined;
-      }
-    }),
-  );
+  // Membership is decided by where a file actually LIVES, never by which
+  // bucket recorded it. `recentPathsByScope` is a provenance log — opening
+  // an Obsidian note from a Home Session files it under the Home cwd key
+  // even though it lives elsewhere — so treating a bucket as a membership
+  // list made this panel disagree with the AppView library about the very
+  // same category (the 15-vs-6 split on the non-Space home workspace).
+  const classified = await classifyTrackedDocuments(ctx, state);
+  const documents = classified
+    .filter((doc) => (descriptor.spaceId
+      // A Space Session lists exactly its own Space's documents.
+      ? doc.spaceId === descriptor.spaceId
+      // A non-Space Session lists what sits under its root, minus anything
+      // a Space has already claimed (those belong to that Space's category).
+      : !doc.spaceId && pathBelongsTo(scopeRoot, doc.path)))
+    // Re-stamp with the Session's single category so the panel renders one
+    // group with the right label/path, whatever the library classified them
+    // as on its own (e.g. `external` for a workspace outside homePath).
+    .map((doc) => ({
+      ...doc,
+      relativePath: path.relative(scopeRoot, doc.path),
+      spaceId: descriptor.spaceId,
+      spaceName: descriptor.spaceName,
+      scopeLabel: descriptor.scopeLabel,
+      scopeKind: descriptor.scopeKind,
+      scopePath: descriptor.scopePath,
+    }));
 
   return {
-    documents: documents
-      .filter((entry): entry is RecentDocument => Boolean(entry))
-      .sort((a, b) => b.modifiedAt - a.modifiedAt)
-      .slice(0, RECENT_LIMIT),
+    documents: documents.slice(0, RECENT_LIMIT),
     fallbackCwd: resolved.fallbackCwd,
   };
 }
 
-async function collectLibraryDocuments(ctx: finch.MiniToolContext): Promise<RecentDocument[]> {
-  const state = await readLastPathState(ctx);
+/**
+ * The single source of truth for "which documents exist and what category
+ * does each belong to". Both views derive from this so their categories can
+ * never disagree: the AppView library shows all of it, an AppPanel filters
+ * it down to its own Session's scope.
+ */
+async function classifyTrackedDocuments(ctx: finch.MiniToolContext, state: LastPathState): Promise<RecentDocument[]> {
   const candidates = Object.values(state.recentPathsByScope ?? {}).flat()
     .concat(Object.values(state.panels ?? {}))
     .filter((value, index, values) => path.isAbsolute(value) && isMarkdownPath(value) && values.indexOf(value) === index);
@@ -503,14 +697,33 @@ async function collectLibraryDocuments(ctx: finch.MiniToolContext): Promise<Rece
         spaceName: scope.spaceName,
         scopeLabel: scope.scopeLabel,
         scopeKind: scope.scopeKind,
+        scopePath: scope.scope,
       };
     } catch {
       return undefined;
     }
   }));
+  // Intentionally unsliced: this is the shared pool, and each consumer caps
+  // it in its own terms (per category) so one view can never show a
+  // truncated version of a category the other shows in full.
   return documents.filter((entry): entry is RecentDocument => Boolean(entry))
-    .sort((a, b) => b.modifiedAt - a.modifiedAt)
-    .slice(0, RECENT_LIMIT);
+    .sort((a, b) => b.modifiedAt - a.modifiedAt);
+}
+
+async function collectLibraryDocuments(ctx: finch.MiniToolContext): Promise<RecentDocument[]> {
+  const state = await readLastPathState(ctx);
+  const classified = await classifyTrackedDocuments(ctx, state);
+  // RECENT_LIMIT is a per-category cap, matching what an AppPanel applies to
+  // its single category. A global cap here would silently truncate one
+  // Space's group purely because other Spaces have newer files.
+  const perCategory = new Map<string, number>();
+  return classified.filter((doc) => {
+    const key = doc.spaceId ? `space:${doc.spaceId}` : `${doc.scopeKind}:${doc.scopePath ?? ''}`;
+    const used = perCategory.get(key) ?? 0;
+    if (used >= RECENT_LIMIT) return false;
+    perCategory.set(key, used + 1);
+    return true;
+  });
 }
 
 // The document currently being delivered to each live Panel. This is
@@ -679,11 +892,14 @@ async function getAssistantName(ctx: finch.MiniToolContext): Promise<string> {
 
 async function sendReady(ctx: finch.MiniToolContext, panel: finch.AppPanel): Promise<void> {
   const pickFileSupported = ctx.api.supports('ui.pickFile');
-  const styleSlots = await readStyleSlots(ctx);
-  const assistantName = await getAssistantName(ctx);
+  const [styleSlots, writingPreferences, assistantName] = await Promise.all([
+    readStyleSlots(ctx),
+    readWritingPreferences(ctx),
+    getAssistantName(ctx),
+  ]);
   ctx.logger.info(`sending ready to panel; pickFileSupported = ${pickFileSupported}`);
   await panel.postMessage({
-    type: 'ready', locale: ctx.i18n.locale, pickFileSupported, styleSlots, assistantName,
+    type: 'ready', locale: ctx.i18n.locale, pickFileSupported, styleSlots, writingPreferences, assistantName,
     // So the page can render `cwd` the OS-friendly way (`~/…`) without a
     // round trip — it never needs the raw value for anything but display.
     homeDir: os.homedir(),
@@ -725,42 +941,42 @@ async function readRewriteSession(ctx: finch.MiniToolContext, sourcePath: string
 
 async function rememberRewriteSession(ctx: finch.MiniToolContext, sourcePath: string, sessionId: string): Promise<void> {
   try {
-    const state = await readLastPathState(ctx);
-    state.rewriteSessions = { ...state.rewriteSessions, [sourcePath]: sessionId };
-    await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+    await mutateState(ctx, (state) => {
+      state.rewriteSessions = { ...state.rewriteSessions, [sourcePath]: sessionId };
+    });
   } catch (error) {
     ctx.logger.warn(`Could not persist rewrite session: ${String(error)}`);
   }
 }
 
 async function rememberStyleOperation(ctx: finch.MiniToolContext, sourcePath: string, operation: StyleOperation): Promise<void> {
-  const state = await readLastPathState(ctx);
-  state.styleOperations = { ...state.styleOperations, [sourcePath]: operation };
-  await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+  await mutateState(ctx, (state) => {
+    state.styleOperations = { ...state.styleOperations, [sourcePath]: operation };
+  });
 }
 
 async function clearStyleOperation(ctx: finch.MiniToolContext, sourcePath: string, turnId: string): Promise<void> {
-  const state = await readLastPathState(ctx);
-  if (state.styleOperations?.[sourcePath]?.turnId !== turnId) return;
-  const operations = { ...state.styleOperations };
-  delete operations[sourcePath];
-  state.styleOperations = operations;
-  await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+  await mutateState(ctx, (state) => {
+    if (state.styleOperations?.[sourcePath]?.turnId !== turnId) return false;
+    const operations = { ...state.styleOperations };
+    delete operations[sourcePath];
+    state.styleOperations = operations;
+  });
 }
 
 async function rememberPendingStyle(ctx: finch.MiniToolContext, sourcePath: string, pending: PendingStyle): Promise<void> {
-  const state = await readLastPathState(ctx);
-  state.pendingStyles = { ...state.pendingStyles, [sourcePath]: pending };
-  await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+  await mutateState(ctx, (state) => {
+    state.pendingStyles = { ...state.pendingStyles, [sourcePath]: pending };
+  });
 }
 
 async function clearPendingStyle(ctx: finch.MiniToolContext, sourcePath: string): Promise<void> {
-  const state = await readLastPathState(ctx);
-  if (!state.pendingStyles?.[sourcePath]) return;
-  const pending = { ...state.pendingStyles };
-  delete pending[sourcePath];
-  state.pendingStyles = pending;
-  await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+  await mutateState(ctx, (state) => {
+    if (!state.pendingStyles?.[sourcePath]) return false;
+    const pending = { ...state.pendingStyles };
+    delete pending[sourcePath];
+    state.pendingStyles = pending;
+  });
 }
 
 function findPanelsForPath(sourcePath: string): finch.AppPanel[] {
@@ -768,18 +984,18 @@ function findPanelsForPath(sourcePath: string): finch.AppPanel[] {
 }
 
 async function rememberRewriteOperation(ctx: finch.MiniToolContext, sourcePath: string, operation: RewriteOperation): Promise<void> {
-  const state = await readLastPathState(ctx);
-  state.rewriteOperations = { ...state.rewriteOperations, [sourcePath]: operation };
-  await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+  await mutateState(ctx, (state) => {
+    state.rewriteOperations = { ...state.rewriteOperations, [sourcePath]: operation };
+  });
 }
 
 async function clearRewriteOperation(ctx: finch.MiniToolContext, sourcePath: string, turnId: string): Promise<void> {
-  const state = await readLastPathState(ctx);
-  if (state.rewriteOperations?.[sourcePath]?.turnId !== turnId) return;
-  const operations = { ...state.rewriteOperations };
-  delete operations[sourcePath];
-  state.rewriteOperations = operations;
-  await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+  await mutateState(ctx, (state) => {
+    if (state.rewriteOperations?.[sourcePath]?.turnId !== turnId) return false;
+    const operations = { ...state.rewriteOperations };
+    delete operations[sourcePath];
+    state.rewriteOperations = operations;
+  });
 }
 
 async function notifyRewritePanels(sourcePath: string, message: Record<string, unknown>): Promise<void> {
@@ -865,9 +1081,9 @@ async function readStyleSession(ctx: finch.MiniToolContext, sourcePath: string):
 
 async function rememberStyleSession(ctx: finch.MiniToolContext, sourcePath: string, sessionId: string): Promise<void> {
   try {
-    const state = await readLastPathState(ctx);
-    state.styleSessions = { ...state.styleSessions, [sourcePath]: sessionId };
-    await writeFile(stateFile(ctx), JSON.stringify(state), 'utf8');
+    await mutateState(ctx, (state) => {
+      state.styleSessions = { ...state.styleSessions, [sourcePath]: sessionId };
+    });
   } catch (error) {
     ctx.logger.warn(`Could not persist style session: ${String(error)}`);
   }
@@ -1099,6 +1315,10 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
       // document back onto the screen from under them.
       stopWatching(panel.id);
       livePanelDocuments.delete(panel.id);
+      // Going Home is a durable choice, not just a view switch: forget the
+      // last-opened pointer so closing the page here and coming back later
+      // still shows Home rather than reopening the abandoned document.
+      await forgetLastPath(ctx, panel);
       return;
     }
     case 'requestRecentDocuments': {
@@ -1142,6 +1362,14 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
         await panel.postMessage({ type: 'savedMarkdown', path: sourcePath, requestId: message.requestId });
       } catch (error) {
         await panel.postMessage({ type: 'error', message: `Could not save Markdown: ${error instanceof Error ? error.message : String(error)}` });
+      }
+      return;
+    }
+    case 'saveWritingPreferences': {
+      try {
+        await writeWritingPreferences(ctx, message.preferences);
+      } catch (error) {
+        ctx.logger.warn(`Could not save writing preferences: ${String(error)}`);
       }
       return;
     }
