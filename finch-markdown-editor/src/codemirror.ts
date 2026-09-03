@@ -1947,6 +1947,48 @@ function collectTableRanges(view: EditorView): { from: number; to: number }[] {
   return ranges;
 }
 
+// TEMPORARY DIAGNOSTIC — traces what actually happens to the table widget
+// element during a drag, since the blank table throws no error and static
+// reading of the package has not pinned down the trigger. Remove once the
+// root cause is fixed.
+function installTableWidgetTracer(view: EditorView): () => void {
+  const log = (msg: string) => (window as any).__mdLog?.(`[tbl] ${msg}`);
+  const describe = () => {
+    const sel = view.state.selection.main;
+    const text = view.state.doc.sliceString(sel.from, sel.to);
+    const widgets = Array.from(view.dom.querySelectorAll<HTMLElement>('.tbl-table-widget'));
+    const shape = widgets.map((w) => (w.querySelector('.tbl-table-wrapper') ? 'filled' : 'EMPTY')).join(',');
+    return `sel=${sel.from}-${sel.to} selText=${JSON.stringify(text.slice(0, 20))} widgets=[${shape}]`;
+  };
+  const content = view.dom.querySelector('.cm-content');
+  if (!content) return () => {};
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      const removed = Array.from(record.removedNodes).filter(
+        (n): n is HTMLElement => n instanceof HTMLElement && n.classList.contains('tbl-table-widget'),
+      );
+      const added = Array.from(record.addedNodes).filter(
+        (n): n is HTMLElement => n instanceof HTMLElement && n.classList.contains('tbl-table-widget'),
+      );
+      if (removed.length) log(`widget REMOVED from DOM — ${describe()}`);
+      if (added.length) {
+        const filled = added.every((n) => n.querySelector('.tbl-table-wrapper'));
+        log(`widget ADDED to DOM (${filled ? 'filled' : 'EMPTY'}) — ${describe()}`);
+      }
+      // The widget div surviving but being emptied out is the failure mode
+      // the reproduction describes, and it shows up as a mutation on the
+      // widget element itself rather than on `.cm-content`.
+      const target = record.target as HTMLElement;
+      if (target instanceof HTMLElement && target.classList?.contains('tbl-table-widget') && record.removedNodes.length) {
+        log(`widget EMPTIED in place — ${describe()}`);
+      }
+    }
+  });
+  observer.observe(content, { childList: true, subtree: true });
+  log(`tracer installed — ${describe()}`);
+  return () => observer.disconnect();
+}
+
 let lastTableHealAt = 0;
 
 function healBlankTableWidgets(view: EditorView): void {
@@ -3057,6 +3099,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
   });
   const disposeTableMenuI18n = installTableMenuI18n();
   const disposeStaticTableCellPreview = installStaticTableCellPreview(options.parent);
+  const disposeTableWidgetTracer = installTableWidgetTracer(view);
 
   return {
     getValue: () => view.state.doc.toString(),
@@ -3210,6 +3253,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       if (externalHighlightTimer) { clearTimeout(externalHighlightTimer); externalHighlightTimer = 0; }
       window.removeEventListener('mouseup', onWindowMouseUp);
       disposeStaticTableCellPreview();
+      disposeTableWidgetTracer();
       disposeTableMenuI18n();
       view.destroy();
     },
