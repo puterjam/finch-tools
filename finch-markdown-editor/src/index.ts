@@ -1,6 +1,6 @@
 import type * as finch from 'finch';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -1154,7 +1154,13 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
     case 'clientLog': {
       // Temporary diagnostic bridge: surfaces panel.html-side events (e.g. a
       // toolbar click actually reaching the panel) in the mini tool console.
-      ctx.logger.info(`[panel] ${String(message.message ?? '')}`);
+      const text = `[panel] ${String(message.message ?? '')}`;
+      ctx.logger.info(text);
+      // Also persist so users can retrieve the log even after a webview
+      // crash/reload wipes the devtools console.
+      try {
+        await appendFile(path.join(ctx.storagePath, 'panel-errors.log'), `${new Date().toISOString()} ${text}\n`);
+      } catch (_) {}
       return;
     }
     case 'panelReady': {

@@ -4,6 +4,26 @@
   'use strict';
   var api = window.finch;
 
+  // Capture uncaught errors from any part of the panel so the host can log
+  // them. Block-widget crashes (e.g. the table component) often leave the UI
+  // blank but do not print to the user-visible Finch chat, making them hard
+  // to diagnose without this bridge.
+  function logPanelError(kind, info) {
+    var msg = '[panel error] ' + kind + ': ' + String(info).slice(0, 4000);
+    try { console.error(msg, info); } catch (_) {}
+    if (api && api.postMessage) {
+      try { api.postMessage({ type: 'clientLog', message: msg }); } catch (_) {}
+    }
+  }
+  window.onerror = function (message, source, lineno, colno, error) {
+    logPanelError('window.onerror', String(message) + ' at ' + source + ':' + lineno + ':' + colno + (error && error.stack ? '\n' + String(error.stack) : ''));
+  };
+  window.addEventListener('unhandledrejection', function (event) {
+    var reason = event.reason;
+    var detail = reason && (reason.stack || reason.message || String(reason)) || 'unknown';
+    logPanelError('unhandledrejection', detail);
+  });
+
   // ---- i18n ----------------------------------------------------------
   // This page is a standalone static document (loaded into a host webview,
   // not a bundled app with its own build-time locale), so translation

@@ -220,7 +220,6 @@ const finchTheme = EditorView.theme({
   '.tbl-cell-view': {
     fontSize: '0.9rem',
     fontFamily: 'var(--md-editor-font-family, var(--finch-font-mono))',
-    minHeight: '82px',
   },
   // Tint the active cell / row / column boundary against dark skins. The
   // outline itself keeps the package's default 2px width — its ::after
@@ -2423,6 +2422,8 @@ function renderStaticTableCellMarkdown(source: string): string {
   return html.replace(/\u0000(\d+)\u0000/g, (_match, index) => tokens[Number(index)]!);
 }
 
+let tablePreviewMouseSelecting = false;
+
 function installStaticTableCellPreview(root: HTMLElement): () => void {
   const render = () => root.querySelectorAll<HTMLElement>('.tbl-cell-view').forEach((cell) => {
     const cellRoot = cell.closest<HTMLElement>('.tbl-cell');
@@ -2447,18 +2448,31 @@ function installStaticTableCellPreview(root: HTMLElement): () => void {
   // several microtasks. Render on the next animation frame, after that DOM
   // transition settles, instead of racing its intermediate static markup.
   let frame = 0;
+  let pending = false;
   const scheduleRender = () => {
     if (frame) return;
+    if (tablePreviewMouseSelecting) {
+      pending = true;
+      return;
+    }
     frame = window.requestAnimationFrame(() => {
       frame = 0;
+      pending = false;
       render();
     });
+  };
+  const flushPending = () => {
+    if (!pending) return;
+    pending = false;
+    scheduleRender();
   };
   render();
   const observer = new MutationObserver(scheduleRender);
   observer.observe(root, { childList: true, subtree: true, characterData: true });
+  window.addEventListener('mouseup', flushPending, { passive: true });
   return () => {
     observer.disconnect();
+    window.removeEventListener('mouseup', flushPending);
     if (frame) window.cancelAnimationFrame(frame);
   };
 }
@@ -2858,6 +2872,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
   function onWindowMouseUp() {
     if (!mouseSelecting) return;
     mouseSelecting = false;
+    tablePreviewMouseSelecting = false;
     // The selection just settled — center once now.
     scheduleCenterActiveLine();
   }
@@ -2960,6 +2975,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
         },
         mousedown: (event) => {
           mouseSelecting = true;
+          tablePreviewMouseSelecting = true;
           return handleMarkdownImageMouseDown(event) || handleMarkdownLinkMouseDown(event);
         },
         click: (event, dispatchView) => handleMarkdownImageClick(dispatchView, event, options.onOpenImage) || handleMarkdownLinkClick(event, options.onOpenLink),
