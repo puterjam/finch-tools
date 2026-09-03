@@ -1916,6 +1916,60 @@ function collectTableLines(view: EditorView): Set<number> {
   return lines;
 }
 
+// `codemirror-markdown-tables` renders each table as a block replacing
+// decoration whose widget owns a Svelte component. That widget's `destroy()`
+// unmounts the component and clears its cached element, and the package's own
+// comment concedes it "may be called again to redestroy after the widget has
+// been recreated". When that stale destroy lands after a recreate, the
+// `.tbl-table-widget` element stays in the document with nothing inside it,
+// while the block decoration keeps replacing the table's source text — so the
+// table reads as completely blank rather than falling back to raw Markdown.
+// Dragging a selection out of the line above a table reliably hits that order.
+//
+// The package's decoration StateField reuses its existing decorations for
+// every selection-only transaction, and the `table.focus` annotation that
+// would force a rebuild is internal. The one rebuild path reachable from
+// outside is a document change that touches a table's range, so rewrite each
+// table range with the text it already contains: the document's content is
+// unchanged (nothing becomes dirty, the draft write is a no-op) and the
+// transaction stays out of the undo history.
+function collectTableRanges(view: EditorView): { from: number; to: number }[] {
+  const ranges: { from: number; to: number }[] = [];
+  syntaxTree(view.state).iterate({
+    enter: (node) => {
+      if (node.name === 'Table') {
+        ranges.push({ from: node.from, to: node.to });
+        return false;
+      }
+      return undefined;
+    },
+  });
+  return ranges;
+}
+
+let lastTableHealAt = 0;
+
+function healBlankTableWidgets(view: EditorView): void {
+  // The wrapper is what the widget's Svelte component renders, so a widget
+  // without one has been emptied out rather than merely scrolled away.
+  const widgets = Array.from(view.dom.querySelectorAll<HTMLElement>('.tbl-table-widget'));
+  const blank = widgets.some((widget) => !widget.querySelector('.tbl-table-wrapper'));
+  if (!blank) return;
+  // A failed heal must not turn into a dispatch loop on every later update.
+  const now = Date.now();
+  if (now - lastTableHealAt < 1000) return;
+  lastTableHealAt = now;
+
+  const ranges = collectTableRanges(view);
+  if (!ranges.length) return;
+  view.dispatch({
+    changes: ranges.map(({ from, to }) => ({ from, to, insert: view.state.doc.sliceString(from, to) })),
+    selection: view.state.selection,
+    scrollIntoView: false,
+    annotations: [Transaction.addToHistory.of(false)],
+  });
+}
+
 function computeMarkdownLivePreview(view: EditorView, previewLinks = true): DecorationSet {
   const ranges: any[] = [];
   const doc = view.state.doc;
@@ -2875,6 +2929,10 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     tablePreviewMouseSelecting = false;
     // The selection just settled — center once now.
     scheduleCenterActiveLine();
+    // A drag that crosses a table boundary is what empties the table widget,
+    // so check for that damage once the drag is actually over (healing mid-
+    // drag would dispatch a document change under the pointer).
+    requestAnimationFrame(() => healBlankTableWidgets(view));
   }
   window.addEventListener('mouseup', onWindowMouseUp);
 
@@ -2987,6 +3045,13 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
         // Focus mode: keep the caret's line centered as the user types or
         // moves the cursor (native smooth scrollIntoView, see above).
         if ((update.selectionSet || update.docChanged) && focusModeEnabled) scheduleCenterActiveLine();
+        // Safety net for the blank-table-widget bug (see healBlankTableWidgets).
+        // The drag case is handled on mouseup; this catches keyboard-driven
+        // selections and viewport churn. Never runs mid-drag, and the heal
+        // itself is rate limited, so a persistent blank can't spin the editor.
+        if (update.selectionSet && !mouseSelecting) {
+          requestAnimationFrame(() => healBlankTableWidgets(view));
+        }
       }),
     ],
   });
