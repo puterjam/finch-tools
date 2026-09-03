@@ -1768,6 +1768,13 @@ const aiHintPlugin = ViewPlugin.fromClass(class {
 }, { decorations: (plugin) => plugin.decorations });
 
 class BulletWidget extends WidgetType {
+  // Every bullet renders the same static glyph, but WidgetType's default
+  // `eq()` reports "never equal". Since the live-preview pass rebuilds its
+  // whole decoration set on every selection change, that default made
+  // CodeMirror destroy and recreate the widget on every cursor move — and
+  // rebuilding a widget forces its line's DOM to be rebuilt and re-measured.
+  eq(): boolean { return true; }
+
   toDOM(): HTMLElement {
     const span = document.createElement('span');
     span.className = 'cm-md-bullet';
@@ -2012,6 +2019,35 @@ function installTableWidgetKeeper(view: EditorView): () => void {
     observer.disconnect();
     if (frame) window.cancelAnimationFrame(frame);
   };
+}
+
+// TEMPORARY DIAGNOSTIC — the line-number gutter is misaligned for image and
+// table lines when a document is opened directly in the webview, but correct
+// when the same file is opened from Home. The gutter positions every row from
+// CodeMirror's height map, so this reports where that map disagrees with the
+// real laid-out DOM, and how that gap evolves as images decode.
+function installGutterHeightDiagnostic(view: EditorView): () => void {
+  const log = (msg: string) => (window as any).__mdLog?.(`[gutter] ${msg}`);
+  const snapshot = (label: string) => {
+    const rows: string[] = [];
+    for (const el of Array.from(view.dom.querySelectorAll<HTMLElement>('.cm-content > .cm-line'))) {
+      let pos: number;
+      try { pos = view.posAtDOM(el); } catch { continue; }
+      const line = view.state.doc.lineAt(pos);
+      const block = view.lineBlockAt(pos);
+      const domHeight = Math.round(el.getBoundingClientRect().height);
+      const mapHeight = Math.round(block.height);
+      // Only the rows that actually drive the complaint: a mismatch, or a
+      // line carrying a heavy widget.
+      const heavy = el.querySelector('.cm-md-image-wrapper, .tbl-table-widget');
+      if (Math.abs(domHeight - mapHeight) < 2 && !heavy) continue;
+      rows.push(`L${line.number}${heavy ? '*' : ''} dom=${domHeight} map=${mapHeight}`);
+    }
+    const widgets = view.dom.querySelectorAll('.tbl-table-widget').length;
+    log(`${label} contentH=${Math.round(view.contentDOM.getBoundingClientRect().height)} tables=${widgets} :: ${rows.join(' | ') || 'all aligned'}`);
+  };
+  const timers = [0, 400, 1500, 3000].map((delay) => window.setTimeout(() => snapshot(`t+${delay}ms`), delay));
+  return () => timers.forEach((id) => window.clearTimeout(id));
 }
 
 let lastTableHealAt = 0;
@@ -3130,6 +3166,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
   const disposeTableMenuI18n = installTableMenuI18n();
   const disposeStaticTableCellPreview = installStaticTableCellPreview(options.parent);
   const disposeTableWidgetKeeper = installTableWidgetKeeper(view);
+  const disposeGutterHeightDiagnostic = installGutterHeightDiagnostic(view);
 
   return {
     getValue: () => view.state.doc.toString(),
@@ -3284,6 +3321,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       window.removeEventListener('mouseup', onWindowMouseUp);
       disposeStaticTableCellPreview();
       disposeTableWidgetKeeper();
+      disposeGutterHeightDiagnostic();
       disposeTableMenuI18n();
       view.destroy();
     },
