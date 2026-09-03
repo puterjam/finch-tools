@@ -278,6 +278,15 @@ const finchTheme = EditorView.theme({
     position: 'relative',
     top: '-0.1em',
   },
+  // `==text==` highlight: a translucent yellow reads on both light and dark
+  // cards and mirrors what the bmmd renderer paints for `<mark>`.
+  '.cm-md-mark': {
+    backgroundColor: 'color-mix(in srgb, #ffd60a 40%, transparent)',
+    borderRadius: '3px',
+    padding: '0 0.12em',
+    boxDecorationBreak: 'clone',
+    WebkitBoxDecorationBreak: 'clone',
+  },
   // Keep images inside their native `.cm-line`, just like Obsidian's
   // image-wrapper. The wrapper participates in normal inline layout, so text
   // may sit on either side while the line number and active-line background
@@ -949,6 +958,15 @@ const blockSpacingPlugin = ViewPlugin.fromClass(
 // rendering rule. A cursor/selection touching a line always reveals that
 // line's literal Markdown for predictable editing.
 const INLINE_CODE_RE = /`([^`\n]+)`/g;
+// `==text==` highlight, rendered as `<mark>` by the bmmd engine. It follows
+// the same reveal contract as bold/italic in the source view: the `==` pair
+// stays literal while the caret/selection touches the span and collapses out
+// of sight otherwise. The content must not be empty or whitespace-padded
+// (`== text ==` stays literal, matching CommonMark emphasis rules), may span
+// interior spaces, and may itself contain a single `=` (`==a=b==` is valid).
+// GFM's syntax tree has no Mark node, so this pass is regex-based, exactly
+// like INLINE_CODE_RE, and is excluded from code spans and link URLs below.
+const HIGHLIGHT_PAIR_RE = /==(?=\S)(.+?)(?<=\S)==/g;
 const FENCE_RE = /^\s*```+\s*([^\s`]*)?\s*$/;
 
 /** Whether `lineNo` is a body row inside a fenced code block. The opening
@@ -970,6 +988,7 @@ const QUOTE_RE = /^(\s*>\s?)/;
 // yields no rect, which makes vertical motion miscompute and skip the line.
 const hiddenMarkdownDelimiter = Decoration.replace({});
 const inlineCodeDecoration = Decoration.mark({ class: 'cm-md-inline-code' });
+const markDecoration = Decoration.mark({ class: 'cm-md-mark' });
 
 interface LinkPreviewResult {
   decorations: any[];
@@ -2142,15 +2161,32 @@ function computeMarkdownLivePreview(view: EditorView, previewLinks = true): Deco
     }
 
     INLINE_CODE_RE.lastIndex = 0;
+    const codeRanges: Array<{ from: number; to: number }> = [];
     let inlineCode: RegExpExecArray | null;
     while ((inlineCode = INLINE_CODE_RE.exec(line.text))) {
       const from = line.from + inlineCode.index;
       const to = from + inlineCode[0].length;
       if (overlapsRanges(from, to, linkPreview.urlRanges)) continue;
+      codeRanges.push({ from, to });
       ranges.push(inlineCodeDecoration.range(from + 1, to - 1));
       if (!selectionTouchesDelimiter(view, from, to)) {
         ranges.push(hiddenMarkdownDelimiter.range(from, from + 1));
         ranges.push(hiddenMarkdownDelimiter.range(to - 1, to));
+      }
+    }
+    // `==text==`: hide the delimiters until the caret or selection touches
+    // the span, mirroring emphasis/code. Content inside a code span or link
+    // URL is literal, so an opening `==` there never starts a match.
+    HIGHLIGHT_PAIR_RE.lastIndex = 0;
+    let highlight: RegExpExecArray | null;
+    while ((highlight = HIGHLIGHT_PAIR_RE.exec(line.text))) {
+      const from = line.from + highlight.index;
+      const to = from + highlight[0].length;
+      if (overlapsRanges(from, to, codeRanges) || overlapsRanges(from, to, linkPreview.urlRanges)) continue;
+      ranges.push(markDecoration.range(from + 2, to - 2));
+      if (!selectionTouchesDelimiter(view, from, to)) {
+        ranges.push(hiddenMarkdownDelimiter.range(from, from + 2));
+        ranges.push(hiddenMarkdownDelimiter.range(to - 2, to));
       }
     }
   }
@@ -2572,6 +2608,9 @@ function renderStaticTableCellMarkdown(source: string): string {
   html = html.replace(/https?:\/\/[^\s<]+/gi, (url) => token(
     `<span class="cm-md-link" data-md-href="${url}" role="link" title="${url}">${url}</span>`,
   ));
+  html = html.replace(/==(?=\S)([^<>\n]+?)(?<=\S)==/g, (_match, text) =>
+    `<span class="cm-md-delimiter">==</span><mark class="cm-md-mark">${text}</mark><span class="cm-md-delimiter">==</span>`,
+  );
   html = html.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, (_match, delimiter, text) =>
     `<span class="cm-md-delimiter">${delimiter}</span><strong class="cm-md-strong">${text}</strong><span class="cm-md-delimiter">${delimiter}</span>`,
   );
