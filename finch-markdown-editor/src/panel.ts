@@ -23,8 +23,9 @@
     var detail = reason && (reason.stack || reason.message || String(reason)) || 'unknown';
     logPanelError('unhandledrejection', detail);
   });
-  // Diagnostic channel for the editor bundle (codemirror.js), which has no
-  // host bridge of its own. Temporary: traces table widget teardown.
+  // Diagnostic channel for the editor bundle (codemirror.js), which is a
+  // separate bundle with no host bridge of its own. Left in place so editor
+  // internals can be traced without rebuilding the panel each time.
   window.__mdLog = function (message) {
     if (api && api.postMessage) {
       try { api.postMessage({ type: 'clientLog', message: String(message) }); } catch (_) {}

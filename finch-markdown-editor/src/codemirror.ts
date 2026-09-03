@@ -1947,46 +1947,71 @@ function collectTableRanges(view: EditorView): { from: number; to: number }[] {
   return ranges;
 }
 
-// TEMPORARY DIAGNOSTIC — traces what actually happens to the table widget
-// element during a drag, since the blank table throws no error and static
-// reading of the package has not pinned down the trigger. Remove once the
-// root cause is fixed.
-function installTableWidgetTracer(view: EditorView): () => void {
-  const log = (msg: string) => (window as any).__mdLog?.(`[tbl] ${msg}`);
-  const describe = () => {
-    const sel = view.state.selection.main;
-    const text = view.state.doc.sliceString(sel.from, sel.to);
-    const widgets = Array.from(view.dom.querySelectorAll<HTMLElement>('.tbl-table-widget'));
-    const shape = widgets.map((w) => (w.querySelector('.tbl-table-wrapper') ? 'filled' : 'EMPTY')).join(',');
-    return `sel=${sel.from}-${sel.to} selText=${JSON.stringify(text.slice(0, 20))} widgets=[${shape}]`;
-  };
+// The table package's widget class implements no `eq()`, so CodeMirror's
+// default (always "not equal") makes every rebuilt decoration look like a
+// brand new widget: the old one is destroyed — which unmounts its Svelte
+// component and empties the `.tbl-table-widget` element in place — before the
+// replacement's DOM is ready. Our image widgets implement `eq()`, which is
+// why they merely re-render instead of vanishing.
+//
+// Selecting a bare newline next to a table is enough to trigger that rebuild,
+// so the table blanks out for as long as the drag continues and only comes
+// back on mouseup. Restoring correctness needs a document round-trip
+// (healBlankTableWidgets), which must not run mid-drag, so bridge the gap
+// visually: keep a snapshot of each table's rendered markup and paint it back
+// into the emptied element until the real component returns. The placeholder
+// is inert (`pointer-events: none`, aria-hidden) and is dropped the moment
+// the package re-renders, so nothing can interact with a stale copy.
+const TABLE_PLACEHOLDER_ATTR = 'data-md-table-placeholder';
+
+function installTableWidgetKeeper(view: EditorView): () => void {
   const content = view.dom.querySelector('.cm-content');
   if (!content) return () => {};
-  const observer = new MutationObserver((records) => {
-    for (const record of records) {
-      const removed = Array.from(record.removedNodes).filter(
-        (n): n is HTMLElement => n instanceof HTMLElement && n.classList.contains('tbl-table-widget'),
-      );
-      const added = Array.from(record.addedNodes).filter(
-        (n): n is HTMLElement => n instanceof HTMLElement && n.classList.contains('tbl-table-widget'),
-      );
-      if (removed.length) log(`widget REMOVED from DOM — ${describe()}`);
-      if (added.length) {
-        const filled = added.every((n) => n.querySelector('.tbl-table-wrapper'));
-        log(`widget ADDED to DOM (${filled ? 'filled' : 'EMPTY'}) — ${describe()}`);
+  // Keyed by position among the rendered tables: the element itself gets
+  // replaced during the churn, so an element-keyed map would lose the copy
+  // exactly when it is needed.
+  let snapshots: string[] = [];
+
+  const sync = () => {
+    const widgets = Array.from(view.dom.querySelectorAll<HTMLElement>('.tbl-table-widget'));
+    widgets.forEach((widget, index) => {
+      const live = widget.querySelector('.tbl-table-wrapper:not([' + TABLE_PLACEHOLDER_ATTR + '] *)');
+      const placeholder = widget.querySelector(`[${TABLE_PLACEHOLDER_ATTR}]`);
+      if (live) {
+        // Real content is present — retire any placeholder and refresh the copy.
+        if (placeholder) placeholder.remove();
+        snapshots[index] = live.outerHTML;
+        return;
       }
-      // The widget div surviving but being emptied out is the failure mode
-      // the reproduction describes, and it shows up as a mutation on the
-      // widget element itself rather than on `.cm-content`.
-      const target = record.target as HTMLElement;
-      if (target instanceof HTMLElement && target.classList?.contains('tbl-table-widget') && record.removedNodes.length) {
-        log(`widget EMPTIED in place — ${describe()}`);
-      }
-    }
+      if (placeholder) return; // already bridged, wait for the real render
+      const html = snapshots[index];
+      if (!html) return;
+      const holder = document.createElement('div');
+      holder.setAttribute(TABLE_PLACEHOLDER_ATTR, 'true');
+      holder.setAttribute('aria-hidden', 'true');
+      holder.style.pointerEvents = 'none';
+      holder.innerHTML = html;
+      widget.appendChild(holder);
+    });
+    if (widgets.length < snapshots.length) snapshots = snapshots.slice(0, widgets.length);
+  };
+
+  let frame = 0;
+  const observer = new MutationObserver(() => {
+    // Coalesce: a single rebuild produces several mutation records, and the
+    // emptied element and its replacement can arrive in separate batches.
+    if (frame) return;
+    frame = window.requestAnimationFrame(() => {
+      frame = 0;
+      sync();
+    });
   });
   observer.observe(content, { childList: true, subtree: true });
-  log(`tracer installed — ${describe()}`);
-  return () => observer.disconnect();
+  sync();
+  return () => {
+    observer.disconnect();
+    if (frame) window.cancelAnimationFrame(frame);
+  };
 }
 
 let lastTableHealAt = 0;
@@ -1995,7 +2020,12 @@ function healBlankTableWidgets(view: EditorView): void {
   // The wrapper is what the widget's Svelte component renders, so a widget
   // without one has been emptied out rather than merely scrolled away.
   const widgets = Array.from(view.dom.querySelectorAll<HTMLElement>('.tbl-table-widget'));
-  const blank = widgets.some((widget) => !widget.querySelector('.tbl-table-wrapper'));
+  // A placeholder holds a *copy* of the wrapper, so it must not count as
+  // real content here — the placeholder exists precisely because the widget
+  // still needs healing.
+  const blank = widgets.some(
+    (widget) => !widget.querySelector(`.tbl-table-wrapper:not([${TABLE_PLACEHOLDER_ATTR}] *)`),
+  );
   if (!blank) return;
   // A failed heal must not turn into a dispatch loop on every later update.
   const now = Date.now();
@@ -3099,7 +3129,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
   });
   const disposeTableMenuI18n = installTableMenuI18n();
   const disposeStaticTableCellPreview = installStaticTableCellPreview(options.parent);
-  const disposeTableWidgetTracer = installTableWidgetTracer(view);
+  const disposeTableWidgetKeeper = installTableWidgetKeeper(view);
 
   return {
     getValue: () => view.state.doc.toString(),
@@ -3253,7 +3283,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       if (externalHighlightTimer) { clearTimeout(externalHighlightTimer); externalHighlightTimer = 0; }
       window.removeEventListener('mouseup', onWindowMouseUp);
       disposeStaticTableCellPreview();
-      disposeTableWidgetTracer();
+      disposeTableWidgetKeeper();
       disposeTableMenuI18n();
       view.destroy();
     },
