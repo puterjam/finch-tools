@@ -535,6 +535,16 @@ const finchTheme = EditorView.theme({
     borderLeft: '2px solid var(--border)',
     paddingLeft: '8px',
   },
+  /* The revealed `>` markers must not use a different font from the quote
+   * text either — same trap as the heading `#` markers (see headingLineRules).
+   * A quote row is exactly one line box tall, so the union of a body-font
+   * glyph and a `'monospace'` keyword-font glyph (different metrics, hence a
+   * different baseline inside that box) pokes the line a fraction taller.
+   * Inherit the row's own font so the line height stays put whether the
+   * quote is selected or not. */
+  [`.cm-line.cm-md-quote .${MONO_MARK_CLASS}`]: {
+    fontFamily: 'inherit',
+  },
   // List rows sit two characters in from ordinary body text.
   '.cm-line.cm-md-list-line': {
     paddingLeft: '2ch',
