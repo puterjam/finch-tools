@@ -72,6 +72,13 @@ interface MarkdownEditorHandle {
    * turns the affordance off (AppPanel). */
   setAiHint(text: string, codeText?: string): void;
   scrollDOM: HTMLElement;
+  /**
+   * Document-y of the bottom edge of the given 1-based line, or null when the
+   * line can't be located. Scroll sync pairs "end of source line N" in the
+   * editor with the same point in the preview, so wrapped lines stay aligned
+   * on their last visual row. Coordinates share `scrollDOM.scrollTop`'s space.
+   */
+  lineBottom(line: number): number | null;
   destroy(): void;
 }
 
@@ -3637,6 +3644,29 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
   const disposeStaticTableCellPreview = installStaticTableCellPreview(options.parent);
   const disposeTableWidgetKeeper = installTableWidgetKeeper(view);
 
+  // Height-map lookup for a line's top/bottom edge, expressed in the same
+  // coordinate space as `scrollDOM.scrollTop`. `lineBlockAt` is used instead
+  // of `coordsAtPos` because it answers for every line in the document, not
+  // only the ones currently rendered in the viewport — scroll sync asks about
+  // anchors that are far off screen.
+  const lineEdge = (line: number): number | null => {
+    const doc = view.state.doc;
+    if (!Number.isFinite(line)) return null;
+    const n = Math.max(1, Math.min(Math.round(line), doc.lines));
+    let block;
+    try {
+      block = view.lineBlockAt(doc.line(n).from);
+    } catch {
+      return null;
+    }
+    if (!block) return null;
+    // documentTop is the viewport-y of the document's first pixel; shifting it
+    // into the scroller's own scroll space keeps both panes comparable.
+    const scroller = view.scrollDOM.getBoundingClientRect();
+    const offset = view.documentTop - scroller.top + view.scrollDOM.scrollTop;
+    return block.bottom + offset;
+  };
+
   return {
     getValue: () => view.state.doc.toString(),
     setValue(value) {
@@ -3776,6 +3806,9 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       view.dom.style.setProperty('--cm-ai-hint-code', codeText ? JSON.stringify(codeText) : '""');
     },
     scrollDOM: view.scrollDOM,
+    lineBottom(line) {
+      return lineEdge(line);
+    },
     destroy() {
       if (centerLineRaf) { cancelAnimationFrame(centerLineRaf); centerLineRaf = 0; }
       if (externalHighlightTimer) { clearTimeout(externalHighlightTimer); externalHighlightTimer = 0; }

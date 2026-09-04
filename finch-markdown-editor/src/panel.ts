@@ -1408,6 +1408,228 @@
 
   function activeCustomCss() { return style === 'custom' ? customCss : ''; }
 
+  // ---- Scroll sync between the editor and the preview (AppView) ----
+  //
+  // bm.md's renderer is a black box: it strips or rewrites almost any HTML we
+  // could inject to tag lines, but it keeps a bare inline <a> — rewriting its
+  // id with a `user-content-` prefix. So before rendering we append
+  // `<a id="mdl-N">` (N = 1-based source line) to the end of lines that are
+  // safe to touch (paragraphs, headings, list items, quotes — anything inside
+  // a table or fenced code block would corrupt the parse). The rendered DOM
+  // then contains one anchor per tagged source line, and the panel maps each
+  // anchor's live document-y back to its source line number to sync scrolling.
+  // The anchors are only added to the copy sent to the renderer — the user's
+  // document never sees them.
+  var SCROLL_ANCHOR_PREFIX = 'user-content-mdl-';
+  var scrollSyncRaf = 0;
+  var scrollSyncProgrammatic = { side: '', value: -1, at: 0 };
+  // Which pane has a user scroll awaiting sync in the next frame.
+  var scrollSyncPending = { editor: false, preview: false };
+  // Anchors are rebuilt after every render: [{ line, el }], where `el` is the
+  // <a> bm.md placed inside the rendered block. y is read live from the
+  // element each sync so font-size/width/image-loading changes are followed
+  // without rebuilding.
+  var scrollAnchors = [];
+
+  function injectScrollAnchors(source) {
+    if (!isAppView) return source;
+    var lines = source.split('\n');
+    var out = [];
+    var inFence = false;
+    for (var i = 0; i < lines.length; i++) {
+      var raw = lines[i];
+      var isFenceLine = /^[ \t]*(?:```|~~~)/.test(raw);
+      var lineNo = i + 1;
+      if (isFenceLine) {
+        inFence = !inFence;
+        out.push(raw);
+        continue;
+      }
+      var trimmed = raw.trim();
+      var skip =
+        inFence ||                                // code content becomes literal text
+        trimmed === '' ||                          // nothing to tag
+        /\\\s*$/.test(raw) ||                      // hard line break: anchor would escape the backslash
+        /^<[a-zA-Z!]/.test(trimmed) ||             // raw HTML / comments: block-level
+        /^!\[[^\]]*\]\([^)]*\)\s*$/.test(trimmed) || // standalone image line
+        /^\s*\|/.test(raw) && /[|]\s*$/.test(raw); // table row (pipe both ends)
+      // A table needs its header + separator skipped as a unit; once a line
+      // looks like a header (has `|` and the next line is a `---` separator),
+      // keep skipping until a non-pipe line is seen again.
+      var looksLikeTableHeader = !skip && /[|]/.test(raw) && i + 1 < lines.length && /^[ \t]*\|?[\s:|-]+\|?[ \t]*$/.test(lines[i + 1]) && /-/.test(lines[i + 1]);
+      if (looksLikeTableHeader) {
+        out.push(raw);
+        var j = i + 1;
+        while (j < lines.length && /[|]/.test(lines[j])) { out.push(lines[j]); j++; }
+        i = j - 1;
+        continue;
+      }
+      out.push(skip ? raw : raw + '<a id="mdl-' + lineNo + '"></a>');
+    }
+    return out.join('\n');
+  }
+
+  function buildScrollAnchors() {
+    scrollAnchors = [];
+    scrollMap = null;
+    if (!isAppView || !frameReady) return;
+    var d = frame.contentDocument;
+    if (!d) return;
+    var root = d.querySelector('#bm-md');
+    if (!root) return;
+    var nodes = d.querySelectorAll('a[id^="' + SCROLL_ANCHOR_PREFIX + '"]');
+    for (var i = 0; i < nodes.length; i++) {
+      var id = nodes[i].id;
+      var num = Number(id.slice(SCROLL_ANCHOR_PREFIX.length));
+      if (!Number.isFinite(num) || num < 1) continue;
+      // Skip anchors that ended up outside the visible article (e.g. inside
+      // bm.md's own footnote section at the very end) by only trusting ones
+      // inside #bm-md.
+      if (root.contains(nodes[i])) scrollAnchors.push({ line: num, el: nodes[i] });
+    }
+    scrollAnchors.sort(function (a, b) { return a.line - b.line; });
+    scrollMap = null; // positions changed with the new render
+  }
+
+  function previewScrollTop() {
+    var d = frame.contentDocument;
+    if (!d) return 0;
+    return d.scrollingElement ? d.scrollingElement.scrollTop : 0;
+  }
+  function setPreviewScrollTop(v) {
+    var d = frame.contentDocument;
+    if (!d || !d.scrollingElement) return;
+    var sc = d.scrollingElement;
+    var clamped = Math.max(0, Math.min(v, sc.scrollHeight - sc.clientHeight));
+    if (Math.abs(sc.scrollTop - clamped) < 1) return;
+    scrollSyncProgrammatic = { side: 'preview', value: clamped, at: Date.now() };
+    sc.scrollTop = clamped;
+  }
+  function previewDocBottom(el) {
+    if (!el) return 0;
+    var d = frame.contentDocument;
+    var sc = d && d.scrollingElement;
+    return el.getBoundingClientRect().bottom + (sc ? sc.scrollTop : 0);
+  }
+
+  // The sync model is a table of matching scroll positions: for every anchored
+  // source line we know where "the end of that line" sits in the editor and
+  // where the same point sits in the preview. Pinning both ends of the
+  // document (0 ↔ 0 and maxScroll ↔ maxScroll) makes the very top and the very
+  // bottom line up exactly, and piecewise-linear interpolation in between
+  // keeps blocks of wildly different heights (a code block, an image) aligned
+  // at their boundaries.
+  var scrollMap = null; // { e: [], p: [], eMax, pMax, pHeight, eHeight }
+
+  function buildScrollMap() {
+    scrollMap = null;
+    if (!scrollAnchors.length || !cm || !cm.scrollDOM) return null;
+    var d = frame.contentDocument;
+    var sc = d && d.scrollingElement;
+    if (!sc) return null;
+    var eMax = Math.max(0, cm.scrollDOM.scrollHeight - cm.scrollDOM.clientHeight);
+    var pMax = Math.max(0, sc.scrollHeight - sc.clientHeight);
+    if (eMax <= 0 || pMax <= 0) return null;
+    var e = [0], p = [0];
+    for (var i = 0; i < scrollAnchors.length; i++) {
+      var a = scrollAnchors[i];
+      var ey = cm.lineBottom(a.line);
+      if (ey == null) continue;
+      var py = previewDocBottom(a.el);
+      // Only keep strictly increasing pairs inside the scrollable range, so
+      // the interpolation stays monotonic (a non-monotonic table would make
+      // the other pane jump backwards mid-scroll).
+      if (!(ey > e[e.length - 1] + 1) || !(py > p[p.length - 1] + 1)) continue;
+      if (ey >= eMax || py >= pMax) break;
+      e.push(ey);
+      p.push(py);
+    }
+    e.push(eMax);
+    p.push(pMax);
+    scrollMap = {
+      e: e, p: p, eMax: eMax, pMax: pMax,
+      pHeight: sc.scrollHeight, eHeight: cm.scrollDOM.scrollHeight,
+    };
+    return scrollMap;
+  }
+
+  // Rebuild when either document's height changed (live preview re-render,
+  // image load, font-size or width change) — anchors themselves stay valid.
+  function ensureScrollMap() {
+    var d = frame.contentDocument;
+    var sc = d && d.scrollingElement;
+    if (!sc || !cm || !cm.scrollDOM) return null;
+    if (!scrollMap || scrollMap.pHeight !== sc.scrollHeight || scrollMap.eHeight !== cm.scrollDOM.scrollHeight) {
+      return buildScrollMap();
+    }
+    return scrollMap;
+  }
+
+  function interpolate(from, to, v) {
+    var n = from.length;
+    if (!n) return v;
+    if (v <= from[0]) return to[0];
+    if (v >= from[n - 1]) return to[n - 1];
+    var lo = 0, hi = n - 1;
+    while (lo < hi - 1) {
+      var mid = (lo + hi) >> 1;
+      if (from[mid] <= v) lo = mid; else hi = mid;
+    }
+    var span = from[hi] - from[lo] || 1;
+    return to[lo] + ((v - from[lo]) / span) * (to[hi] - to[lo]);
+  }
+
+  function scheduleScrollSync(side) {
+    scrollSyncPending[side] = true;
+    if (scrollSyncRaf) return;
+    scrollSyncRaf = requestAnimationFrame(function () {
+      scrollSyncRaf = 0;
+      performScrollSync();
+    });
+  }
+
+  // Was this scroll event just caused by our own programmatic write to that
+  // pane (within a short window, landing on the value we wrote)? If so it is
+  // the echo of a sync, not a new user scroll — consume it and do nothing.
+  function isProgrammaticEcho(side) {
+    var p = scrollSyncProgrammatic;
+    if (p.side !== side || Date.now() - p.at > 300) return false;
+    var v = side === 'editor' ? cm.scrollDOM.scrollTop : previewScrollTop();
+    if (Math.abs(p.value - v) > 2) return false;
+    return true;
+  }
+
+  function performScrollSync() {
+    var pendingEditor = scrollSyncPending.editor;
+    var pendingPreview = scrollSyncPending.preview;
+    scrollSyncPending.editor = false;
+    scrollSyncPending.preview = false;
+    if (!isAppView || !hasDocument() || !previewVisible) return;
+    var map = ensureScrollMap();
+    if (!map) return;
+    if (pendingEditor) {
+      setPreviewScrollTop(interpolate(map.e, map.p, cm.scrollDOM.scrollTop));
+    } else if (pendingPreview) {
+      var target = interpolate(map.p, map.e, previewScrollTop());
+      scrollSyncProgrammatic = { side: 'editor', value: target, at: Date.now() };
+      if (Math.abs(cm.scrollDOM.scrollTop - target) >= 1) cm.scrollDOM.scrollTop = target;
+    }
+  }
+
+  // Listeners installed on each pane's scroller. Each one asks "did we just
+  // write this pane's scrollTop ourselves?" — the echo of our own sync — and
+  // skips it, so editor→preview→editor loops terminate after one hop.
+  function onEditorScrollSync() {
+    if (isProgrammaticEcho('editor')) return;
+    if (!isAppView || !hasDocument() || !previewVisible) return;
+    scheduleScrollSync('editor');
+  }
+  function onPreviewScrollSync() {
+    if (isProgrammaticEcho('preview')) return;
+    if (!isAppView || !hasDocument() || !previewVisible) return;
+    scheduleScrollSync('preview');
+  }
+
   function scheduleLivePreview() {
     if (!isAppView) return;
     if (liveRenderTimer) clearTimeout(liveRenderTimer);
@@ -1421,7 +1643,7 @@
     syncToolbar();
     api.postMessage({
       type: 'renderBm',
-      markdown: markdown,
+      markdown: injectScrollAnchors(markdown),
       markdownStyle: style === 'custom' ? 'kami' : style,
       customCss: activeCustomCss(),
       requestId: id,
@@ -1461,6 +1683,7 @@
       if (bg) d.body.style.background = bg;
       restoreScroll(previous);
       bindPreviewSelection();
+      buildScrollAnchors();
       return;
     }
     // Only reset the iframe's own html/body box model here. bm.md already
@@ -1615,7 +1838,41 @@
     frame.contentWindow.addEventListener('scroll', function () { cancelScheduledPopup(); closePopup(); });
   }
 
-  frame.onload = function () { frameReady = true; bindPreviewSelection(); };
+  frame.onload = function () { frameReady = true; bindPreviewSelection(); buildScrollAnchors(); };
+
+  // AppView scroll sync: watch both panes' scroll containers. Preview lives
+  // in the iframe document (its own scrollingElement), so the listener is
+  // attached once onload has produced a document; the editor's scroller is
+  // cm.scrollDOM. A resize/relayout never invalidates anchors (y is read
+  // live), so these listeners are bound once.
+  function bindScrollSync() {
+    if (cm && cm.scrollDOM && !cm.scrollDOM.__scrollSyncBound) {
+      cm.scrollDOM.__scrollSyncBound = true;
+      cm.scrollDOM.addEventListener('scroll', onEditorScrollSync, { passive: true });
+    }
+    var d = frame.contentDocument;
+    if (d && !d.__scrollSyncBound) {
+      d.__scrollSyncBound = true;
+      // scroll doesn't bubble, so bind directly to the scrolling element and
+      // the window (the iframe document scrolls on its html/body).
+      var sc = d.scrollingElement || d.documentElement;
+      if (sc) sc.addEventListener('scroll', onPreviewScrollSync, { passive: true });
+      d.defaultView && d.defaultView.addEventListener('scroll', onPreviewScrollSync, { passive: true });
+    }
+  }
+  bindScrollSync();
+  // A resize changes clientHeight (and therefore maxScroll) without
+  // necessarily changing scrollHeight, so drop the table and let the next
+  // sync rebuild it.
+  window.addEventListener('resize', function () { scrollMap = null; });
+  // Re-bind after srcdoc reloads (a fresh document = a fresh scrollingElement).
+  frame.addEventListener('load', function () {
+    requestAnimationFrame(function () {
+      frameReady = true;
+      buildScrollAnchors();
+      bindScrollSync();
+    });
+  });
 
   // ---- Selection popup (editor + preview share this) ----
   // top/bottom describe the selection's bounding box in viewport coordinates;
