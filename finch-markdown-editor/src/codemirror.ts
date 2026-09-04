@@ -196,6 +196,16 @@ function headingGutterBandEm(level: number): string {
   return gutterBandEm(scale * HEADING_LINE_HEIGHT);
 }
 
+/* The class CodeMirror happens to generate for the Markdown syntax markers
+ * this editor renders in a monospace font.
+ *
+ * This is a generated StyleModule name, not a stable API: it is derived from
+ * the order style modules are registered in, so adding or reordering a theme
+ * can silently point it at a different token. It is pulled out here so there
+ * is one place to correct when that happens, and so the heading override
+ * below cannot drift away from the rule it is meant to cancel. */
+const MONO_MARK_CLASS = 'ͼx';
+
 function headingLineRules(): Record<string, Record<string, string>> {
   const rules: Record<string, Record<string, string>> = {};
   HEADING_FONT_SCALE.forEach((scale, index) => {
@@ -203,6 +213,17 @@ function headingLineRules(): Record<string, Record<string, string>> {
       fontSize: `${scale}em`,
       fontWeight: '700',
       lineHeight: `${HEADING_LINE_HEIGHT} !important`,
+    };
+    /* Revealed `#` markers must not use a different font from the heading.
+     *
+     * The heading band is tight, so the line box is decided by how the
+     * inline boxes stack on a shared baseline. Two fonts put their baseline
+     * at different places inside that box, so a monospace marker sitting
+     * next to body-font text made the union about a pixel taller — visible
+     * as a jump the moment the caret entered the line and the markers came
+     * out of hiding. Same font on both, same metrics, same height. */
+    rules[`.cm-line.cm-md-h${index + 1} .${MONO_MARK_CLASS}`] = {
+      fontFamily: 'inherit',
     };
     rules[`.cm-lineNumbers .cm-gutterElement.cm-gutter-h${index + 1}`] = {
       lineHeight: headingGutterBandEm(index + 1),
@@ -364,7 +385,7 @@ const finchTheme = EditorView.theme({
     textAlign: 'center',
     fontFamily: 'monospace',
   },
-  '.ͼx':{
+  [`.${MONO_MARK_CLASS}`]: {
     fontFamily: 'monospace',
   },
   '.tbl-cell-view .cm-md-delimiter': { display: 'none' },
@@ -609,6 +630,18 @@ const finchTheme = EditorView.theme({
     // the font size or the comfortable-writing toggle changed.
     '--md-gutter-line-height': `calc(var(--md-line-ratio, ${PROSE_LINE_RATIO.compact}) * 1em / ${GUTTER_FONT_SCALE})`,
   },
+  /* Keep CodeMirror's caret-anchor buffers out of line-height maths.
+   *
+   * These are zero-width invisible <img> elements CodeMirror puts beside a
+   * replaced range so the caret has somewhere to land. They are 1em tall and
+   * default to `vertical-align: text-top`, which hangs them below the
+   * baseline — enough to stretch a line box past its own line-height. A
+   * heading felt this as a 2px jump: the markers are hidden (buffers present,
+   * box inflated) until the caret enters the line and they are revealed as
+   * real text (buffers gone, box back to its natural height). Aligning to the
+   * top of the line box lets the buffer sit inside the box it was never meant
+   * to influence, so the height no longer depends on where the caret is. */
+  '.cm-content .cm-widgetBuffer': { verticalAlign: 'top' },
   '.cm-gutterElement': { padding: '0px 8px 0 10px' },
   // Scoped to the line-*number* gutter only (`.cm-lineNumbers` is that
   // gutter's own container class) — `.cm-gutterElement` above is shared by
