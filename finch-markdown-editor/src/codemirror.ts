@@ -702,34 +702,46 @@ const finchTheme = EditorView.theme({
   },
   // The line-number gutter keeps its normal position and look; the rewrite
   // indicator is a separate column placed to its right in the same gutter row.
+  //
+  // No font-size here. `--md-gutter-line-height` (and every `em` the AI
+  // markers are sized with) resolves against whatever font-size the consumer
+  // has — a `10px` on this column would shrink every band below to
+  // ~10/16ths of the true row height, so spinner/dot/corner all sit high
+  // and the rail never lines up. Inheriting `.cm-gutters`' 12px keeps the
+  // bands identical to the line-number column's.
   '.cm-gutters .cm-ai-gutter': {
     width: '22px',
-    fontSize: '10px',
   },
-  // No flex centering here: a wrapped row is taller than one line box, and
-  // centering in the *whole* row would drop the spinner/corner below the
-  // line number, which sits in the row's first line box (positioned by the
-  // `line-height` band above). Everything inside is absolutely positioned
-  // against this element instead — anchored either to that same first band
-  // (so it lines up with the number) or to the full row height (so rails on
-  // neighbouring rows touch).
+  // Everything is positioned against the row's *first* line box, matching the
+  // line number (which is centered with `line-height: band + 2*--md-line-pad-y`).
+  // A marker whose vertical center should sit on the row uses this as its
+  // height, then centers its own content; padding is never used here because
+  // CodeMirror owns the gutter element's height and any box-model change
+  // desyncs it from the height map.
   '.cm-ai-gutter .cm-gutterElement': {
     position: 'relative',
+    // The generic `.cm-gutterElement` rule pads `0 8px 0 10px` for the line
+    // numbers, but in this 22px column it leaves only ~4px of content space,
+    // which squeezes the 6px completed dot into 4px and mis-centers the
+    // absolutely-positioned spinner/rail against the column. This column
+    // centers its own markers, so drop the padding here entirely.
     padding: '0',
+    '--md-ai-row-height': 'calc(var(--md-gutter-line-height, 32px) + 2 * var(--md-line-pad-y, 2px))',
     color: 'var(--accent)',
   },
   // `gutterLineClass` (see codeGutterLineHighlighter) stamps this same
   // `cm-gutter-code-line` class onto every gutter's row for a fenced-code
   // line, not just the line-number gutter — including this one. Rescope
-  // the line-height var locally so the spinner/rail/corner markers below,
-  // which all size themselves off it, shrink to match the code gutter's
-  // shorter row instead of the prose row height. Without this the spinner
-  // circle on a code line overflows into the row underneath it.
+  // the band var locally so the spinner/rail/corner markers below shrink to
+  // match the code gutter's shorter row instead of the prose row height.
+  // Content code rows have zero padding, so the row height is the band alone.
   '.cm-ai-gutter .cm-gutterElement.cm-gutter-code-line': {
     '--md-gutter-line-height': gutterBandEm(CODE_LINE_RATIO),
+    '--md-ai-row-height': gutterBandEm(CODE_LINE_RATIO),
   },
   '.cm-ai-gutter .cm-gutterElement.cm-gutter-code-open': {
     '--md-gutter-line-height': gutterBandEm(CODE_OPEN_RATIO),
+    '--md-ai-row-height': gutterBandEm(CODE_OPEN_RATIO),
   },
   '.cm-ai-working-mark': {
     position: 'absolute',
@@ -741,7 +753,7 @@ const finchTheme = EditorView.theme({
     top: '0',
     left: '0',
     right: '0',
-    height: 'var(--md-gutter-line-height, 32px)',
+    height: 'var(--md-ai-row-height, 32px)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -752,14 +764,14 @@ const finchTheme = EditorView.theme({
     animation: 'cm-ai-spin 1s linear infinite',
   },
   // A wrapped prose row makes its gutter element taller, but its line number
-  // stays aligned with the first line. Limit the dot to that same first-line
-  // band; the dot itself uses the band height below to match the number.
+  // stays aligned with the first line. Limit the dot to that same first-row
+  // line box; the dot centers itself within that height.
   '.cm-ai-added-line': {
     position: 'absolute',
     top: '0',
     left: '0',
     right: '0',
-    height: 'var(--md-gutter-line-height, 32px)',
+    height: 'var(--md-ai-row-height, 32px)',
     display: 'flex',
     // alignItems: 'center',
     justifyContent: 'center',
@@ -767,10 +779,11 @@ const finchTheme = EditorView.theme({
   '.cm-ai-added-dot': {
     width: '6px',
     height: '6px',
-    // Match the line-number glyph's vertical band: 12px at 32px compact,
-    // 16px at 40px comfortable, and 7px on the 22px code-row override.
-    // The -1px is the same optical lift the previous fixed 12px used.
-    marginTop: 'calc((var(--md-gutter-line-height, 32px) - 6px) / 2 - 1px)',
+    // Center the 6px dot on the row: half the row height less the dot, with
+    // the same -1px optical lift the previous fixed 12px used. Driving it off
+    // --md-ai-row-height (band + both paddings) matches the line number's own
+    // center, so the dot sits at the same height as the digit.
+    marginTop: 'calc((var(--md-ai-row-height, 32px) - 6px) / 2 - 1px)',
     borderRadius: '50%',
     backgroundColor: '#35a854',
     boxShadow: '0 0 0 2px color-mix(in srgb, #35a854 16%, transparent)',
@@ -790,7 +803,10 @@ const finchTheme = EditorView.theme({
     opacity: '0.45',
   },
   '.cm-ai-working-rail.cm-ai-working-rail-below': {
-    top: 'calc(var(--md-gutter-line-height, 32px) - 7px)',
+    // Starts just under the spinner's svg. The svg is 13px tall and centered
+    // on the row (its center sits at row-height/2), so the continuation line
+    // begins half an svg below that center.
+    top: 'calc(var(--md-ai-row-height, 32px) / 2 + 6.5px)',
   },
   // The closing `╰`: down to the middle of the last row's first line box
   // (level with its line number), then a short rounded turn to the right.
@@ -799,7 +815,10 @@ const finchTheme = EditorView.theme({
     top: '0',
     left: '50%',
     width: '6px',
-    height: 'calc(var(--md-gutter-line-height, 32px) / 2)',
+    // The turn happens at the line number's center, which sits mid-row, so
+    // the vertical stroke must reach exactly half the row height before
+    // turning right.
+    height: 'calc(var(--md-ai-row-height, 32px) / 2)',
     marginLeft: '-0.75px',
     borderLeft: '1.5px solid var(--accent)',
     borderBottom: '1.5px solid var(--accent)',
