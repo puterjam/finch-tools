@@ -117,7 +117,7 @@ const HEADING_FONT_SCALE = [1.4, 1.2, 1.15, 1.1, 1.04, 1] as const;
 // band impossible to match and left the numbers sitting several pixels below
 // the heading text. An explicit ratio keeps the rendered height the same
 // while making it something both sides can compute from.
-const HEADING_LINE_HEIGHT = 1.2;
+const HEADING_LINE_HEIGHT = 1.6;
 // `.cm-gutters` re-declares `font-size: (12/16)em`, so one `em` inside a
 // gutter row is 12/16 of the body size, not the body size. Dividing by that
 // fraction expresses the body-relative band in the gutter's own units, which
@@ -226,7 +226,12 @@ function headingLineRules(): Record<string, Record<string, string>> {
       fontFamily: 'inherit',
     };
     rules[`.cm-lineNumbers .cm-gutterElement.cm-gutter-h${index + 1}`] = {
-      lineHeight: headingGutterBandEm(index + 1),
+      // Same row-height rule as prose numbers (see the base gutterElement
+      // rule): the heading's content line also pads by `--md-line-pad-y`
+      // top and bottom, so centering on the *row* means the band plus both
+      // paddings — not the band alone, which would float the number above
+      // the glyphs by one padding.
+      lineHeight: `calc(${headingGutterBandEm(index + 1)} + 2 * var(--md-line-pad-y, 2px))`,
     };
     // The AI column sizes its spinner, rail and dot off this variable, so it
     // has to follow the same taller band on a heading row.
@@ -649,9 +654,26 @@ const finchTheme = EditorView.theme({
   // top-padding tweak on the bare class also shoves the fold triangles
   // down by the same amount. This descendant selector nudges only the
   // number glyphs.
+  //
+  // The number must never be positioned with vertical padding on this
+  // element: CodeMirror gives every gutter row its exact pixel height from
+  // the height map, and any box-model change (padding-top/bottom,
+  // border-box tricks) makes the actual laid-out height disagree with the
+  // height map, so rows drift further apart the further down the document
+  // you go. Padding also cannot reproduce the *content* line box anyway:
+  // the text sits below `--md-line-pad-y` inside `.cm-line`, and the number
+  // would still float above it.
+  //
+  // A single-line text's glyph center equals its line box center, so the
+  // number centers on the row when its line box is exactly the row's total
+  // height: the content band plus the same `--md-line-pad-y` the text has
+  // above and below it. This is a pure line-height — it changes no box
+  // geometry — and a wrapped row still anchors to its first line, because
+  // the line box stays one row tall regardless of how many visual rows the
+  // block below grows into.
   '.cm-lineNumbers .cm-gutterElement': {
         padding: '0 5px 0 8px',
-        lineHeight: 'var(--md-gutter-line-height, 32px)',
+        lineHeight: 'calc(var(--md-gutter-line-height, 32px) + 2 * var(--md-line-pad-y, 2px))',
         color: 'color-mix(in srgb, var(--muted) 35%, transparent)',
         fontFamily: 'var(--finch-font-mono)',
         // Inherit the scaled size `.cm-gutters` sets rather than pinning a
@@ -665,7 +687,11 @@ const finchTheme = EditorView.theme({
   // (`.cm-md-code-line` above), so their gutter row gets its own
   // line-height here — driven by `gutterLineClass`, since the number
   // gutter is a separate DOM tree from `.cm-content` and never inherits
-  // classes from the content line decorations.
+  // classes from the content line decorations. The content side pins its
+  // code rows to zero vertical padding, so the code row's total height is
+  // the band alone and the number must NOT inherit the prose `+ 2 *
+  // --md-line-pad-y` from the generic rule — that extra would push it
+  // below the row center.
   '.cm-lineNumbers .cm-gutterElement.cm-gutter-code-line': {
     lineHeight: gutterBandEm(CODE_LINE_RATIO),
   },
