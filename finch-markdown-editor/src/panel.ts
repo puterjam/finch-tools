@@ -1769,8 +1769,32 @@
   }
 
   popupSend.onclick = submitAnnotation;
+
+  // An IME (Chinese, Japanese, Korean) uses Enter to accept the characters
+  // it is currently proposing. That Enter belongs to the IME, not to us —
+  // submitting on it would send a half-typed phrase and close the popup
+  // mid-word. `isComposing` covers the common case, and `keyCode === 229`
+  // is the long-standing fallback for engines that report the composition
+  // keydown without setting it.
+  var compositionEndedAt = 0;
+  popupInput.addEventListener('compositionend', function () {
+    compositionEndedAt = Date.now();
+  });
+
+  function isImeEnter(e) {
+    if (e.isComposing || e.keyCode === 229) return true;
+    // Some IMEs fire compositionend just *before* the Enter keydown that
+    // committed it, so by the time we look, `isComposing` is already false.
+    // That commit and a deliberate Enter are indistinguishable except by
+    // timing, so treat an Enter landing in the same tick as the commit.
+    return Date.now() - compositionEndedAt < 100;
+  }
+
   popupInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') submitAnnotation();
+    if (e.key === 'Enter') {
+      if (isImeEnter(e)) return;
+      submitAnnotation();
+    }
     if (e.key === 'Escape') closePopup(true);
   });
   // Shortcut hint and Send button occupy the same slot and never show at

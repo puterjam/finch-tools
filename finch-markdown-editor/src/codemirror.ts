@@ -17,7 +17,7 @@ import {
   TableStyle,
   TableTheme,
 } from 'codemirror-markdown-tables';
-import { EditorState, RangeSet, RangeSetBuilder, StateEffect, StateField, Transaction, type Text } from '@codemirror/state';
+import { Compartment, EditorState, RangeSet, RangeSetBuilder, StateEffect, StateField, Transaction, type Extension, type Text } from '@codemirror/state';
 import { indentLess, indentMore, indentWithTab, defaultKeymap, historyKeymap } from '@codemirror/commands';
 import { searchKeymap } from '@codemirror/search';
 import { autocompletion, type Completion, type CompletionContext } from '@codemirror/autocomplete';
@@ -107,6 +107,114 @@ interface MarkdownEditorOptions {
 const CM_ROOT_PX = 16;
 const CM_LINE_WIDTH = '50rem';
 const CM_LINE_MAX_WIDTH = '88%';
+
+// Heading sizes, and the matching line-number band, derive from this one
+// table so the two sides cannot drift apart. See `headingGutterBandEm` for
+// why the gutter needs its own unit conversion.
+const HEADING_FONT_SCALE = [1.4, 1.2, 1.15, 1.1, 1.04, 1] as const;
+// Headings previously used `line-height: normal`, which resolves from font
+// metrics and is therefore unknowable to CSS. That is what made the gutter
+// band impossible to match and left the numbers sitting several pixels below
+// the heading text. An explicit ratio keeps the rendered height the same
+// while making it something both sides can compute from.
+const HEADING_LINE_HEIGHT = 1.2;
+// `.cm-gutters` re-declares `font-size: (12/16)em`, so one `em` inside a
+// gutter row is 12/16 of the body size, not the body size. Dividing by that
+// fraction expresses the body-relative band in the gutter's own units, which
+// keeps it correct at every step of the font-size menu.
+const GUTTER_FONT_SCALE = 12 / CM_ROOT_PX;
+
+// Fenced code renders in a tighter box than prose, and the opening fence is a
+// taller header bar. Both are body-relative ratios like everything else here,
+// even though the code text itself is set at a fixed size — that is what lets
+// the gutter mirror them without knowing anything about the code font.
+const CODE_LINE_RATIO = 1.3;
+const CODE_OPEN_RATIO = 1.5;
+// `.cm-line.cm-md-code-line` pins code text to this size with `!important`,
+// so every fenced row — including the opening fence, whose own `font-size` is
+// overridden by it — renders at this size. An `em` inside a code row is
+// therefore smaller than an `em` in prose and needs the same conversion the
+// gutter does.
+const CODE_FONT_SCALE = 13 / CM_ROOT_PX;
+// Code text, and the height of the rounded fence bar, both relative to body.
+const CODE_TEXT_SCALE = 12 / CM_ROOT_PX;
+const CODE_FENCE_BAR_RATIO = 22 / CM_ROOT_PX;
+
+/* A length that is correct inside a fenced-code line.
+ *
+ * Same idea as gutterBandEm: `em` inside a code row measures the smaller code
+ * font, so dividing by that fraction lets one body-relative ratio be written
+ * once and stay true on both sides of the editor at every font size. */
+function codeEm(ratio: number): string {
+  return `${ratio / CODE_FONT_SCALE}em`;
+}
+// The comfortable-writing toggle switches between these two prose ratios.
+const PROSE_LINE_RATIO = { compact: 1.7, writing: 2 } as const;
+
+/* Line spacing lives in a compartment, and reconfiguring it is also how a
+ * font-size change gets picked up.
+ *
+ * Both settings change how tall every line is, but CodeMirror caches line
+ * heights in its height map and cannot notice that a CSS value moved on its
+ * own. That left the map holding stale heights, and since the gutter
+ * positions its rows from that map, the numbers drifted further from the text
+ * with every line down the document — tens of pixels by the end of a screen.
+ * `requestMeasure()` does not help, because it reuses those cached heights.
+ * Swapping a compartment changes the theme facet, which is precisely the case
+ * CodeMirror sets `mustMeasureContent` for, so the content gets re-measured
+ * and the rows stay locked to the text.
+ *
+ * The font size deliberately stays an inline style instead of moving in here:
+ * a theme rule for `&` has the same specificity as finchTheme's own `&` rule,
+ * so it loses on source order and the size menu silently stops working. */
+const layoutCompartment = new Compartment();
+
+function layoutTheme(comfortWriting: boolean): Extension {
+  const ratio = comfortWriting ? PROSE_LINE_RATIO.writing : PROSE_LINE_RATIO.compact;
+  // A fresh StyleModule every call, so the facet always compares unequal and
+  // the re-measure fires even when only the font size changed.
+  return EditorView.theme({
+    '&': {
+      '--md-line-ratio': String(ratio),
+      '--md-line-pad-y': comfortWriting ? '4px' : '2px',
+    },
+  });
+}
+
+/* A line-height that is correct inside a gutter row.
+ *
+ * The band has to equal the *content* line box, but `em` in a gutter row
+ * measures the gutter's smaller font. Dividing by that fraction cancels it
+ * out, so one body-relative ratio drives both trees and they stay locked
+ * together at every font size. */
+function gutterBandEm(ratio: number): string {
+  return `${ratio / GUTTER_FONT_SCALE}em`;
+}
+
+function headingGutterBandEm(level: number): string {
+  const scale = HEADING_FONT_SCALE[level - 1] ?? 1;
+  return gutterBandEm(scale * HEADING_LINE_HEIGHT);
+}
+
+function headingLineRules(): Record<string, Record<string, string>> {
+  const rules: Record<string, Record<string, string>> = {};
+  HEADING_FONT_SCALE.forEach((scale, index) => {
+    rules[`.cm-line.cm-md-h${index + 1}`] = {
+      fontSize: `${scale}em`,
+      fontWeight: '700',
+      lineHeight: `${HEADING_LINE_HEIGHT} !important`,
+    };
+    rules[`.cm-lineNumbers .cm-gutterElement.cm-gutter-h${index + 1}`] = {
+      lineHeight: headingGutterBandEm(index + 1),
+    };
+    // The AI column sizes its spinner, rail and dot off this variable, so it
+    // has to follow the same taller band on a heading row.
+    rules[`.cm-ai-gutter .cm-gutterElement.cm-gutter-h${index + 1}`] = {
+      '--md-gutter-line-height': headingGutterBandEm(index + 1),
+    };
+  });
+  return rules;
+}
 const finchTheme = EditorView.theme({
   '&': {
     height: '100%',
@@ -164,7 +272,8 @@ const finchTheme = EditorView.theme({
     // sets these two on view.dom.style instead — inline style, never wiped.
     paddingTop: 'var(--md-line-pad-y, 2px)',
     paddingBottom: 'var(--md-line-pad-y, 2px)',
-    lineHeight: 'var(--md-line-height, 1.7rem)',
+    // Body-relative so the gutter can mirror it exactly; see gutterBandEm.
+    lineHeight: `calc(var(--md-line-ratio, ${PROSE_LINE_RATIO.compact}) * 1em)`,
   },
   // The table package leaves a source-line box before its block widget and
   // owns the matching gutter layout, so collapse that package-specific box.
@@ -243,12 +352,8 @@ const finchTheme = EditorView.theme({
   // instead of ballooning past body size the way a flat +0.1em/level did.
   // Kept deliberately compact for source editing: hierarchy comes mostly
   // from weight and Markdown's accent syntax, rather than oversized rows.
-  '.cm-line.cm-md-h1': { fontSize: '1.4em', fontWeight: '700', lineHeight: 'normal !important'},
-  '.cm-line.cm-md-h2': { fontSize: '1.2em', fontWeight: '700', lineHeight: 'normal !important'},
-  '.cm-line.cm-md-h3': { fontSize: '1.15em', fontWeight: '700', lineHeight: 'normal !important'},
-  '.cm-line.cm-md-h4': { fontSize: '1.1em', fontWeight: '700', lineHeight: 'normal !important'},
-  '.cm-line.cm-md-h5': { fontSize: '1.04em', fontWeight: '700', lineHeight: 'normal !important'},
-  '.cm-line.cm-md-h6': { fontSize: '1em', fontWeight: '700', lineHeight: 'normal !important'},
+  // Sizes and the matching gutter bands both come from HEADING_FONT_SCALE.
+  ...headingLineRules(),
   // Source-mode live preview: non-active Markdown delimiters collapse out of
   // sight; the cursor/selection line deliberately has no such decoration.
   '.cm-md-bullet': {
@@ -414,7 +519,7 @@ const finchTheme = EditorView.theme({
     // selection layer behind line content, so an opaque `var(--card)` mix
     // would cover the selection completely.
     backgroundColor: 'color-mix(in srgb, var(--text) 8%, transparent)',
-    lineHeight: '1.3rem !important',
+    lineHeight: codeEm(CODE_LINE_RATIO) + ' !important',
     fontFamily: 'var(--finch-font-mono)',
     paddingTop: '0 !important',
     paddingBottom: '0 !important',
@@ -423,24 +528,25 @@ const finchTheme = EditorView.theme({
     // Empty-line AI hint is absolutely positioned, so it does not inherit
     // padding layout. Give it the same content-start offset as code text.
     '--cm-ai-hint-inline-offset': '26px',
-    fontSize: '13px !important',
+    // Relative to the body size, so code follows the font-size menu like
+    // everything else. A fixed px here would also freeze the `em` basis of
+    // the line-height above and pull the gutter out of alignment.
+    fontSize: `${CODE_FONT_SCALE}em !important`,
   },
 
   '.cm-line.cm-md-code-line span': {
-    fontSize: '12px !important',
+    fontSize: codeEm(CODE_TEXT_SCALE) + ' !important',
   },
   '.cm-line.cm-md-code-open': {
-    fontSize: '12px',
     borderRadius: '8px 8px 0 0',
-    height: '22px',
+    height: codeEm(CODE_FENCE_BAR_RATIO),
     paddingTop: '2px',
     paddingInline: '12px',
-    lineHeight: '1.5rem !important',
+    lineHeight: codeEm(CODE_OPEN_RATIO) + ' !important',
   },
   '.cm-line.cm-md-code-close': {
-    fontSize: '12px',
     borderRadius: '0 0 8px 8px',
-    height: '22px',
+    height: codeEm(CODE_FENCE_BAR_RATIO),
     paddingInline: '12px'
   },
   '.cm-md-code-fence-empty': { opacity: '0' },
@@ -497,6 +603,11 @@ const finchTheme = EditorView.theme({
     // the same root the font-size menu writes — 12px at the 16px tier,
     // scaling with the menu, independent of `.cm-scroller`/`.cm-content`.
     fontSize: `${12 / CM_ROOT_PX}em`,
+    // Single source of truth for every gutter row's glyph band. It mirrors
+    // the content line-height rather than restating it in pixels, which is
+    // what previously left the numbers drifting below their text whenever
+    // the font size or the comfortable-writing toggle changed.
+    '--md-gutter-line-height': `calc(var(--md-line-ratio, ${PROSE_LINE_RATIO.compact}) * 1em / ${GUTTER_FONT_SCALE})`,
   },
   '.cm-gutterElement': { padding: '0px 8px 0 10px' },
   // Scoped to the line-*number* gutter only (`.cm-lineNumbers` is that
@@ -510,7 +621,12 @@ const finchTheme = EditorView.theme({
         lineHeight: 'var(--md-gutter-line-height, 32px)',
         color: 'color-mix(in srgb, var(--muted) 35%, transparent)',
         fontFamily: 'var(--finch-font-mono)',
-        fontSize: '12px',
+        // Inherit the scaled size `.cm-gutters` sets rather than pinning a
+        // fixed px here. A hardcoded size froze this element's `em` basis, so
+        // every band below (which is expressed in `em` to follow the content)
+        // stayed stuck at its 16px value and the numbers fell out of
+        // alignment at every other step of the font-size menu.
+        fontSize: 'inherit',
   },
   // Fenced code lines render at a smaller font/line-height than prose
   // (`.cm-md-code-line` above), so their gutter row gets its own
@@ -518,7 +634,12 @@ const finchTheme = EditorView.theme({
   // gutter is a separate DOM tree from `.cm-content` and never inherits
   // classes from the content line decorations.
   '.cm-lineNumbers .cm-gutterElement.cm-gutter-code-line': {
-        lineHeight: '22px',
+    lineHeight: gutterBandEm(CODE_LINE_RATIO),
+  },
+  // The opening fence is the rounded header bar, which is taller than the
+  // code rows beneath it, so its number needs the matching band.
+  '.cm-lineNumbers .cm-gutterElement.cm-gutter-code-open': {
+    lineHeight: gutterBandEm(CODE_OPEN_RATIO),
   },
   // The line-number gutter keeps its normal position and look; the rewrite
   // indicator is a separate column placed to its right in the same gutter row.
@@ -543,10 +664,13 @@ const finchTheme = EditorView.theme({
   // line, not just the line-number gutter — including this one. Rescope
   // the line-height var locally so the spinner/rail/corner markers below,
   // which all size themselves off it, shrink to match the code gutter's
-  // real (shorter) 22px row instead of the prose row height. Without this
-  // the spinner circle on a code line overflows into the row underneath it.
+  // shorter row instead of the prose row height. Without this the spinner
+  // circle on a code line overflows into the row underneath it.
   '.cm-ai-gutter .cm-gutterElement.cm-gutter-code-line': {
-    '--md-gutter-line-height': '22px',
+    '--md-gutter-line-height': gutterBandEm(CODE_LINE_RATIO),
+  },
+  '.cm-ai-gutter .cm-gutterElement.cm-gutter-code-open': {
+    '--md-gutter-line-height': gutterBandEm(CODE_OPEN_RATIO),
   },
   '.cm-ai-working-mark': {
     position: 'absolute',
@@ -1072,6 +1196,54 @@ function observeImageSize(view: EditorView, wrap: HTMLElement): void {
   (wrap as any).__finchImageResizeObserver = observer;
 }
 
+/* Adopt an already-decoded `<img>` instead of creating a new one.
+ *
+ * CodeMirror can only hand a previous widget to `updateDOM` when it manages to
+ * pair the old and new tiles. Whenever a decoration change is reported as a
+ * zero-length bound change at the start of a replacement, the old tile never
+ * enters the reuse cache and the widget is rebuilt from scratch, which drops
+ * the decoded bitmap and makes the image visibly reload.
+ *
+ * Obsidian solves the same problem with a "recycler" pass: before rendering a
+ * fresh embed it searches the outgoing DOM for a loaded element with matching
+ * identity attributes and moves that node into the new tree. We do the same,
+ * scoped to the one node that is expensive to recreate.
+ *
+ * The old wrapper is still attached while the new one is being built, so the
+ * candidate is found by querying the live content DOM. Claimed nodes are
+ * flagged so two images sharing a `src` cannot adopt the same element. */
+function adoptDecodedImage(
+  view: EditorView,
+  src: string,
+  alt: string,
+  width: number | null,
+): HTMLImageElement | null {
+  let candidates: NodeListOf<HTMLImageElement>;
+  try {
+    candidates = view.contentDOM.querySelectorAll<HTMLImageElement>('img[data-md-image-src]');
+  } catch { return null; }
+  for (const candidate of candidates) {
+    if (candidate.dataset.mdImageSrc !== src) continue;
+    // Obsidian keys its recycler on src/alt/width/height rather than src
+    // alone. Matching the full identity means two images that merely share a
+    // file still adopt their own node instead of stealing a neighbour's.
+    const owner = candidate.closest<HTMLElement>('.cm-md-image-wrapper');
+    if (owner) {
+      if (owner.dataset.mdAlt !== alt) continue;
+      if ((owner.dataset.mdWidth ?? '') !== (width == null ? '' : String(width))) continue;
+    }
+    // Only adopt a node that actually finished decoding; a pending one would
+    // carry its unresolved layout across and defeat the purpose.
+    if (!candidate.complete || candidate.naturalWidth === 0) continue;
+    if ((candidate as any).__finchImageClaimed) continue;
+    (candidate as any).__finchImageClaimed = true;
+    queueMicrotask(() => { delete (candidate as any).__finchImageClaimed; });
+    candidate.remove();
+    return candidate;
+  }
+  return null;
+}
+
 class MarkdownImageWidget extends WidgetType {
   private captionEl: HTMLElement | null = null;
 
@@ -1079,13 +1251,11 @@ class MarkdownImageWidget extends WidgetType {
     private readonly src: string,
     private readonly alt: string,
     private readonly width: number | null,
-    private readonly selected: boolean,
   ) { super(); }
   eq(other: MarkdownImageWidget): boolean {
     return other.src === this.src
       && other.alt === this.alt
-      && other.width === this.width
-      && other.selected === this.selected;
+      && other.width === this.width;
   }
 
   ignoreEvent(event: Event): boolean {
@@ -1094,9 +1264,9 @@ class MarkdownImageWidget extends WidgetType {
 
   toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement('span');
-    wrap.className = `cm-md-image-wrapper${this.selected ? ' cm-md-image-selected' : ''}`;
+    wrap.className = 'cm-md-image-wrapper';
     wrap.tabIndex = -1;
-    wrap.setAttribute('aria-selected', this.selected ? 'true' : 'false');
+    wrap.setAttribute('aria-selected', 'false');
     wrap.addEventListener('keydown', (event) => {
       if (event.key === 'Backspace' || event.key === 'Delete') {
         event.preventDefault();
@@ -1109,12 +1279,22 @@ class MarkdownImageWidget extends WidgetType {
       event.stopPropagation();
       navigateFromImageWidget(view, wrap, event.key === 'ArrowLeft' ? -1 : 1);
     });
+    // Enough to rebuild the <img> if this wrapper ever ends up without one,
+    // which is what `healAdoptedImages` repairs.
+    wrap.dataset.mdSrc = this.src;
+    wrap.dataset.mdAlt = this.alt;
+    if (this.width != null) wrap.dataset.mdWidth = String(this.width);
     const frame = document.createElement('span');
     frame.className = 'cm-md-image-frame';
-    const image = document.createElement('img');
-    image.src = this.src;
+    // Reuse the decoded node when one is available; assigning `src` again is
+    // what makes the image blink, so it only happens for a genuinely new node.
+    const image = adoptDecodedImage(view, this.src, this.alt, this.width)
+      ?? document.createElement('img');
+    if (!image.dataset.mdImageSrc) {
+      image.src = this.src;
+      image.dataset.mdImageSrc = this.src;
+    }
     image.alt = this.alt;
-    image.dataset.mdImageSrc = this.src;
     image.title = this.alt || this.src;
     applyMarkdownImageWidth(image, this.width);
     frame.appendChild(image);
@@ -1142,9 +1322,17 @@ class MarkdownImageWidget extends WidgetType {
       const text = event.clipboardData?.getData('text/plain') ?? '';
       document.execCommand('insertText', false, text.replace(/[\r\n]+/g, ' '));
     });
+    // An IME commits its candidate phrase with Enter. Blurring on that Enter
+    // would end the caption edit mid-word, so let the IME have it.
+    let captionCompositionEndedAt = 0;
+    caption.addEventListener('compositionend', () => { captionCompositionEndedAt = Date.now(); });
     caption.addEventListener('keydown', (event) => {
       event.stopPropagation();
       if (event.key === 'Enter') {
+        // `isComposing` misses engines that fire compositionend just before
+        // this keydown, hence the 229 fallback and the same-tick check.
+        if (event.isComposing || event.keyCode === 229) return;
+        if (Date.now() - captionCompositionEndedAt < 100) return;
         event.preventDefault();
         caption.blur();
       } else if (event.key === 'Escape') {
@@ -1161,7 +1349,6 @@ class MarkdownImageWidget extends WidgetType {
     this.captionEl = caption;
 
     observeImageSize(view, wrap);
-    if (this.selected) queueMicrotask(() => focusSelectedImageWidget(wrap));
     return wrap;
   }
 
@@ -1175,8 +1362,6 @@ class MarkdownImageWidget extends WidgetType {
 
   updateDOM(dom: HTMLElement, view: EditorView, from: MarkdownImageWidget): boolean {
     if (from.src !== this.src || from.alt !== this.alt) return false;
-    dom.classList.toggle('cm-md-image-selected', this.selected);
-    dom.setAttribute('aria-selected', this.selected ? 'true' : 'false');
     const image = dom.querySelector<HTMLImageElement>('img[data-md-image-src]');
     if (!image) return false;
     applyMarkdownImageWidth(image, this.width);
@@ -1184,7 +1369,6 @@ class MarkdownImageWidget extends WidgetType {
       try { view.requestMeasure(); } catch { /* view already destroyed */ }
     }
     this.captionEl = dom.querySelector('.cm-md-image-caption');
-    if (this.selected && !from.selected) queueMicrotask(() => focusSelectedImageWidget(dom));
     return true;
   }
 }
@@ -1384,12 +1568,7 @@ function imageWrapperDecorations(state: EditorState): DecorationSet {
       if (!src) return false;
       const range = { from: ref.from, to: ref.to };
       decorations.push(Decoration.replace({
-        widget: new MarkdownImageWidget(
-          src,
-          parsedAlt.caption,
-          parsedAlt.width,
-          imageSelectionMatches(state, range),
-        ),
+        widget: new MarkdownImageWidget(src, parsedAlt.caption, parsedAlt.width),
       }).range(range.from, range.to));
       return false;
     },
@@ -1400,14 +1579,71 @@ function imageWrapperDecorations(state: EditorState): DecorationSet {
 const imageWrapperExtension = StateField.define<DecorationSet>({
   create: imageWrapperDecorations,
   update(decorations, transaction) {
-    // Selection is the single source of truth for the image outline. Rebuild
-    // the lightweight decorations on selection changes while updateDOM keeps
-    // the existing decoded <img> node alive.
-    return transaction.docChanged || transaction.selection
+    // Only the document defines where images are. Selection deliberately does
+    // not take part: rebuilding this set on every caret move dirties the
+    // replaced range, and CodeMirror then discards the rendered widget instead
+    // of routing it through `updateDOM`, so the image reloads on each pass.
+    // The selected outline is applied to the live DOM by the plugin below.
+    return transaction.docChanged
       ? imageWrapperDecorations(transaction.state)
-      : decorations.map(transaction.changes);
+      : decorations;
   },
   provide: (field) => EditorView.decorations.from(field),
+});
+
+/* Paint the selected image outline directly onto the rendered widget.
+ *
+ * Keeping this out of the decoration set is what allows the widget to survive
+ * caret movement. The class and focus are applied imperatively, which is the
+ * same split Obsidian uses for its embeds. */
+const imageSelectionOutline = ViewPlugin.fromClass(class {
+  constructor(view: EditorView) { this.sync(view); }
+
+  update(update: ViewUpdate): void {
+    if (update.selectionSet || update.docChanged || update.viewportChanged) this.sync(update.view);
+  }
+
+  /* `update` runs before the content DOM is written, so a pass that rebuilds
+   * the widget would immediately discard the class we just set. CodeMirror
+   * calls this hook after a redraw, which is the only point where the current
+   * wrapper elements are guaranteed to be the ones on screen. */
+  docViewUpdate(view: EditorView): void { this.sync(view); }
+
+  /* Two images can share one `src`, and adoption picks the first decoded
+   * match in document order, so a rebuilt widget may take the node belonging
+   * to a neighbour that was never rebuilt. Rather than trying to predict which
+   * wrapper is about to be replaced, repair the rare loser afterwards: the
+   * wrapper carries everything needed to recreate its image. */
+  private heal(view: EditorView): void {
+    for (const wrap of view.contentDOM.querySelectorAll<HTMLElement>('.cm-md-image-wrapper')) {
+      const frame = wrap.querySelector('.cm-md-image-frame');
+      if (!frame || frame.querySelector('img[data-md-image-src]')) continue;
+      const src = wrap.dataset.mdSrc;
+      if (!src) continue;
+      const image = document.createElement('img');
+      image.src = src;
+      image.dataset.mdImageSrc = src;
+      image.alt = wrap.dataset.mdAlt ?? '';
+      image.title = image.alt || src;
+      const width = wrap.dataset.mdWidth;
+      applyMarkdownImageWidth(image, width ? Number(width) : null);
+      frame.insertBefore(image, frame.firstChild);
+    }
+  }
+
+  private sync(view: EditorView): void {
+    this.heal(view);
+    const selected = selectedImageRange(view.state);
+    const active = selected && imageSelectionMatches(view.state, selected) ? selected : null;
+    for (const wrap of view.contentDOM.querySelectorAll<HTMLElement>('.cm-md-image-wrapper')) {
+      const range = active ? imageRangeAtWidgetDOM(view, wrap) : null;
+      const on = !!active && !!range && range.from === active.from && range.to === active.to;
+      if (wrap.classList.contains('cm-md-image-selected') === on) continue;
+      wrap.classList.toggle('cm-md-image-selected', on);
+      wrap.setAttribute('aria-selected', on ? 'true' : 'false');
+      if (on) focusSelectedImageWidget(wrap);
+    }
+  }
 });
 
 // Cursor motion treats each image source as one atomic range. Our horizontal
@@ -1585,10 +1821,17 @@ function deleteSelectedImage(view: EditorView): boolean {
 // number gutter. `gutterLineClass` is the CM6 mechanism for styling gutter
 // rows independently — used here purely to give fenced-code rows their own
 // `line-height`, matching the smaller code-line box on the content side.
-class CodeGutterMarker extends GutterMarker {
-  elementClass = 'cm-gutter-code-line';
+class ClassGutterMarker extends GutterMarker {
+  constructor(readonly elementClass: string) { super(); }
 }
-const codeGutterMarker = new CodeGutterMarker();
+const codeGutterMarker = new ClassGutterMarker('cm-gutter-code-line');
+// The opening fence renders as a taller header bar than the code body.
+const codeOpenGutterMarker = new ClassGutterMarker('cm-gutter-code-line cm-gutter-code-open');
+// A heading row's band has to match the taller heading line box, otherwise
+// the number keeps the prose band and sits low against the heading text.
+const headingGutterMarkers = HEADING_FONT_SCALE.map(
+  (_scale, index) => new ClassGutterMarker(`cm-gutter-h${index + 1}`),
+);
 
 function computeCodeGutterMarks(doc: Text): RangeSet<GutterMarker> {
   const builder = new RangeSetBuilder<GutterMarker>();
@@ -1596,7 +1839,16 @@ function computeCodeGutterMarks(doc: Text): RangeSet<GutterMarker> {
   for (let lineNo = 1; lineNo <= doc.lines; lineNo++) {
     const line = doc.line(lineNo);
     const isFenceLine = FENCE_RE.test(line.text);
-    if (isFenceLine || inFence) builder.add(line.from, line.from, codeGutterMarker);
+    if (isFenceLine || inFence) {
+      // Opening fence = a fence line encountered while not already inside one.
+      const isOpen = isFenceLine && !inFence;
+      builder.add(line.from, line.from, isOpen ? codeOpenGutterMarker : codeGutterMarker);
+    } else {
+      // Inside a fence a `#` is code, not a heading, so this only runs on
+      // lines the content side also treats as headings.
+      const heading = HEADING_RE.exec(line.text);
+      if (heading) builder.add(line.from, line.from, headingGutterMarkers[heading[1].length - 1]);
+    }
     if (isFenceLine) inFence = !inFence;
   }
   return builder.finish();
@@ -1942,6 +2194,86 @@ function collectTableLines(view: EditorView): Set<number> {
   return lines;
 }
 
+/* Stop a dropped table tile from unmounting a table that is still on screen.
+ *
+ * The package caches its rendered element on the widget instance and hands the
+ * same node back from `toDOM`. When CodeMirror fails to pair the old and new
+ * tiles — the caret entering the table's line is enough, because the active
+ * line class marks that range as changed — it re-emits the widget, gets the
+ * element that is already in the document, and then destroys the old tile.
+ * That destroy runs the package's `destroy()`, which unmounts the Svelte
+ * component inside the very element the new tile just adopted, leaving an
+ * empty `.tbl-table-widget` behind. The package's own comment acknowledges
+ * that `destroy()` "may be called again to redestroy after the widget has been
+ * recreated" but does not guard against it.
+ *
+ * CodeMirror only destroys dropped tiles after the new DOM is in place, so an
+ * element that is still connected is by definition one that was reused. Adding
+ * that check makes the stale destroy a no-op, and implementing `updateDOM`
+ * lets a genuine pairing hand the mounted component to the incoming widget
+ * instead of tearing it down and rebuilding it. */
+function hardenTableWidgetPrototype(view: EditorView): boolean {
+  let widget: any = null;
+  const visit = (set: any) => {
+    if (widget || !set?.between) return;
+    set.between(0, view.state.doc.length, (_from: number, _to: number, value: any) => {
+      if (value?.widget?.tableDescription) { widget = value.widget; return false; }
+      return undefined;
+    });
+  };
+  for (const source of view.state.facet(EditorView.decorations)) {
+    visit(typeof source === 'function' ? (source as any)(view) : source);
+    if (widget) break;
+  }
+  if (!widget) return false;
+
+  const proto = Object.getPrototypeOf(widget);
+  if (!proto || (proto as any).__finchTableHardened) return true;
+  (proto as any).__finchTableHardened = true;
+
+  const originalDestroy = proto.destroy;
+  proto.destroy = function (dom: HTMLElement): void {
+    // Still in the document means another tile adopted it; unmounting now
+    // would blank a table the user is looking at.
+    if (dom?.isConnected) return;
+    originalDestroy?.call(this, dom);
+  };
+
+  proto.updateDOM = function (dom: HTMLElement, _view: EditorView, previous: any): boolean {
+    // Never claim an element the package has already emptied, otherwise the
+    // blank state would be preserved instead of repaired.
+    if (!dom?.querySelector('.tbl-table-wrapper')) return false;
+    if (previous === this) { this.widgetElement = dom; return true; }
+    const mine = this.tableDescription;
+    const theirs = previous?.tableDescription;
+    if (!mine || !theirs) return false;
+    if (mine.from !== theirs.from || mine.to !== theirs.to) return false;
+    if (!mine.table?.text?.eq?.(theirs.table?.text)) return false;
+    // Take ownership of the mounted component so the outgoing instance can no
+    // longer tear it down.
+    this.widgetElement = dom;
+    this.destroyWidgetElement = previous.destroyWidgetElement;
+    this.height = previous.height;
+    previous.destroyWidgetElement = undefined;
+    previous.widgetElement = undefined;
+    return true;
+  };
+  return true;
+}
+
+/* The widget class is not exported, so the prototype is reached through the
+ * first rendered instance. Keep trying until a table appears in the document. */
+const tableWidgetHardening = ViewPlugin.fromClass(class {
+  private done = false;
+  constructor(view: EditorView) { this.attempt(view); }
+  update(update: ViewUpdate): void {
+    if (!this.done && (update.docChanged || update.viewportChanged)) this.attempt(update.view);
+  }
+  private attempt(view: EditorView): void {
+    try { this.done = hardenTableWidgetPrototype(view); } catch { /* keep the editor usable */ }
+  }
+});
+
 // `codemirror-markdown-tables` renders each table as a block replacing
 // decoration whose widget owns a Svelte component. That widget's `destroy()`
 // unmounts the component and clears its cached element, and the package's own
@@ -2038,35 +2370,6 @@ function installTableWidgetKeeper(view: EditorView): () => void {
     observer.disconnect();
     if (frame) window.cancelAnimationFrame(frame);
   };
-}
-
-// TEMPORARY DIAGNOSTIC — the line-number gutter is misaligned for image and
-// table lines when a document is opened directly in the webview, but correct
-// when the same file is opened from Home. The gutter positions every row from
-// CodeMirror's height map, so this reports where that map disagrees with the
-// real laid-out DOM, and how that gap evolves as images decode.
-function installGutterHeightDiagnostic(view: EditorView): () => void {
-  const log = (msg: string) => (window as any).__mdLog?.(`[gutter] ${msg}`);
-  const snapshot = (label: string) => {
-    const rows: string[] = [];
-    for (const el of Array.from(view.dom.querySelectorAll<HTMLElement>('.cm-content > .cm-line'))) {
-      let pos: number;
-      try { pos = view.posAtDOM(el); } catch { continue; }
-      const line = view.state.doc.lineAt(pos);
-      const block = view.lineBlockAt(pos);
-      const domHeight = Math.round(el.getBoundingClientRect().height);
-      const mapHeight = Math.round(block.height);
-      // Only the rows that actually drive the complaint: a mismatch, or a
-      // line carrying a heavy widget.
-      const heavy = el.querySelector('.cm-md-image-wrapper, .tbl-table-widget');
-      if (Math.abs(domHeight - mapHeight) < 2 && !heavy) continue;
-      rows.push(`L${line.number}${heavy ? '*' : ''} dom=${domHeight} map=${mapHeight}`);
-    }
-    const widgets = view.dom.querySelectorAll('.tbl-table-widget').length;
-    log(`${label} contentH=${Math.round(view.contentDOM.getBoundingClientRect().height)} tables=${widgets} :: ${rows.join(' | ') || 'all aligned'}`);
-  };
-  const timers = [0, 400, 1500, 3000].map((delay) => window.setTimeout(() => snapshot(`t+${delay}ms`), delay));
-  return () => timers.forEach((id) => window.clearTimeout(id));
 }
 
 let lastTableHealAt = 0;
@@ -2190,7 +2493,26 @@ function computeMarkdownLivePreview(view: EditorView, previewLinks = true): Deco
       }
     }
   }
-  return Decoration.set(ranges, true);
+  return Decoration.set(dropRangesInsideImages(view, ranges), true);
+}
+
+/* Drop decorations that fall inside an image replacement.
+ *
+ * The image widget covers its whole Markdown source, so nothing emitted here
+ * for that span is ever visible. They are not merely useless: this plugin
+ * recomputes on every caret move, and a decoration that appears or disappears
+ * inside the replaced span marks the span as changed. CodeMirror then rebuilds
+ * the image widget, discarding the rendered element and its layout.
+ *
+ * Filtering them keeps the live-preview output byte-identical while the caret
+ * travels across an image, so the widget is left untouched. */
+function dropRangesInsideImages(view: EditorView, ranges: any[]): any[] {
+  const images: Array<{ from: number; to: number }> = [];
+  const imageDecorations = view.state.field(imageWrapperExtension, false);
+  if (!imageDecorations) return ranges;
+  imageDecorations.between(0, view.state.doc.length, (from, to) => { images.push({ from, to }); });
+  if (!images.length) return ranges;
+  return ranges.filter((range) => !images.some((image) => range.from >= image.from && range.to <= image.to));
 }
 
 function createMarkdownLivePreviewPlugin(previewLinks: boolean) {
@@ -3054,6 +3376,10 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
   // post-update measure to settle first, otherwise the two scroll
   // authorities (CM's cursor-preserving scroll and ours) yank the window.
   let focusModeEnabled = false;
+  // Mirrors what the layout compartment currently holds, so either setter can
+  // reconfigure without clobbering the other's value.
+  let layoutFontSizePx = CM_ROOT_PX;
+  let layoutComfortWriting = false;
   let centerLineRaf = 0;
   // While the mouse is down (drag-selecting text), centering would fight
   // the drag: every selection change re-centers, and the smooth scroll
@@ -3158,10 +3484,13 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       }),
       EditorView.lineWrapping,
       finchTheme,
+      layoutCompartment.of(layoutTheme(false)),
       syntaxHighlighting(markdownHighlight),
       blockSpacingPlugin,
       imageWrapperExtension,
+      imageSelectionOutline,
       imageAtomicRanges,
+      tableWidgetHardening,
       externalHighlightField,
       livePreviewMarkdownPlugin,
       EditorView.domEventHandlers({
@@ -3202,10 +3531,23 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       }),
     ],
   });
+  // Reconfiguring the compartment changes the theme facet, which is what
+  // makes CodeMirror re-measure every line height. A plain `requestMeasure`
+  // is not enough: it reuses the cached heights, which is how the gutter used
+  // to end up tens of pixels adrift after a spacing or font-size change.
+  const applyLayout = () => {
+    // Inline, so it beats finchTheme's `&` rule; the reconfigure below is what
+    // makes CodeMirror notice the new line heights either way.
+    view.dom.style.fontSize = `${layoutFontSizePx}px`;
+    view.dispatch({
+      effects: layoutCompartment.reconfigure(layoutTheme(layoutComfortWriting)),
+    });
+    view.requestMeasure();
+  };
+
   const disposeTableMenuI18n = installTableMenuI18n();
   const disposeStaticTableCellPreview = installStaticTableCellPreview(options.parent);
   const disposeTableWidgetKeeper = installTableWidgetKeeper(view);
-  const disposeGutterHeightDiagnostic = installGutterHeightDiagnostic(view);
 
   return {
     getValue: () => view.state.doc.toString(),
@@ -3313,24 +3655,16 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     focus: () => view.focus(),
     layout: () => view.requestMeasure(),
     setFontSize(size) {
-      view.dom.style.fontSize = `${size}px`;
-      view.requestMeasure();
+      layoutFontSizePx = size;
+      applyLayout();
     },
     setFontFamily(family) {
       view.dom.style.setProperty('--md-editor-font-family', family);
       view.requestMeasure();
     },
     setComfortWriting(on) {
-      // CSS tokens on the root's inline style — CM's own class management
-      // rebuilds view.dom.className on updates, which would silently drop a
-      // hand-added class, so switching via tokens is the durable approach.
-      const writing = !!on;
-      view.dom.style.setProperty('--md-line-pad-y', writing ? '4px' : '2px');
-      view.dom.style.setProperty('--md-line-height', writing ? '2em' : '1.7rem');
-      // Line-number gutter rows track the same rhythm (prose lines only;
-      // fenced-code gutter rows keep their own fixed 22px height).
-      view.dom.style.setProperty('--md-gutter-line-height', writing ? '40px' : '32px');
-      view.requestMeasure();
+      layoutComfortWriting = !!on;
+      applyLayout();
     },
     setFocusMode(on) {
       // Same token approach as setComfortWriting: non-active lines fade to
@@ -3360,7 +3694,6 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       window.removeEventListener('mouseup', onWindowMouseUp);
       disposeStaticTableCellPreview();
       disposeTableWidgetKeeper();
-      disposeGutterHeightDiagnostic();
       disposeTableMenuI18n();
       view.destroy();
     },
