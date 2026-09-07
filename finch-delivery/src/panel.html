@@ -43,9 +43,10 @@
 
   /* ── Layout ── */
   #app {
-    max-width: 960px;
+    width: 100%;
+    max-width: 1600px;
     margin: 0 auto;
-    padding: 24px 20px 48px;
+    padding: 24px calc(clamp(24px, 4vw, 64px) + 8px) 48px;
   }
 
   /* ── Header ── */
@@ -119,8 +120,8 @@
   /* ── Card grid ── */
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+    gap: 12px;
   }
 
   /* ── Card ── */
