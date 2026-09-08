@@ -1,0 +1,11 @@
+{
+  "name": "终端",
+  "description": "在 Finch 中为当前工作区打开交互式终端。",
+  "appPanel": {
+    "title": "终端",
+    "toolbar": {
+      "new-session": { "label": "重新启动", "tooltip": "重新启动终端会话" },
+      "clear": { "label": "清空", "tooltip": "清空终端" }
+    }
+  }
+}

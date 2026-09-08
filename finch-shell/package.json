@@ -1,0 +1,100 @@
+{
+  "name": "finch-shell",
+  "version": "0.1.0",
+  "description": "An interactive terminal panel for Finch powered by xterm.js and a native PTY.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-shell"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-shell#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "keywords": [
+    "finch",
+    "finch-minitool",
+    "shell",
+    "terminal",
+    "pty"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "minVersion": "1.6.1",
+    "name": "Shell",
+    "description": "Open an interactive terminal in Finch for the current workspace.",
+    "systemPrompt": "When the user asks to open an interactive terminal or shell panel in Finch, call finch_shell_open. Use the current workspace by default; pass cwd only when the user explicitly requests another directory.",
+    "main": "dist/index.js",
+    "activationEvents": [
+      "onStartup"
+    ],
+    "miniToolType": "local",
+    "categories": [
+      "developer-tools"
+    ],
+    "contributes": {
+      "tools": true,
+      "iconPacks": [
+        {
+          "id": "finch-shell-icons",
+          "label": "Shell icons"
+        }
+      ],
+      "appPanel": {
+        "icon": "square-terminal",
+        "viewType": "finch-shell.terminal",
+        "instanceMode": "single",
+        "showInLauncher": true,
+        "source": {
+          "type": "local",
+          "path": "dist/panel.html"
+        },
+        "toolbar": [
+          {
+            "id": "new-session",
+            "icon": "ext:finch-shell-icons/restart",
+            "label": "Restart",
+            "tooltip": "Restart terminal session"
+          },
+          {
+            "id": "clear",
+            "icon": "ext:finch-shell-icons/trash",
+            "tooltip": "Clear terminal"
+          }
+        ]
+      }
+    },
+    "permissions": {
+      "filesystem": "none",
+      "network": false,
+      "shell": true,
+      "sessions": false
+    }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.3.5",
+    "@types/node": "^26.1.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "esbuild": "^0.28.1",
+    "node-pty": "^1.1.0",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "i18n/",
+    "README.md"
+  ]
+}

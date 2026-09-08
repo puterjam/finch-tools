@@ -1,0 +1,11 @@
+{
+  "name": "Shell",
+  "description": "Open an interactive terminal in Finch for the current workspace.",
+  "appPanel": {
+    "title": "Shell",
+    "toolbar": {
+      "new-session": { "label": "Restart", "tooltip": "Restart terminal session" },
+      "clear": { "label": "Clear", "tooltip": "Clear terminal" }
+    }
+  }
+}
