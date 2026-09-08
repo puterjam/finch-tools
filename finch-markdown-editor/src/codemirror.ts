@@ -663,7 +663,8 @@ const finchTheme = EditorView.theme({
     fontFamily: 'var(--finch-font-mono)',
     paddingTop: '0 !important',
     paddingBottom: '0 !important',
-    width: 'calc(49rem) !important',
+    width: '99% !important',
+    // width: 'calc(49rem) !important',
     paddingInline: '24px',
     // Empty-line AI hint is absolutely positioned, so it does not inherit
     // padding layout. Give it the same content-start offset as code text.
@@ -672,7 +673,7 @@ const finchTheme = EditorView.theme({
     // everything else. A fixed px here would also freeze the `em` basis of
     // the line-height above and pull the gutter out of alignment.
     fontSize: `${CODE_FONT_SCALE}em !important`,
-    marginInline: '9.5px',
+    marginInline: 'auto',
   },
 
   '.cm-line.cm-md-code-line span': {
