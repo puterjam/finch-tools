@@ -99,6 +99,8 @@ interface MarkdownEditorOptions {
    * Return true to consume the key (the host opens its own prompt bar in
    * place of the space that would have been typed), false to type normally. */
   onAiHintTrigger?(info: { line: number; rect: { top: number; bottom: number; left: number; right: number } }): boolean;
+  /** The user clicked the active App View rewrite indicator to stop its exact turn. */
+  onAiWorkingCancel?(): void;
 }
 
 // --- Font-size model ---------------------------------------------------
@@ -593,13 +595,20 @@ const finchTheme = EditorView.theme({
     paddingInline: '12px'
   },
   '.cm-md-code-fence-empty': { opacity: '0' },
+  // Floated to the right of the (otherwise emptied) fence-open line. Its
+  // total vertical footprint (height + top/bottom margin) is sized to fit
+  // exactly inside that line's own `height` (see CODE_FENCE_BAR_RATIO
+  // above) — a taller footprint here previously poked past the line's own
+  // box and got sliced by whatever paints next, so keep these three
+  // numbers (18 + 2 + 2 = 22) matching CODE_FENCE_BAR_RATIO if either one
+  // ever changes.
   '.cm-md-code-copy': {
     float: 'right',
-    height: '20px',
-    margin: '4px -7px',
-    padding: '0 7px',
+    height: '18px',
+    margin: '3px -9px',
+    padding: '0 4px',
     border: '0px',
-    borderRadius: '6px',
+    borderRadius: '5px',
     color: 'var(--muted)',
     backgroundColor: 'color-mix(in srgb, var(--card) 88%, transparent)',
     font: '11px var(--finch-font-mono)',
@@ -774,6 +783,13 @@ const finchTheme = EditorView.theme({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    cursor: 'pointer',
+  },
+  '.cm-ai-working-spinner:hover svg': { animation: 'none' },
+  '.cm-ai-working-spinner:focus-visible': {
+    outline: '1px solid var(--accent)',
+    outlineOffset: '-1px',
+    borderRadius: '3px',
   },
   '.cm-ai-gutter svg': {
     width: '13px',
@@ -1991,7 +2007,27 @@ class AiWorkingStartMarker extends GutterMarker {
     const root = aiWorkingMarkRoot();
     const spinner = document.createElement('span');
     spinner.className = 'cm-ai-working-spinner';
-    spinner.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>';
+    spinner.setAttribute('role', 'button');
+    spinner.setAttribute('tabindex', '0');
+    spinner.setAttribute('aria-label', 'Stop rewrite');
+    spinner.title = 'Stop rewrite';
+    const setStopIcon = (stop: boolean) => {
+      spinner.innerHTML = stop
+        ? '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>'
+        : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" stroke-opacity="0.25"/><path d="M12 2a10 10 0 0 1 10 10"/></svg>';
+    };
+    setStopIcon(false);
+    spinner.addEventListener('mouseenter', () => setStopIcon(true));
+    spinner.addEventListener('mouseleave', () => setStopIcon(false));
+    const cancel = (event: Event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      spinner.dispatchEvent(new CustomEvent('finch:aiWorkingCancel', { bubbles: true }));
+    };
+    spinner.addEventListener('click', cancel);
+    spinner.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') cancel(event);
+    });
     root.appendChild(spinner);
     if (this.hasMore) root.appendChild(aiWorkingRail('cm-ai-working-rail-below'));
     return root;
@@ -3643,6 +3679,8 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
   const disposeTableMenuI18n = installTableMenuI18n();
   const disposeStaticTableCellPreview = installStaticTableCellPreview(options.parent);
   const disposeTableWidgetKeeper = installTableWidgetKeeper(view);
+  const onAiWorkingCancel = () => options.onAiWorkingCancel?.();
+  view.dom.addEventListener('finch:aiWorkingCancel', onAiWorkingCancel);
 
   // Height-map lookup for a line's top/bottom edge, expressed in the same
   // coordinate space as `scrollDOM.scrollTop`. `lineBlockAt` is used instead
@@ -3810,6 +3848,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       return lineEdge(line);
     },
     destroy() {
+      view.dom.removeEventListener('finch:aiWorkingCancel', onAiWorkingCancel);
       if (centerLineRaf) { cancelAnimationFrame(centerLineRaf); centerLineRaf = 0; }
       if (externalHighlightTimer) { clearTimeout(externalHighlightTimer); externalHighlightTimer = 0; }
       window.removeEventListener('mouseup', onWindowMouseUp);

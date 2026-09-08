@@ -74,6 +74,8 @@
       'appview.hintSpace': '按 space（空格）以启用 AI · 按 / 选择格式',
       'appview.hintSpaceCode': '按 space（空格）以启用 AI',
       'appview.rewriteDone': '改写已完成，文件内容已刷新。',
+      'appview.cancelling': '正在中断改写…',
+      'appview.cancelled': '改写已中断。',
       'editor.ariaLabel': '写字编辑器',
       'actions.copyToWx': '复制到公众号',
       'actions.copyImg': '复制图片',
@@ -122,6 +124,7 @@
       'toolbar.focus.tooltipOff': '开启专注：非当前行半透明',
       'toolbar.more.reload': '重新渲染',
       'toolbar.more.reveal': '在文件管理器中定位',
+      'toolbar.more.recentSession': '查看最近的会话',
       'toolbar.more.about': '关于渲染',
       'toolbar.more.tooltip': '更多',
       'annotate.lineUnknown': '（未能精确定位对应行号，请以下方引用文本为准）',
@@ -239,6 +242,8 @@
       'appview.hintSpace': 'Press space for AI · / for formatting',
       'appview.hintSpaceCode': 'Press space for AI',
       'appview.rewriteDone': 'Rewrite complete. The document has refreshed.',
+      'appview.cancelling': 'Stopping rewrite…',
+      'appview.cancelled': 'Rewrite stopped.',
       'editor.ariaLabel': 'Writing editor',
       'actions.copyToWx': 'Copy for WeChat',
       'actions.copyImg': 'Copy image',
@@ -287,6 +292,7 @@
       'toolbar.focus.tooltipOff': 'Turn on focus mode: dim inactive lines',
       'toolbar.more.reload': 'Re-render',
       'toolbar.more.reveal': 'Show in file manager',
+      'toolbar.more.recentSession': 'View recent session',
       'toolbar.more.about': 'About rendering',
       'toolbar.more.tooltip': 'More',
       'annotate.lineUnknown': "(Couldn't pinpoint the exact line — use the quoted text below as reference)",
@@ -491,6 +497,15 @@
 
   var isAppView = false;
   var appViewInitialized = false;
+  var appViewBreadcrumbSubscribed = false;
+  // Exact receipt identity for the spinner currently displayed in the gutter.
+  // Retaining both ids prevents a late click from cancelling a newer queued turn.
+  var activeRewrite = null;
+  // Current document's most recent AI Session (rewrite or style-design),
+  // if any — powers App View's persistent "查看最近的会话" menu entry.
+  // Reset to null whenever the document changes; repopulated by the host's
+  // 'lastSessionInfo' push right after the new document lands.
+  var lastSessionId = null;
   var previewVisible = true;
   // Whether an App View AI-style design Session is currently running for
   // this document — drives the wand icon's loading spinner. Restored from
@@ -581,6 +596,35 @@
       statusEl.textContent = '';
       statusEl.className = 'status';
     }, 5000);
+  }
+
+  // Rewrite/style-design sessions now run with `activity: 'background'`
+  // (quiet: no Space conversation-list entry, no desktop notification), so
+  // this inline "打开改写会话" button is the *only* way back to that
+  // conversation short of digging through the Space by hand. `autoHideMs`
+  // falsy means "leave it up" — used for the started/in-progress state,
+  // since the task keeps running long after 5s and the button should still
+  // be there when the writer glances back down; finished/failed states pass
+  // the normal 5s so the footer doesn't linger forever once it's over.
+  function setStatusWithSession(text, isError, sessionId, autoHideMs) {
+    if (statusHideTimer) { clearTimeout(statusHideTimer); statusHideTimer = 0; }
+    statusEl.replaceChildren(document.createTextNode(text || ''));
+    statusEl.className = 'status' + (isError ? ' error' : '');
+    if (sessionId) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'status-inline-btn';
+      btn.textContent = t('appview.openSession');
+      btn.addEventListener('click', function () {
+        if (api && api.navigation && api.navigation.openSession) api.navigation.openSession(sessionId);
+      });
+      statusEl.appendChild(btn);
+    }
+    if (autoHideMs) statusHideTimer = setTimeout(function () {
+      statusHideTimer = 0;
+      statusEl.replaceChildren();
+      statusEl.className = 'status';
+    }, autoHideMs);
   }
 
   function showRendererAbout() {
@@ -807,7 +851,14 @@
   }
 
   function saveLibraryGroupState() {
-    try { localStorage.setItem(LIBRARY_GROUP_STATE_KEY, JSON.stringify({ order: libraryGroupOrder, collapsed: libraryCollapsedGroups })); } catch (e) {}
+    var payload = { order: libraryGroupOrder, collapsed: libraryCollapsedGroups };
+    // Keep the localStorage copy for the very first synchronous paint before
+    // 'ready' arrives, but the extension host now owns the durable copy —
+    // localStorage alone doesn't reliably survive a panel/WebView
+    // replacement (e.g. an app restart), which is why a reorder could
+    // silently revert to the previous order after relaunching.
+    try { localStorage.setItem(LIBRARY_GROUP_STATE_KEY, JSON.stringify(payload)); } catch (e) {}
+    if (api && api.postMessage) api.postMessage({ type: 'saveLibraryGroups', libraryGroups: payload });
   }
 
   // Shared by both the Library drawer and the Home "recent documents" grid
@@ -1019,7 +1070,7 @@
     setLibraryOpen(false);
     loadingFromHome = true;
     setStatus(t('status.opening'));
-    api.postMessage({ type: 'loadPath', path: docPath });
+    requestLoadPath(docPath);
   });
   if (libraryGroups) {
     // Persist ordinary expand/collapse choices. During a drag all groups are
@@ -1079,6 +1130,21 @@
   // otherwise prints nothing at all for the very first document a panel loads).
   var loadingFromHome = false;
 
+  // The most recently *requested* switch-to-another-document path. `loadPath`
+  // has no request/response correlation id, so nothing stops two overlapping
+  // requests (e.g. two quick ⌘[ presses) from resolving out of order. Every
+  // switch-document request updates this; a `document` reply for a different
+  // path than this is a stale winner of that race and must be dropped, or the
+  // editor can end up showing file A's content while the breadcrumb (already
+  // updated synchronously by the host) says B.
+  var awaitingLoadPath = '';
+
+  function requestLoadPath(filePath) {
+    if (!filePath || !api || !api.postMessage) return;
+    awaitingLoadPath = filePath;
+    api.postMessage({ type: 'loadPath', path: filePath });
+  }
+
   if (homeGrid) homeGrid.addEventListener('click', function (event) {
     if (!api || !api.postMessage) return;
     // Delegated: `.home-group-cwd` buttons are re-created on every render
@@ -1104,7 +1170,7 @@
     if (!docPath) return;
     loadingFromHome = true;
     setStatus(t('status.opening'));
-    api.postMessage({ type: 'loadPath', path: docPath });
+    requestLoadPath(docPath);
   });
   // The reveal control is keyboard-focusable (role="button" tabindex="0")
   // since it's nested inside the card's own <button>; Enter/Space need their
@@ -1135,8 +1201,95 @@
   }
 
   function setPanelTitle(title) {
-    if (!api || !api.panel || !api.panel.setTitle) return;
+    // App View owns its leading “Writing” breadcrumb through the manifest.
+    // Updating the panel title here would overwrite that fixed app identity
+    // with the current filename, so only the ordinary AppPanel updates it.
+    if (isAppView || !api || !api.panel || !api.panel.setTitle) return;
     api.panel.setTitle(title || t('home.title')).catch(function () {});
+  }
+
+  // Breadcrumb labels alone cannot reconstruct a document after ⌘[/⌘] or a
+  // relaunch. Keep the absolute path in the opaque level id; the host only
+  // displays `title`, and the backend still validates every loadPath request.
+  function documentBreadcrumbId(filePath) {
+    return filePath ? 'document:' + encodeURIComponent(filePath) : '';
+  }
+
+  function documentPathFromBreadcrumbId(id) {
+    if (!id || id.indexOf('document:') !== 0) return '';
+    try {
+      var filePath = decodeURIComponent(id.slice('document:'.length));
+      return /^(?:\/|[A-Za-z]:[\\/])/.test(filePath) ? filePath : '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  // Set while `loadBreadcrumbDocument` has a request in flight so the
+  // `document` reply that eventually lands knows this load exists purely to
+  // catch the editor's own content up with a breadcrumb the host already
+  // set (a click on an earlier crumb, or a ⌘[/⌘] restore) — not a fresh
+  // user-initiated open. `applyDocument` must not call `syncAppViewBreadcrumb()`
+  // for it: the label is already correct, and re-`set()`-ing it would replay
+  // straight back into the host's history recording as if it were a brand
+  // new navigation, which can push a spurious duplicate entry and quietly
+  // scramble the back/forward stack.
+  var breadcrumbCatchUpPath = '';
+
+  function loadBreadcrumbDocument(filePath) {
+    if (!filePath || filePath === sourcePath || !api || !api.postMessage) return;
+    breadcrumbCatchUpPath = filePath;
+    requestLoadPath(filePath);
+  }
+
+  function syncAppViewBreadcrumb() {
+    if (!isAppView || !api || !api.appView || !api.appView.breadcrumb) return;
+    // “Writing” is the platform-owned home level. The page adds exactly one
+    // child level only while a document is open; clearing it returns to home.
+    var levels = hasDocument() && sourcePath
+      ? [{ id: documentBreadcrumbId(sourcePath), title: fileName || t('common.markdownDocDefault'), icon: 'file-text' }]
+      : [];
+    api.appView.breadcrumb.set(levels).catch(function () {});
+  }
+
+  function subscribeAppViewBreadcrumb() {
+    if (appViewBreadcrumbSubscribed || !api || !api.appView || !api.appView.breadcrumb) return;
+    appViewBreadcrumbSubscribed = true;
+    api.appView.breadcrumb.onNavigate(function (payload) {
+      // Finch reports its fixed “Mini Tools” / “Writing” root as an empty id.
+      // Route it through the same guarded Home flow as the in-page toolbar,
+      // including the unsaved-document confirmation before leaving the editor.
+      if (!payload.id) {
+        // goHome() may be cancelled by the unsaved-changes confirm, in which
+        // case resetToHome() never runs and the still-open document's own
+        // breadcrumb must be re-published to correct the host's optimistic
+        // truncation; when it does go through, resetToHome() already synced
+        // `[]` and this re-set is a harmless idempotent no-op (same empty
+        // levels), not a genuine new navigation.
+        if (hasDocument()) goHome().then(syncAppViewBreadcrumb);
+        return;
+      }
+      var filePath = documentPathFromBreadcrumbId(payload.id);
+      if (filePath) loadBreadcrumbDocument(filePath);
+      else api.appView.breadcrumb.set([]).catch(function () {});
+    });
+    api.appView.breadcrumb.onRestore(function (payload) {
+      var levels = Array.isArray(payload.levels) ? payload.levels : [];
+      if (!levels.length) {
+        // Same reasoning as onNavigate above.
+        if (hasDocument()) goHome().then(syncAppViewBreadcrumb);
+        return;
+      }
+      // This editor owns only one child page. Unknown/deeper restored stacks
+      // cannot be routed safely, so clear them instead of showing stale labels.
+      var filePath = levels.length === 1 && documentPathFromBreadcrumbId(levels[0].id);
+      if (!filePath) {
+        api.appView.breadcrumb.set([]).catch(function () {});
+        if (hasDocument()) goHome().then(syncAppViewBreadcrumb);
+        return;
+      }
+      loadBreadcrumbDocument(filePath);
+    });
   }
 
   // 8 built-in presets, then a separator, then the 3 reusable AI-managed
@@ -1256,6 +1409,7 @@
         items: [
           { id: 'reload', label: t('toolbar.more.reload'), disabled: mode !== 'preview' },
           { id: 'reveal', label: t('toolbar.more.reveal'), disabled: !hasDoc },
+          { id: 'recentSession', label: t('toolbar.more.recentSession'), disabled: !lastSessionId },
           { id: 'more-sep', label: '', separator: true },
           { id: 'about', label: t('toolbar.more.about') },
         ],
@@ -1263,8 +1417,8 @@
     ];
   }
 
-  function appMenuButton(id, label, checked) {
-    return '<button type="button" data-app-action="' + id + '"' + (checked ? ' class="checked"' : '') + '><span>' + label + '</span>' + (checked ? '<span>✓</span>' : '') + '</button>';
+  function appMenuButton(id, label, checked, disabled) {
+    return '<button type="button" data-app-action="' + id + '"' + (checked ? ' class="checked"' : '') + (disabled ? ' disabled' : '') + '><span>' + label + '</span>' + (checked ? '<span>✓</span>' : '') + '</button>';
   }
 
   function renderAppMenus() {
@@ -1295,7 +1449,9 @@
       + appMenuButton('font-family:rounded', t('toolbar.fontFamily.default'), editorFont === 'rounded')
       + appMenuButton('font-family:songti', t('toolbar.fontFamily.serif'), editorFont === 'songti');
     if (appMoreMenu) appMoreMenu.innerHTML = appMenuButton('reload', t('toolbar.more.reload'), false)
-      + appMenuButton('reveal', t('toolbar.more.reveal'), false) + '<hr>' + appMenuButton('about', t('toolbar.more.about'), false);
+      + appMenuButton('reveal', t('toolbar.more.reveal'), false)
+      + appMenuButton('recentSession', t('toolbar.more.recentSession'), false, !lastSessionId)
+      + '<hr>' + appMenuButton('about', t('toolbar.more.about'), false);
   }
 
   function syncAppToolbar() {
@@ -1397,6 +1553,10 @@
     },
     onPasteImage: pasteImageToHost,
     onAiHintTrigger: openAiPromptBar,
+    onAiWorkingCancel: function () {
+      if (!isAppView || !activeRewrite || !sourcePath || !api || !api.postMessage) return;
+      api.postMessage({ type: 'cancelRewrite', path: sourcePath, sessionId: activeRewrite.sessionId, turnId: activeRewrite.turnId });
+    },
   });
   cm.setFontSize(editorFontSize);
   cm.setFontFamily(EDITOR_FONTS[editorFont]);
@@ -2362,7 +2522,7 @@
   // status line can say *what* moved instead of just "content updated".
   var lastExternalChange = null;
 
-  function applyDocument(nextMarkdown, nextName, nextPath, force, diskBaseline) {
+  function applyDocument(nextMarkdown, nextName, nextPath, force, diskBaseline, skipBreadcrumbSync) {
     // Deliberately does NOT check cm.hasFocus(): unsaved local edits must
     // never be silently clobbered by an external update, whether or not the
     // editor happens to have DOM focus at that instant (e.g. the panel was
@@ -2403,6 +2563,7 @@
     if (!lastExternalChange) cm.setValue(markdown);
     setDirty(false); // also rebuilds+syncs the whole toolbar, picking up the new sourcePath/fileName below
     setPanelTitle(fileName);
+    if (!skipBreadcrumbSync) syncAppViewBreadcrumb();
     updateEmptyState();
     showPane();
     if (isAppView || mode === 'preview') render();
@@ -3234,11 +3395,13 @@
     fileName = '';
     sourcePath = '';
     savedMarkdown = null;
+    lastSessionId = null;
     html = '';
     annotationsEnabled = false;
     mode = 'edit';
     if (cm) cm.setValue('');
     setPanelTitle(t('home.title'));
+    syncAppViewBreadcrumb();
     showHtml('');
     if (api && api.postMessage) api.postMessage({ type: 'goHome' });
     updateEmptyState();
@@ -3288,6 +3451,7 @@
     if (itemId === 'save') { saveNow(); return; }
     if (itemId === 'reload') { render(); return; }
     if (itemId === 'reveal') { if (sourcePath && api && api.postMessage) api.postMessage({ type: 'openPath', path: sourcePath }); return; }
+    if (itemId === 'recentSession') { if (lastSessionId && api && api.navigation && api.navigation.openSession) api.navigation.openSession(lastSessionId); return; }
     if (itemId && itemId.indexOf('font-size:') === 0) { setEditorFontSize(Number(itemId.slice('font-size:'.length))); return; }
     if (itemId && itemId.indexOf('font-family:') === 0) { setEditorFont(itemId.slice('font-family:'.length)); return; }
     if (itemId === 'comfort:read') { setComfortWriting(false); return; }
@@ -3314,6 +3478,7 @@
     if (trigger) trigger.addEventListener('click', function (event) { event.stopPropagation(); toggleAppMenu(menu); });
     if (menu) menu.addEventListener('click', function (event) {
       var target = event.target && event.target.closest ? event.target.closest('[data-app-action]') : null;
+      if (target && target.disabled) return;
       var action = target && target.getAttribute('data-app-action');
       if (!action) return;
       handleMenu(action);
@@ -3452,6 +3617,17 @@
           // One-time migration from the earlier WebView-local cache.
           persistWritingPreferences();
         }
+        // Host is the durable source of truth for library group order; if it
+        // has a copy, it wins over whatever localStorage restored at script
+        // startup. Otherwise, migrate this WebView's local copy (if any) up
+        // to the host so it survives the next restart.
+        if (m.libraryGroups && typeof m.libraryGroups === 'object') {
+          libraryGroupOrder = Array.isArray(m.libraryGroups.order) ? m.libraryGroups.order.filter(function (id) { return typeof id === 'string'; }) : [];
+          libraryCollapsedGroups = m.libraryGroups.collapsed && typeof m.libraryGroups.collapsed === 'object' ? m.libraryGroups.collapsed : {};
+          if (libraryDocumentsCache.length) renderLibraryDocuments(libraryDocumentsCache);
+        } else if (libraryGroupOrder.length || Object.keys(libraryCollapsedGroups).length) {
+          saveLibraryGroupState();
+        }
         // Reconcile the navigator.language guess (used for the very first,
         // synchronous paint) against the host's real locale (ctx.i18n.locale,
         // forwarded from index.ts). Only re-render if it actually flips zh/en
@@ -3506,6 +3682,18 @@
       }
       if (m.type === 'finch:env') {
         isAppView = m.view === 'appView';
+        if (isAppView) {
+          // A document push can arrive before finch:env. In that short window
+          // the shared panel code still treats this as AppPanel and writes the
+          // filename into the host's leading App View title; restore the fixed
+          // app identity as soon as the real scope is known.
+          if (api && api.panel && api.panel.setTitle) api.panel.setTitle(t('home.title')).catch(function () {});
+          // Publish the page's current route before subscribing: onRestore
+          // immediately replays the host snapshot, so a document that loaded
+          // just before finch:env must not be mistaken for a restored Home.
+          syncAppViewBreadcrumb();
+          subscribeAppViewBreadcrumb();
+        }
         if (isAppView && !appViewInitialized) {
           // AppView starts as a writing surface; preview is opt-in.
           appViewInitialized = true;
@@ -3529,6 +3717,7 @@
           renderRecentDocuments([]);
         }
         showPane();
+        syncAppViewBreadcrumb();
         syncToolbar();
         if (isAppView && hasDocument()) render();
         if (!empty.hidden || isAppView) requestRecentDocuments();
@@ -3542,16 +3731,34 @@
       }
       if (m.type === 'status') { setStatus(m.message); return; }
       if (m.type === 'rewriteSessionStarted') {
+        activeRewrite = m.sessionId && m.turnId ? { sessionId: m.sessionId, turnId: m.turnId } : null;
         cm.setAiWorkingLines(Number(m.startLine) || 0, Number(m.endLine) || 0);
-        setStatus(m.rewriteMode === 'continue' ? t('appview.continuing') : t('appview.rewriting'));
+        setStatusWithSession(m.rewriteMode === 'continue' ? t('appview.continuing') : t('appview.rewriting'), false, m.sessionId, 0);
         return;
       }
-      if (m.type === 'rewriteSessionFinished') { cm.setAiWorkingLines(0, 0); setStatus(t('appview.rewriteDone')); return; }
-      if (m.type === 'rewriteSessionFailed') { cm.setAiWorkingLines(0, 0); setStatus(m.message || 'Rewrite failed.', true); return; }
-      if (m.type === 'styleSessionStarted') { setStyleSessionLoading(true); setStatus(t('aiStyle.appViewDesigning')); return; }
-      if (m.type === 'styleSessionFinished') { setStyleSessionLoading(false); setStatus(m.message || t('aiStyle.appViewDone')); return; }
-      if (m.type === 'styleSessionFailed') { setStyleSessionLoading(false); setStatus(m.message || t('aiStyle.appViewFailed'), true); return; }
+      if (m.type === 'rewriteCancellationRequested') {
+        if (activeRewrite && activeRewrite.turnId === m.turnId) activeRewrite.cancelling = true;
+        setStatusWithSession(t('appview.cancelling'), false, m.sessionId, 0);
+        return;
+      }
+      if (m.type === 'rewriteSessionFinished') { activeRewrite = null; cm.setAiWorkingLines(0, 0); setStatusWithSession(t('appview.rewriteDone'), false, m.sessionId, 5000); return; }
+      if (m.type === 'rewriteSessionFailed') {
+        var wasCancelled = activeRewrite && activeRewrite.turnId === m.turnId && activeRewrite.cancelling;
+        activeRewrite = null;
+        cm.setAiWorkingLines(0, 0);
+        setStatusWithSession(wasCancelled ? t('appview.cancelled') : (m.message || 'Rewrite failed.'), !wasCancelled, m.sessionId, 5000);
+        return;
+      }
+      if (m.type === 'styleSessionStarted') { setStyleSessionLoading(true); setStatusWithSession(t('aiStyle.appViewDesigning'), false, m.sessionId, 0); return; }
+      if (m.type === 'styleSessionFinished') { setStyleSessionLoading(false); setStatusWithSession(m.message || t('aiStyle.appViewDone'), false, m.sessionId, 5000); return; }
+      if (m.type === 'styleSessionFailed') { setStyleSessionLoading(false); setStatusWithSession(m.message || t('aiStyle.appViewFailed'), true, m.sessionId, 5000); return; }
       if (m.type === 'lastFileUnavailable') { return; }
+      if (m.type === 'lastSessionInfo') {
+        lastSessionId = m.sessionId || null;
+        syncToolbar();
+        renderAppMenus();
+        return;
+      }
       if (m.type === 'finch:menu') { handleMenu(m.itemId); return; }
       if (m.type === 'document') {
         var openedFromPicker = nativePickPending;
@@ -3569,6 +3776,21 @@
         // own save, and not an external edit of the file we're currently
         // looking at, so neither of the two guards below should apply to it.
         var isDifferentDocument = !!incomingPath && !!sourcePath && incomingPath !== sourcePath;
+        // A new file means any previously known AI Session no longer applies
+        // — clear it now and wait for the host's next 'lastSessionInfo' push
+        // (sent right after restoreInFlightOperations for the new path).
+        if (isDifferentDocument || savedMarkdown === null) lastSessionId = null;
+        // `loadPath` has no request/response id, so an older switch-document
+        // request can resolve *after* a newer one a rapid ⌘[/⌘] (or another
+        // breadcrumb click) already superseded — e.g. back to A, then back to
+        // B again before A's reply lands. Only the reply matching the most
+        // recently requested target is allowed to land; a stale one is
+        // silently dropped instead of clobbering what the breadcrumb (already
+        // updated synchronously by the host) says is on screen.
+        if (isDifferentDocument && awaitingLoadPath && incomingPath !== awaitingLoadPath) {
+          if (breadcrumbCatchUpPath === incomingPath) breadcrumbCatchUpPath = '';
+          return;
+        }
         if (!isDifferentDocument && incoming === savedMarkdown) {
           if (incomingRevision) documentRevision = Math.max(documentRevision, incomingRevision);
           syncToolbar();
@@ -3577,7 +3799,12 @@
         var isFirst = savedMarkdown === null;
         var wasLoadingFromHome = loadingFromHome;
         loadingFromHome = false;
-        var applied = applyDocument(incoming, m.title || t('common.markdownDocDefault'), m.path || sourcePath, openedFromPicker || isFirst || isDifferentDocument, m.diskMarkdown);
+        // A load fired purely to catch the editor up with a breadcrumb the
+        // host already owns (crumb click / ⌘[/⌘ restore) must not re-`set()`
+        // the breadcrumb on completion — see `loadBreadcrumbDocument`.
+        var isBreadcrumbCatchUp = !!incomingPath && breadcrumbCatchUpPath === incomingPath;
+        breadcrumbCatchUpPath = '';
+        var applied = applyDocument(incoming, m.title || t('common.markdownDocDefault'), m.path || sourcePath, openedFromPicker || isFirst || isDifferentDocument, m.diskMarkdown, isBreadcrumbCatchUp);
         if (!applied) { syncToolbar(); return; } // still clear the "open" button's pending/disabled state
         documentRevision = incomingRevision || (isDifferentDocument ? 0 : documentRevision);
         if (m.draftRestored) {
@@ -3675,6 +3902,8 @@
       }
       if (m.type === 'error') {
         loadingFromHome = false; // don't let a stale flag mislabel the next unrelated document push
+        awaitingLoadPath = ''; // a failed loadPath must not keep blocking later replies as "stale"
+        breadcrumbCatchUpPath = '';
         // A save failure surfaces here (no matching 'savedMarkdown' will ever
         // arrive for that requestId) — resolve any awaiter as failed so the
         // unsaved-changes confirm doesn't hang forever waiting on it.

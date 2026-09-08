@@ -99,12 +99,77 @@ function substituteFinchFileImagesForBm(markdown: string): { markdown: string; u
   return { markdown: substituted, urls };
 }
 
+// bmmd's `render` also accepts `--mermaid-theme`, but it is an entirely
+// separate option from `--markdown-style` and defaults to bmmd's own
+// generic "default" mermaid palette if left unset — so a Mermaid diagram in,
+// say, the dark `terminal` layout style rendered with plain light/default
+// node colors that didn't match the surrounding article at all. Map each
+// built-in markdown style to whichever bundled mermaid theme reads closest
+// in tone, so diagrams always look like part of the same article.
+const MERMAID_THEME_BY_STYLE: Record<string, string> = {
+  kami: 'solarized-light',
+  bauhaus: 'github-light',
+  blueprint: 'nord',
+  botanical: 'catppuccin-latte',
+  newsprint: 'github-light',
+  retro: 'solarized-dark',
+  sketch: 'github-light',
+  terminal: 'one-dark',
+};
+
+// bmmd@0.3.2's own bundled mermaid renderer colors every node/text/arrow via
+// `var(--fg)`, `var(--_node-fill)`, etc. (see the `<style>` block it emits
+// inside each `figure.figure-mermaid > svg`), but the `render` CLI command
+// never actually defines the base `--bg`/`--fg`/`--line`/`--accent`/`--muted`
+// custom properties anywhere in its output — verified against 0.3.1 and
+// 0.3.2, with and without `--mermaid-theme`, on both `wechat` and `html`
+// platforms. Every color var is therefore unresolved and falls back to the
+// browser default (`fill: black`), so diagrams render as solid black shapes
+// with invisible black-on-black text — this is what the user is actually
+// seeing, not a missing/wrong theme choice. This is an upstream gap we can't
+// patch inside the bundled LGPL binary itself, so work around it here: values
+// below are copied verbatim from bmmd's own internal theme table (dist-*.mjs)
+// so the injected colors stay pixel-identical to what bmmd intends. Update
+// this table if a future bmmd bump changes those hex values.
+interface MermaidThemeColors { bg: string; fg: string; line?: string; accent?: string; muted?: string; }
+const MERMAID_THEME_COLORS: Record<string, MermaidThemeColors> = {
+  'zinc-dark': { bg: '#18181B', fg: '#FAFAFA' },
+  'tokyo-night': { bg: '#1a1b26', fg: '#a9b1d6', line: '#3d59a1', accent: '#7aa2f7', muted: '#565f89' },
+  'tokyo-night-storm': { bg: '#24283b', fg: '#a9b1d6', line: '#3d59a1', accent: '#7aa2f7', muted: '#565f89' },
+  'tokyo-night-light': { bg: '#d5d6db', fg: '#343b58', line: '#34548a', accent: '#34548a', muted: '#9699a3' },
+  'catppuccin-mocha': { bg: '#1e1e2e', fg: '#cdd6f4', line: '#585b70', accent: '#cba6f7', muted: '#6c7086' },
+  'catppuccin-latte': { bg: '#eff1f5', fg: '#4c4f69', line: '#9ca0b0', accent: '#8839ef', muted: '#9ca0b0' },
+  nord: { bg: '#2e3440', fg: '#d8dee9', line: '#4c566a', accent: '#88c0d0', muted: '#616e88' },
+  'nord-light': { bg: '#eceff4', fg: '#2e3440', line: '#aab1c0', accent: '#5e81ac', muted: '#7b88a1' },
+  dracula: { bg: '#282a36', fg: '#f8f8f2', line: '#6272a4', accent: '#bd93f9', muted: '#6272a4' },
+  'github-light': { bg: '#ffffff', fg: '#1f2328', line: '#d1d9e0', accent: '#0969da', muted: '#59636e' },
+  'github-dark': { bg: '#0d1117', fg: '#e6edf3', line: '#3d444d', accent: '#4493f8', muted: '#9198a1' },
+  'solarized-light': { bg: '#fdf6e3', fg: '#657b83', line: '#93a1a1', accent: '#268bd2', muted: '#93a1a1' },
+  'solarized-dark': { bg: '#002b36', fg: '#839496', line: '#586e75', accent: '#268bd2', muted: '#586e75' },
+  'one-dark': { bg: '#282c34', fg: '#abb2bf', line: '#4b5263', accent: '#c678dd', muted: '#5c6370' },
+};
+
+const MERMAID_FIGURE_SVG_STYLE_RE = /(<figure class="figure-mermaid"[^>]*>\s*<svg\b[^>]*?\sstyle=")/g;
+
+function applyMermaidThemeVars(html: string, themeId: string): string {
+  const colors = MERMAID_THEME_COLORS[themeId];
+  if (!colors) return html;
+  const vars = [`--bg:${colors.bg};`, `--fg:${colors.fg};`,
+    colors.line ? `--line:${colors.line};` : '', colors.accent ? `--accent:${colors.accent};` : '',
+    colors.muted ? `--muted:${colors.muted};` : ''].filter(Boolean).join('');
+  return html.replace(MERMAID_FIGURE_SVG_STYLE_RE, (_match, prefix: string) => `${prefix}${vars}`);
+}
+
 export async function renderWithBm(markdown: string, markdownStyle: string, customCss: string | undefined): Promise<string> {
-  const args = ['render', '--platform', 'wechat', '--markdown-style', markdownStyle || 'kami'];
+  const style = markdownStyle || 'kami';
+  const args = ['render', '--platform', 'wechat', '--markdown-style', style];
+  const mermaidTheme = MERMAID_THEME_BY_STYLE[style];
+  if (mermaidTheme) args.push('--mermaid-theme', mermaidTheme);
   if (customCss && customCss.trim()) args.push('--custom-css', customCss);
   const sized = prepareObsidianImageWidths(markdown);
   const prepared = substituteFinchFileImagesForBm(sized.markdown);
   let html = await runBmmd(args, prepared.markdown);
+  if (mermaidTheme) html = applyMermaidThemeVars(html, mermaidTheme);
   html = applyObsidianImageWidths(html, sized.markers);
   for (const [placeholder, originalUrl] of prepared.urls) html = html.split(placeholder).join(originalUrl);
   return html;
