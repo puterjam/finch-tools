@@ -95,6 +95,7 @@
   "files": [
     "dist/",
     "i18n/",
+    "icon.png",
     "README.md"
   ]
 }
