@@ -1,4 +1,4 @@
-import { basicSetup, EditorView } from 'codemirror';
+import { EditorView } from 'codemirror';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
@@ -8,7 +8,7 @@ import { python } from '@codemirror/lang-python';
 import { sql } from '@codemirror/lang-sql';
 import { yaml } from '@codemirror/lang-yaml';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
-import { HighlightStyle, LanguageDescription, LanguageSupport, StreamLanguage, syntaxHighlighting, syntaxTree } from '@codemirror/language';
+import { HighlightStyle, LanguageDescription, LanguageSupport, StreamLanguage, syntaxHighlighting, syntaxTree, defaultHighlightStyle, foldGutter, indentOnInput, bracketMatching, foldKeymap } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import {
   insertEmptyMarkdownTable,
@@ -18,9 +18,10 @@ import {
   TableTheme,
 } from 'codemirror-markdown-tables';
 import { Compartment, EditorState, RangeSet, RangeSetBuilder, StateEffect, StateField, Transaction, type Extension, type Text } from '@codemirror/state';
-import { indentLess, indentMore, indentWithTab, defaultKeymap, historyKeymap } from '@codemirror/commands';
-import { searchKeymap } from '@codemirror/search';
-import { autocompletion, type Completion, type CompletionContext } from '@codemirror/autocomplete';
+import { indentLess, indentMore, indentWithTab, defaultKeymap, historyKeymap, history } from '@codemirror/commands';
+import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, type Completion, type CompletionContext } from '@codemirror/autocomplete';
+import { lintKeymap } from '@codemirror/lint';
 import {
   Decoration,
   type DecorationSet,
@@ -31,6 +32,13 @@ import {
   ViewPlugin,
   type ViewUpdate,
   WidgetType,
+  dropCursor,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  highlightSpecialChars,
+  lineNumbers,
+  rectangularSelection,
+  crosshairCursor,
 } from '@codemirror/view';
 
 interface EditorSelectionInfo {
@@ -124,6 +132,45 @@ const CM_LINE_MAX_WIDTH = '88%';
 // without moving the latter — raise it for a roomier selection box, set it
 // to '0px' to have the highlight stop exactly at the column edge.
 const CM_SELECTION_BLEED = '0px';
+
+// CodeMirror's `basicSetup` (from the `codemirror` package) includes
+// `drawSelection()`, which hides the browser's native selection and paints
+// its own full-width rectangles. That is precisely why a multi-line
+// selection highlights the *entire* line — blank lines and the empty space
+// after the last character included. The user wants the selection box to
+// hug only the text actually selected, so we rebuild `basicSetup` here and
+// simply omit `drawSelection()`. Native selection then takes over, which
+// naturally stays within the characters (no full-line fill); see the
+// `.cm-content ::selection` rules in the theme below for its colours.
+// Everything else mirrors `basicSetup` exactly so no other behaviour
+// (line numbers, history, folding, code highlighting, keymap, …) changes.
+const markdownEditorSetup = [
+  lineNumbers(),
+  highlightActiveLineGutter(),
+  highlightSpecialChars(),
+  history(),
+  foldGutter(),
+  dropCursor(),
+  EditorState.allowMultipleSelections.of(true),
+  indentOnInput(),
+  syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+  bracketMatching(),
+  closeBrackets(),
+  autocompletion(),
+  rectangularSelection(),
+  crosshairCursor(),
+  highlightActiveLine(),
+  highlightSelectionMatches(),
+  keymap.of([
+    ...closeBracketsKeymap,
+    ...defaultKeymap,
+    ...searchKeymap,
+    ...historyKeymap,
+    ...foldKeymap,
+    ...completionKeymap,
+    ...lintKeymap,
+  ]),
+];
 
 // Heading sizes, and the matching line-number band, derive from this one
 // table so the two sides cannot drift apart. See `headingGutterBandEm` for
@@ -971,7 +1018,16 @@ const finchTheme = EditorView.theme({
   '.tbl-table-widget .tbl-cell[data-selected], .tbl-table-widget .tbl-cell[data-selected] .cm-line': {
     opacity: '1',
   },
-  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground': {
+  // `drawSelection()` is intentionally omitted from `markdownEditorSetup`
+  // (see its comment) so the browser paints the selection natively. Native
+  // selection has no `.cm-selectionBackground` element, so it is styled via
+  // `::selection`. Scope both the text and its container so the colour also
+  // applies to text inside decorations (headings, code spans, …) that are
+  // otherwise wrapped in nested elements.
+  '& .cm-content ::selection, & .cm-content::selection': {
+    backgroundColor: 'color-mix(in srgb, var(--accent) 34%, transparent)',
+  },
+  '& .cm-content ::-moz-selection, & .cm-content::-moz-selection': {
     backgroundColor: 'color-mix(in srgb, var(--accent) 34%, transparent)',
   },
   '.cm-panels': {
@@ -3619,7 +3675,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       // off or the caret is not on a blank line, and Space types normally.
       aiHintKeymap,
       markdownEditorKeymap,
-      basicSetup,
+      markdownEditorSetup,
       // Replace CodeMirror's generic text/keyword glyphs with actual Lucide
       // SVGs for slash blocks; non-Markdown completion sources simply render
       // no icon instead of falling back to the default key symbol.
