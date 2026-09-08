@@ -8,6 +8,9 @@ declare global {
     finch?: {
       postMessage(message: unknown): void;
       onMessage(listener: (message: unknown) => void): { dispose(): void };
+      panel?: {
+        setTitle(title: string): Promise<void>;
+      };
     };
   }
 }
@@ -106,6 +109,17 @@ function scheduleThemeSync(): void {
   });
 }
 
+function compactCwd(value: string): string {
+  const normalized = value.replace(/[\\/]+$/, '');
+  const segments = normalized.split(/[\\/]+/).filter(Boolean);
+  return segments.length ? `…/${segments[segments.length - 1]}` : t('title');
+}
+
+function updatePanelTitle(): void {
+  if (!cwd || !bridge?.panel) return;
+  void bridge.panel.setTitle(compactCwd(cwd)).catch(() => {});
+}
+
 function post(message: Record<string, unknown>): void {
   bridge?.postMessage(message);
 }
@@ -131,6 +145,7 @@ bridge?.onMessage((raw) => {
     cwd = String(message.cwd ?? cwd);
     isZh = /^zh/i.test(String(message.locale ?? navigator.language ?? ''));
     applyLanguage();
+    updatePanelTitle();
     scheduleThemeSync();
     return;
   }
@@ -147,6 +162,7 @@ bridge?.onMessage((raw) => {
     terminal.reset();
     if (typeof message.data === 'string' && message.data) terminal.write(message.data);
     cwd = String(message.cwd ?? cwd);
+    updatePanelTitle();
     initialized = true;
     terminal.focus();
     fitAndNotify();
@@ -154,6 +170,7 @@ bridge?.onMessage((raw) => {
   }
   if (message.type === 'terminalStarted') {
     cwd = String(message.cwd ?? cwd);
+    updatePanelTitle();
     terminal.focus();
     return;
   }

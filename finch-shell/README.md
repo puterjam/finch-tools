@@ -4,7 +4,7 @@ Open a real interactive terminal inside Finch. It starts in the current workspac
 
 ## Usage
 
-Open **Shell** from Finch's Panel launcher, or ask Finch to open a terminal. Use **Restart** to replace the current shell process and the clear button to clear the visible terminal buffer.
+Open **Shell** from Finch's Panel launcher, or ask Finch to open a terminal. Every open creates an independent Panel tab and shell process. Use **Restart** to replace the current shell process and the clear button to clear the visible terminal buffer.
 
 ## Platform support
 
@@ -18,7 +18,7 @@ The package includes node-pty runtimes for macOS (Apple Silicon and Intel) and W
 
 ## 使用方式
 
-从 Finch 的 Panel 启动器打开「终端」，也可以直接让 Finch 打开终端。使用「重新启动」替换当前 shell 进程，使用清空按钮清除当前可见缓冲区。
+从 Finch 的 Panel 启动器打开「终端」，也可以直接让 Finch 打开终端。每次打开都会新建独立的 Panel 标签和 shell 进程。使用「重新启动」替换当前 shell 进程，使用清空按钮清除当前可见缓冲区。
 
 ## 平台支持
 

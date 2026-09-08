@@ -55,7 +55,7 @@
       "appPanel": {
         "icon": "square-terminal",
         "viewType": "finch-shell.terminal",
-        "instanceMode": "single",
+        "instanceMode": "multiple",
         "showInLauncher": true,
         "source": {
           "type": "local",

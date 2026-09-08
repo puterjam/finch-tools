@@ -271,7 +271,7 @@ export function activate(ctx: finch.MiniToolContext): void {
       if (cwd && !path.isAbsolute(cwd)) {
         return { content: [{ type: 'text', text: '`cwd` must be an absolute path.' }], isError: true };
       }
-      const panel = ctx.ui.createPanel({ instanceMode: 'single', payload: cwd ? { cwd } : undefined });
+      const panel = ctx.ui.createPanel({ instanceMode: 'multiple', payload: cwd ? { cwd } : undefined });
       await panel.reveal();
       return { content: [{ type: 'text', text: `Opened an interactive terminal${cwd ? ` in ${cwd}` : ''}.` }] };
     },
