@@ -7,6 +7,8 @@ import { html } from '@codemirror/lang-html';
 import { python } from '@codemirror/lang-python';
 import { sql } from '@codemirror/lang-sql';
 import { yaml } from '@codemirror/lang-yaml';
+import { mermaid } from 'codemirror-lang-mermaid';
+import { infographicLanguageSupport } from './infographic';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
 import { HighlightStyle, LanguageDescription, LanguageSupport, StreamLanguage, syntaxHighlighting, syntaxTree, defaultHighlightStyle, foldGutter, indentOnInput, bracketMatching, foldKeymap } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
@@ -1205,7 +1207,9 @@ const fencedCodeLanguages = [
   LanguageDescription.of({ name: 'JSX', alias: ['jsx'], extensions: ['jsx'], support: javascript({ jsx: true }) }),
   LanguageDescription.of({ name: 'TypeScript', alias: ['ts'], extensions: ['ts'], support: javascript({ typescript: true }) }),
   LanguageDescription.of({ name: 'TSX', alias: ['tsx'], extensions: ['tsx'], support: javascript({ jsx: true, typescript: true }) }),
-  LanguageDescription.of({ name: 'JSON', alias: ['json', 'json5'], extensions: ['json'], support: json() }),
+  LanguageDescription.of({ name: 'JSON', alias: ['json', 'json5'], extensions: ['json', 'json5'], support: json() }),
+  LanguageDescription.of({ name: 'Mermaid', alias: ['mermaid', 'mmd'], extensions: ['mermaid', 'mmd'], support: mermaid() }),
+  LanguageDescription.of({ name: 'Infographic', alias: ['infographic'], extensions: ['infographic'], support: new LanguageSupport(infographicLanguageSupport) }),
   LanguageDescription.of({ name: 'CSS', alias: ['css'], extensions: ['css'], support: css() }),
   LanguageDescription.of({ name: 'HTML', alias: ['html', 'htm', 'xml', 'svg'], extensions: ['html'], support: html() }),
   LanguageDescription.of({ name: 'Python', alias: ['python', 'py'], extensions: ['py'], support: python() }),
@@ -1241,8 +1245,13 @@ const markdownHighlight = HighlightStyle.define([
   { tag: [tags.color, tags.constant(tags.name), tags.standard(tags.name), tags.bool], color: '#d19a66' },
   { tag: [tags.definition(tags.name), tags.separator], color: 'var(--text)' },
   { tag: [tags.typeName, tags.className, tags.number, tags.changed, tags.annotation, tags.modifier, tags.self, tags.namespace], color: '#e5c07b' },
-  { tag: [tags.operator, tags.operatorKeyword, tags.escape, tags.regexp, tags.special(tags.string)], color: '#56b6c2' },
+  { tag: [tags.operator, tags.operatorKeyword, tags.escape, tags.regexp, tags.special(tags.string), tags.contentSeparator], color: '#56b6c2' },
   { tag: tags.string, color: '#98c379' },
+  // Bare variableName and controlKeyword are only emitted by the mermaid
+  // grammar (node IDs, message/actor labels, sequence control keywords) —
+  // regular prose never hits them. Keep them on the same One Dark palette.
+  { tag: tags.variableName, color: '#61afef' },
+  { tag: tags.controlKeyword, color: '#c678dd' },
   { tag: tags.comment, color: 'var(--muted)', fontStyle: 'italic' },
   { tag: tags.invalid, color: '#fff', backgroundColor: '#e06c75' },
 ]);

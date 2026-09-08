@@ -1,6 +1,6 @@
 {
   "name": "finch-markdown-editor",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "description": "A Markdown editor and WeChat Official Account style preview, with selection-based AI edits and AI-generated custom styles.",
   "author": {
     "name": "PuterJam",
@@ -221,6 +221,7 @@
     "@codemirror/search": "^6.7.1",
     "@lezer/highlight": "^1.2.3",
     "codemirror": "^6.0.2",
+    "codemirror-lang-mermaid": "^0.5.0",
     "codemirror-markdown-tables": "^1.0.1"
   }
 }
