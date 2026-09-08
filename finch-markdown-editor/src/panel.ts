@@ -1833,6 +1833,82 @@
     try { return getComputedStyle(frame).backgroundColor || ''; } catch (e) { return ''; }
   }
 
+  // bmmd renders Mermaid diagrams and Infographic charts as raw inline
+  // <svg>. WeChat's official-account editor strips <svg> entirely on
+  // paste (it isn't in its allowed-tag list), so anything left as a live
+  // SVG silently vanishes from a pasted article. Rasterizing each one into
+  // a plain <img> right in the preview — the same tag every other image in
+  // the article already is — means the existing copy/export paths need no
+  // special-casing at all; what's on screen is already pasteable.
+  function svgToPngDataUrl(svg, widthPx, heightPx) {
+    // 2x is the same fixed factor `renderArticleCanvas()` uses for the
+    // whole-article export below; bump it a bit further for small/dense
+    // diagrams so their labels stay legible at typical WeChat width.
+    var scale = Math.min(3, Math.max(2, (window.devicePixelRatio || 1) * 2));
+    var serialized;
+    try { serialized = new XMLSerializer().serializeToString(svg); } catch (e) { return Promise.reject(e); }
+    var svgUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(serialized);
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.decoding = 'sync';
+      img.onload = function () {
+        try {
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(widthPx * scale));
+          canvas.height = Math.max(1, Math.round(heightPx * scale));
+          var ctx2d = canvas.getContext('2d');
+          ctx2d.scale(scale, scale);
+          // The SVG's own inline `style="background:…"` (set per Mermaid
+          // theme, see renderer.ts) does not necessarily reach rasterized
+          // pixels the way it paints as a live in-page CSS background, so
+          // fill the canvas with the same color read straight off the
+          // element first — belt and suspenders, matches how
+          // renderArticleCanvas() below handles the whole-article case.
+          var bg = '';
+          try { bg = getComputedStyle(svg).backgroundColor; } catch (e2) { bg = ''; }
+          if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+            ctx2d.fillStyle = bg;
+            ctx2d.fillRect(0, 0, widthPx, heightPx);
+          }
+          ctx2d.drawImage(img, 0, 0, widthPx, heightPx);
+          resolve(canvas.toDataURL('image/png'));
+        } catch (e) { reject(e); }
+      };
+      img.onerror = function () { reject(new Error('svg rasterize failed')); };
+      img.src = svgUrl;
+    });
+  }
+
+  function convertSvgFiguresToImages() {
+    if (!frameReady || !frame.contentDocument || !frame.contentDocument.body) return;
+    var doc = frame.contentDocument;
+    var svgs = Array.prototype.slice.call(doc.querySelectorAll('figure.figure-mermaid > svg, figure.figure-infographic > svg'));
+    if (!svgs.length) return;
+    Promise.all(svgs.map(function (svg) {
+      var figure = svg.closest('figure');
+      var rect = svg.getBoundingClientRect();
+      var width = Math.ceil(rect.width) || (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width) || 600;
+      var height = Math.ceil(rect.height) || (svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.height) || 400;
+      return svgToPngDataUrl(svg, width, height).then(function (dataUrl) {
+        var img = doc.createElement('img');
+        img.src = dataUrl;
+        img.alt = figure && figure.classList.contains('figure-infographic') ? 'Infographic' : 'Mermaid diagram';
+        img.style.display = 'block';
+        img.style.width = '100%';
+        img.style.height = 'auto';
+        svg.replaceWith(img);
+      }).catch(function () {
+        // Leave the original <svg> in place on failure — a working (if
+        // not WeChat-pasteable) preview beats a blank figure.
+      });
+    })).then(function () {
+      // Keep the cached `html` string in sync with the now-rasterized DOM
+      // so copyHtml()/export read the <img> version, not the stale <svg>
+      // — this is the whole point: no separate copy-time special-casing.
+      if (doc.body) html = doc.body.innerHTML;
+    });
+  }
+
   function showHtml(next) {
     var previous = captureScroll();
     var d = frame.contentDocument;
@@ -1844,6 +1920,7 @@
       restoreScroll(previous);
       bindPreviewSelection();
       buildScrollAnchors();
+      convertSvgFiguresToImages();
       return;
     }
     // Only reset the iframe's own html/body box model here. bm.md already
@@ -2031,6 +2108,7 @@
       frameReady = true;
       buildScrollAnchors();
       bindScrollSync();
+      convertSvgFiguresToImages();
     });
   });
 
