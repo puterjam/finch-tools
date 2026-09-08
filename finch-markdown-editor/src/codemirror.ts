@@ -116,6 +116,14 @@ interface MarkdownEditorOptions {
 const CM_ROOT_PX = 16;
 const CM_LINE_WIDTH = '50rem';
 const CM_LINE_MAX_WIDTH = '88%';
+// How far a selection highlight may bleed past the text column on each side.
+// This is purely selection geometry: CodeMirror measures full-line selection
+// rects against `.cm-content`'s *border* box, while lines (and therefore the
+// text column, code-fence backgrounds and active-line highlight) fill its
+// *content* box. Carrying the bleed as horizontal padding widens the former
+// without moving the latter — raise it for a roomier selection box, set it
+// to '0px' to have the highlight stop exactly at the column edge.
+const CM_SELECTION_BLEED = '0px';
 
 // Heading sizes, and the matching line-number band, derive from this one
 // table so the two sides cannot drift apart. See `headingGutterBandEm` for
@@ -280,26 +288,63 @@ const finchTheme = EditorView.theme({
     // Let the content flex down with a narrow panel instead of retaining the
     // intrinsic width of its longest line.
     minWidth: '0',
+    // Anchors the click-target bleed below.
+    position: 'relative',
   },
-  // Keep `.cm-line` full-width so CodeMirror's active-line, selection and
-  // search layers paint edge-to-edge. A responsive inner gutter leaves the
-  // readable text column at most 750px wide on wide panes, but collapses to
-  // 24px on either side on narrow panes — no fixed line width, no overflow.
+  // The readable column lives on `.cm-content`, NOT on `.cm-line`. That is
+  // load-bearing for selection: CodeMirror's drawSelection paints full-line
+  // rects between `contentRect.left/right` (± the *first* line's horizontal
+  // padding) — see rectanglesForRange() in @codemirror/view. With the width
+  // on `.cm-line` instead, `.cm-content` stayed full-width and every
+  // multi-line selection bled well past the text column on both sides.
+  // Sizing the content element itself makes CodeMirror measure exactly the
+  // column it should paint. Per-line backgrounds (active line, code fence)
+  // keep hugging the column too, since a line now simply fills its parent.
   // The `:not()` guard is load-bearing: a selected table cell mounts an
   // embedded CodeMirror that inherits this editor's theme classes, so
-  // without it the 40rem reading-column width would leak into every cell,
+  // without it the reading-column width would leak into every cell,
   // inflate the cell's min-content, and grow the whole table on selection.
+  '.cm-content:not(.tbl-table-widget .cm-content)': {
+    // Width and max-width describe the *border* box, so both carry the bleed
+    // on top of the intended column: the content box — which the lines fill —
+    // still measures exactly min(CM_LINE_WIDTH, CM_LINE_MAX_WIDTH).
+    boxSizing: 'border-box',
+    paddingInline: CM_SELECTION_BLEED,
+    width: `calc(${CM_LINE_WIDTH} + 2 * ${CM_SELECTION_BLEED})`,
+    maxWidth: `calc(${CM_LINE_MAX_WIDTH} + 2 * ${CM_SELECTION_BLEED})`,
+    marginInline: 'auto',
+    // CodeMirror's base theme sets flex-grow:2/flex-shrink:0, which would
+    // stretch the column back to full width and refuse to shrink inside a
+    // narrow pane.
+    flexGrow: '0',
+    flexShrink: '1',
+  },
+  // Narrowing `.cm-content` also narrows the editor's click target, so
+  // clicking beside a line (a habit that used to place the caret at the
+  // nearest position) would fall on the inert scroller instead. Bleed a
+  // transparent child box out to either side: the event target stays
+  // `.cm-content`, so CodeMirror's own mousedown handling resolves it
+  // through posAtCoords exactly as before, while getBoundingClientRect —
+  // and therefore the selection geometry above — still measures only the
+  // column. Lines are position:relative and come later in DOM order, so
+  // they keep painting and hit-testing above this box; `.cm-gutters`
+  // (z-index 200) does too, and `.cm-scroller`'s overflow clips the bleed.
+  '.cm-content:not(.tbl-table-widget .cm-content)::before': {
+    content: '""',
+    position: 'absolute',
+    top: '0',
+    bottom: '0',
+    left: '-100%',
+    right: '-100%',
+  },
   '.cm-line:not(.tbl-table-widget .cm-line)': {
-    // '--md-line-pad': 'max(24px, calc((100% - 750px) / 2))',
     boxSizing: 'border-box',
     // Anchor the blank-line AI hint to the line's final laid-out box. The
     // generated hint must be absolute because CodeMirror puts a literal
     // <br> in every empty contenteditable line; an inline ::after can only
     // flow after that <br>, i.e. onto a second visual row.
     position: 'relative',
-    width: CM_LINE_WIDTH,
-    maxWidth: CM_LINE_MAX_WIDTH,
-    marginInline: 'auto',
+    width: '100%',
     // Line spacing comes from CSS tokens so the toolbar's comfortable-
     // writing toggle can switch them without touching CodeMirror's managed
     // classes: CM rebuilds view.dom.className on updates, which would wipe
@@ -329,7 +374,10 @@ const finchTheme = EditorView.theme({
   '.cm-content > .tbl-table-widget': {
     boxSizing: 'border-box',
     width: 'auto !important',
-    maxWidth: `min(${CM_LINE_WIDTH}, ${CM_LINE_MAX_WIDTH}) !important`,
+    // `.cm-content` already *is* the readable column, so filling it is the
+    // same cap the old min(50rem, 88%) expressed back when content was
+    // full-width.
+    maxWidth: '100% !important',
     marginInline: 'auto !important',
     padding: '12px 16px 12px 6px !important',
   },
@@ -568,7 +616,7 @@ const finchTheme = EditorView.theme({
     fontFamily: 'var(--finch-font-mono)',
     paddingTop: '0 !important',
     paddingBottom: '0 !important',
-    width: 'calc(50rem - 30px) !important',
+    width: 'calc(49rem) !important',
     paddingInline: '24px',
     // Empty-line AI hint is absolutely positioned, so it does not inherit
     // padding layout. Give it the same content-start offset as code text.
@@ -577,6 +625,7 @@ const finchTheme = EditorView.theme({
     // everything else. A fixed px here would also freeze the `em` basis of
     // the line-height above and pull the gutter out of alignment.
     fontSize: `${CODE_FONT_SCALE}em !important`,
+    marginInline: '9.5px',
   },
 
   '.cm-line.cm-md-code-line span': {
@@ -604,14 +653,14 @@ const finchTheme = EditorView.theme({
   // ever changes.
   '.cm-md-code-copy': {
     float: 'right',
-    height: '18px',
+    height: '16px',
     margin: '3px -9px',
     padding: '0 4px',
     border: '0px',
-    borderRadius: '5px',
+    borderRadius: '6px',
     color: 'var(--muted)',
     backgroundColor: 'color-mix(in srgb, var(--card) 88%, transparent)',
-    font: '11px var(--finch-font-mono)',
+    font: '10px var(--finch-font-mono)',
     cursor: 'pointer',
   },
   '.cm-md-code-copy:hover': { color: 'var(--text)', backgroundColor: 'var(--card)' },
