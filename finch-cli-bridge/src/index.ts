@@ -38,7 +38,6 @@ export function activate(ctx: finch.MiniToolContext): void {
           id: `client:${client.tokenId}`,
           label: client.clientName,
           description: ctx.i18n.t('menu.client.description', {
-            paired: formatRelative(ctx, client.pairedAt),
             lastUsed: formatRelative(ctx, client.lastUsedAt),
           }),
           disabled: true,

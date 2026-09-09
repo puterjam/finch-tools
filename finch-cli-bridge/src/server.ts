@@ -100,6 +100,8 @@ export class BridgeServer {
       startedAt: new Date().toISOString(),
       bridgeVersion: BRIDGE_VERSION,
     };
+    // ctx.storagePath is not guaranteed to exist yet on first activation.
+    await fs.mkdir(this.ctx.storagePath, { recursive: true });
     await fs.writeFile(this.endpointFilePath(), JSON.stringify(body, null, 2), 'utf8');
   }
 
