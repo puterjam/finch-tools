@@ -1,0 +1,19 @@
+{
+  "name": "CLI 桥接",
+  "description": "把 finch 命令行工具与这个 Finch 应用配对：在终端里创建/驱动会话、查看实时事件、应答权限卡——通过一个只监听本机、需要你亲自点头确认的 HTTP 桥接。",
+  "settingsMenu": {
+    "tooltip": "已配对的 CLI 终端"
+  },
+  "pairing.title": "Finch CLI 配对请求",
+  "pairing.message": "有一个终端正在请求通过 finch CLI 控制这个 Finch 应用。\n\n终端：`{client}`\n验证码：`{code}`\n\n> 只有你刚刚在自己信任的终端里执行过 `finch login`，才应该点击允许。允许后它将能创建/驱动本桥接名下的会话，并代你应答权限卡。",
+  "pairing.deny": "拒绝",
+  "pairing.allow": "允许",
+  "menu.empty.label": "暂无已配对的 CLI 终端",
+  "menu.empty.description": "在终端里运行 `finch login` 即可连接到这个 Finch 应用。",
+  "menu.client.description": "{paired} 配对 · {lastUsed} 使用",
+  "menu.revoke.label": "撤销授权",
+  "time.justNow": "刚刚",
+  "time.minutesAgo": "{n} 分钟前",
+  "time.hoursAgo": "{n} 小时前",
+  "time.daysAgo": "{n} 天前"
+}

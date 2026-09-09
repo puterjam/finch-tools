@@ -1,0 +1,45 @@
+{
+  "name": "finch-cli",
+  "version": "0.1.0",
+  "description": "Command-line client for Finch — drive Sessions, watch events, and answer permission cards from a terminal, via the CLI Bridge mini tool.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-cli"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-cli#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "finch": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "finch",
+    "cli",
+    "automation",
+    "sessions"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ]
+}

@@ -11,6 +11,8 @@ Mini tools that extend [Finch](https://finchwork.app/) with focused, user-facing
 - [`finch-tencent-docs`](./finch-tencent-docs/) — lets Finch create, read, search and edit Tencent Docs (docs.qq.com) online documents — smart docs, sheets, slides, Word, mind maps, smart sheets and more — via the official MCP services.
 - [`finch-markdown-editor`](./finch-markdown-editor/) — edits Markdown with contextual AI revisions and bm.md-powered WeChat Official Account previews.
 - [`finch-shell`](./finch-shell/) — opens a real interactive terminal in Finch with workspace-aware startup, full-screen terminal programs, colors, and resize support.
+- [`finch-cli-bridge`](./finch-cli-bridge/) — pairs the `finch` command-line tool with Finch over a loopback-only, user-approved HTTP bridge, so a terminal can drive Sessions, watch events, and answer permission cards.
+- [`finch-cli`](./finch-cli/) — the `finch` command-line tool itself (`npm i -g finch-cli`); talks to `finch-cli-bridge`. See [`docs/finch-cli-design.md`](./docs/finch-cli-design.md) for the full protocol.
 
 ---
 
@@ -27,3 +29,5 @@ Mini tools that extend [Finch](https://finchwork.app/) with focused, user-facing
 - [`finch-tencent-docs`](./finch-tencent-docs/)：让 Finch 创建、读取、搜索和编辑腾讯文档（docs.qq.com）在线文档——智能文档、表格、幻灯片、Word、思维导图、智能表格等，通过官方 MCP 服务连接。
 - [`finch-markdown-editor`](./finch-markdown-editor/)：专注 Markdown 编辑体验，支持上下文 AI 改稿与 bm.md 驱动的公众号预览。
 - [`finch-shell`](./finch-shell/)：在 Finch 中打开真正的交互式终端，支持工作区目录启动、全屏终端程序、彩色输出与尺寸同步。
+- [`finch-cli-bridge`](./finch-cli-bridge/)：把 `finch` 命令行工具与 Finch 配对——通过一个只监听本机、需要用户点头确认的 HTTP 桥接，让终端能创建/驱动会话、查看事件、应答权限卡。
+- [`finch-cli`](./finch-cli/)：`finch` 命令行工具本体（`npm i -g finch-cli`），与 `finch-cli-bridge` 对接。完整协议见 [`docs/finch-cli-design.md`](./docs/finch-cli-design.md)。

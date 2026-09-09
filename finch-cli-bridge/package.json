@@ -1,0 +1,80 @@
+{
+  "name": "finch-cli-bridge",
+  "version": "0.1.0",
+  "description": "Local, token-paired HTTP bridge that lets the finch CLI drive Finch Sessions from a terminal.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-cli-bridge"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-cli-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "keywords": [
+    "finch",
+    "finch-minitool",
+    "cli",
+    "bridge",
+    "automation",
+    "sessions"
+  ],
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "minVersion": "1.6.1",
+    "name": "CLI Bridge",
+    "description": "Pair the finch command-line tool with this Finch app: create/drive Sessions, watch events, and answer permission cards from a terminal — over a loopback-only HTTP bridge that requires your one-time approval.",
+    "main": "dist/index.js",
+    "activationEvents": [
+      "onStartup"
+    ],
+    "miniToolType": "local",
+    "categories": [
+      "developer-tools",
+      "productivity"
+    ],
+    "contributes": {
+      "settingsMenu": {
+        "icon": "square-terminal",
+        "tooltip": "Paired CLI clients"
+      },
+      "iconPacks": [
+        { "id": "cli-bridge-icons", "label": "CLI Bridge icons" }
+      ]
+    },
+    "permissions": {
+      "filesystem": "none",
+      "network": true,
+      "shell": false,
+      "sessions": true,
+      "sessionInteractions": true,
+      "secrets": [
+        "cli.tokens"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.3.5",
+    "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "i18n/",
+    "icon.png",
+    "README.md"
+  ]
+}
