@@ -46,6 +46,7 @@ export class BridgeServer {
   private readonly server: http.Server;
   private port = 0;
   private readonly sessionStreams = new Map<string, Set<ServerResponse>>();
+  private readonly globalEventStreams = new Set<ServerResponse>();
   private readonly notificationStreams = new Set<ServerResponse>();
   private readonly routes: Route[];
   private sessionEventSub?: finch.Disposable;
@@ -70,8 +71,10 @@ export class BridgeServer {
     this.port = await this.listen();
     this.sessionEventSub = this.ctx.sessions.onDidReceiveEvent((event: finch.SessionBridgeEvent) => {
       const set = this.sessionStreams.get(event.sessionId);
-      if (!set || set.size === 0) return;
-      for (const res of set) writeSseEvent(res, event.type, event);
+      if (set && set.size > 0) {
+        for (const res of set) writeSseEvent(res, event.type, event);
+      }
+      for (const res of this.globalEventStreams) writeSseEvent(res, event.type, event);
     });
     this.notificationSub = this.ctx.notifications.onDidPost((event: finch.FinchNotificationEvent) => {
       for (const res of this.notificationStreams) writeSseEvent(res, 'notification', event);
@@ -84,6 +87,7 @@ export class BridgeServer {
     this.sessionEventSub?.dispose();
     this.notificationSub?.dispose();
     for (const set of this.sessionStreams.values()) for (const res of set) res.end();
+    for (const res of this.globalEventStreams) res.end();
     for (const res of this.notificationStreams) res.end();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
     await fs.rm(this.endpointFilePath(), { force: true }).catch(() => undefined);
@@ -185,6 +189,7 @@ export class BridgeServer {
       { method: 'POST', pattern: '/sessions/:id/turns/:turnId/wait', auth: true, handler: this.postTurnWait },
       { method: 'POST', pattern: '/sessions/:id/turns/:turnId/cancel', auth: true, handler: this.postTurnCancel },
       { method: 'GET', pattern: '/sessions/:id/events', auth: true, handler: this.getSessionEvents },
+      { method: 'GET', pattern: '/events/watch', auth: true, handler: this.getAllEventsWatch },
       { method: 'GET', pattern: '/sessions/:id/waits', auth: true, handler: this.getSessionWaits },
       { method: 'GET', pattern: '/sessions/:id/waits/next', auth: true, handler: this.getSessionWaitsNext },
       { method: 'POST', pattern: '/sessions/:id/waits/:requestId/respond', auth: true, handler: this.postWaitRespond },
@@ -363,6 +368,13 @@ export class BridgeServer {
     const limit = q.has('limit') ? Number(q.get('limit')) : undefined;
     const page = await this.ctx.sessions.listEvents({ sessionId: params.id, after, limit });
     sendJson(res, 200, page);
+  };
+
+  /** Global agent-event stream across every Session this bridge owns (unlike /notifications/watch, which only carries coarse status notifications). */
+  private getAllEventsWatch: Handler = async (req, res) => {
+    writeSseHeaders(res);
+    this.globalEventStreams.add(res);
+    req.on('close', () => this.globalEventStreams.delete(res));
   };
 
   private getSessionWaits: Handler = async (_req, res, params) => {

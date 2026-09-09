@@ -95,7 +95,8 @@ Base URL 从 `~/.finch/extension-data/finch-cli-bridge/endpoint.json` 读取，�
 | POST | `/sessions/:id/turns/:turnId/wait` | 是 | 等待指定 turn 终态 | `ctx.sessions.waitForTurn` |
 | POST | `/sessions/:id/turns/:turnId/cancel` | 是 | 取消指定 turn | `ctx.sessions.cancelTurn` |
 | GET | `/sessions/:id/events?after&limit` | 是 | 历史事件分页 | `ctx.sessions.listEvents` |
-| GET | `/sessions/:id/events?stream=1` | 是 | SSE 实时事件流 | `ctx.sessions.onDidReceiveEvent` |
+| GET | `/sessions/:id/events?stream=1` | 是 | SSE 实时事件流（单个 Session） | `ctx.sessions.onDidReceiveEvent` |
+| GET | `/events/watch`（SSE） | 是 | 全局 Agent 事件流——本桥接名下**所有** Session 的原始事件（`assistant.message`/`turn.completed`/...），区别于下面粒度更粗的通知流 | `ctx.sessions.onDidReceiveEvent` |
 | GET | `/sessions/:id/waits` | 是 | 当前挂起的等待卡 | `ctx.sessions.listWaits` |
 | GET | `/sessions/:id/waits/next?timeoutMs` | 是 | 长轮询下一张等待卡 | `ctx.sessions.waitForWait` |
 | POST | `/sessions/:id/waits/:requestId/respond` | 是 | 应答权限卡/问题卡/表单卡 | `ctx.sessions.respondToWait` |
@@ -120,7 +121,7 @@ finch session send <sessionId> --message <text> [--wait] [--timeout 60]
 finch session wait <sessionId> <turnId> [--timeout 60]
 finch session cancel <sessionId> <turnId>
 finch session events <sessionId> [--after <seq>] [--limit 100]
-finch session watch <sessionId>               # SSE 实时打印到终端
+finch session watch [sessionId]               # SSE 实时打印到终端；不传 sessionId = 全局 Agent 事件流
 finch session waits <sessionId>
 finch session respond <sessionId> <requestId> --allow|--deny
 finch session respond <sessionId> <requestId> --answer "标题=选项"

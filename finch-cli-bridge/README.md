@@ -9,7 +9,7 @@ Pair the [`finch` command-line tool](https://github.com/puterjam/finch-tools/tre
 - Once paired, the CLI can:
   - Check Finch's status and list your Spaces.
   - Create a Session (in a Space, or a plain chat) and send it messages.
-  - Wait for a turn to finish, cancel a running turn, and stream events live.
+  - Wait for a turn to finish, cancel a running turn, and stream events live — for one Session or across every Session this bridge owns.
   - See and answer permission / question / form cards that are blocking a Session — handy for approving something from your phone over SSH.
 - Every paired terminal shows up under **CLI Bridge → 设置/settings button** with a "Revoke access" action, so you can see and cut off access at any time.
 
@@ -44,7 +44,7 @@ Full protocol spec (HTTP endpoints, pairing flow, event streaming): see [`docs/f
 - 配对成功后，CLI 可以：
   - 查看 Finch 状态、列出你的 Space。
   - 创建会话（放进某个 Space，或普通对话）并发消息。
-  - 等待一轮对话结束、取消正在运行的对话、实时接收事件流。
+  - 等待一轮对话结束、取消正在运行的对话、实时接收事件流——可以只看一个会话，也可以看本桥接名下所有会话的全局事件流。
   - 查看并应答正在卡住某个会话的权限卡/提问卡/表单卡——比如你人在外面，通过 SSH 在手机上远程批准一次操作。
 - 每个已配对的终端都会出现在**CLI 桥接的设置菜单**里，带一个"撤销授权"按钮，随时可以查看和收回权限。
 

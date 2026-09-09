@@ -267,12 +267,14 @@ async function cmdSessionEvents(id: string, flags: Flags): Promise<void> {
   printJson(await withErrors(() => client.request('GET', `/sessions/${encodeURIComponent(id)}/events?${qs}`)));
 }
 
-async function cmdSessionWatch(id: string): Promise<void> {
+async function cmdSessionWatch(id: string | undefined): Promise<void> {
   const { client } = await requireClient();
-  console.log(`Watching session ${id}. Press Ctrl+C to stop.`);
+  const path = id ? `/sessions/${encodeURIComponent(id)}/events?stream=1` : '/events/watch';
+  console.log(id ? `Watching session ${id}. Press Ctrl+C to stop.` : 'Watching all sessions (agent events). Press Ctrl+C to stop.');
   try {
-    for await (const frame of client.stream(`/sessions/${encodeURIComponent(id)}/events?stream=1`)) {
-      console.log(`[${frame.event}] ${JSON.stringify(frame.data)}`);
+    for await (const frame of client.stream(path)) {
+      const sessionId = (frame.data as { sessionId?: string } | null)?.sessionId;
+      console.log(`[${frame.event}]${sessionId ? ` ${sessionId}` : ''} ${JSON.stringify(frame.data)}`);
     }
   } catch (err) {
     if (err instanceof BridgeError) fail(`${err.message} [${err.code}]`);
@@ -352,17 +354,22 @@ Usage:
   finch session wait <sessionId> <turnId> [--timeout <sec>]
   finch session cancel <sessionId> <turnId>
   finch session events <sessionId> [--after <n>] [--limit <n>]
-  finch session watch <sessionId>      Stream live events (SSE)
+  finch session watch [sessionId]      Stream live agent events (SSE); omit sessionId to watch every session
   finch session waits <sessionId>      List pending permission/question/form cards
   finch session respond <sessionId> <requestId> --allow|--deny
   finch session respond <sessionId> <requestId> --answer "header=value" [--answer ...]
   finch session respond <sessionId> <requestId> --form key=value [--form ...]
 
   finch open <sessionId>               Bring Finch to the front on this Session
-  finch watch                          Stream Finch's global notification feed
+  finch watch                          Stream Finch's global notification feed (app-level: new message, badge, etc.)
 
 Sessions are created without a container (this bridge declares none); pass
---space <spaceId> to place a Session in a Space, or omit it for a plain chat.`);
+--space <spaceId> to place a Session in a Space, or omit it for a plain chat.
+
+\`finch watch\` and \`finch session watch\` are two different global feeds:
+\`watch\` streams coarse app notifications, while \`session watch\` (no id)
+streams every raw agent event (assistant.message, turn.completed, ...)
+across all Sessions; pass a sessionId to narrow it to just one.`);
 }
 
 async function main(): Promise<void> {
@@ -406,7 +413,7 @@ async function main(): Promise<void> {
         case 'events':
           return cmdSessionEvents(requirePositional(positional, 0, 'sessionId'), flags);
         case 'watch':
-          return cmdSessionWatch(requirePositional(positional, 0, 'sessionId'));
+          return cmdSessionWatch(positional[0]);
         case 'waits':
           return cmdSessionWaits(requirePositional(positional, 0, 'sessionId'));
         case 'respond':

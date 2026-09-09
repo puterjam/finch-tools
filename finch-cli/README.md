@@ -38,7 +38,7 @@ finch session send <sessionId> --message <text> [--wait] [--timeout <sec>] [--id
 finch session wait <sessionId> <turnId> [--timeout <sec>]
 finch session cancel <sessionId> <turnId>
 finch session events <sessionId> [--after <n>] [--limit <n>]
-finch session watch <sessionId>      Stream live events (SSE)
+finch session watch [sessionId]      Stream live agent events (SSE); omit sessionId to watch every session
 finch session waits <sessionId>      List pending permission/question/form cards
 finch session respond <sessionId> <requestId> --allow|--deny
 finch session respond <sessionId> <requestId> --answer "header=value" [--answer ...]
