@@ -21,7 +21,7 @@ import {
 } from 'codemirror-markdown-tables';
 import { Compartment, EditorState, RangeSet, RangeSetBuilder, StateEffect, StateField, Transaction, type Extension, type Text } from '@codemirror/state';
 import { indentLess, indentMore, indentWithTab, defaultKeymap, historyKeymap, history } from '@codemirror/commands';
-import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
+import { searchKeymap } from '@codemirror/search';
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, type Completion, type CompletionContext } from '@codemirror/autocomplete';
 import { lintKeymap } from '@codemirror/lint';
 import {
@@ -162,7 +162,13 @@ const markdownEditorSetup = [
   rectangularSelection(),
   crosshairCursor(),
   highlightActiveLine(),
-  highlightSelectionMatches(),
+  // `highlightSelectionMatches()` (part of basicSetup) is intentionally NOT
+  // included: it wraps every other occurrence of the selected word in a
+  // `.cm-selectionMatch` span. Inside a fenced-code block those extra spans
+  // hit the code-row font rules and could compound, but more importantly the
+  // project has always suppressed the visual (its background is transparent)
+  // — selecting prose was silently re-highlighting matching code. Dropping it
+  // removes the span entirely so nothing can disturb the code block.
   keymap.of([
     ...closeBracketsKeymap,
     ...defaultKeymap,
@@ -660,7 +666,7 @@ const finchTheme = EditorView.theme({
     // Keep the code surface translucent: CodeMirror paints its custom
     // selection layer behind line content, so an opaque `var(--card)` mix
     // would cover the selection completely.
-    backgroundColor: 'color-mix(in srgb, var(--text) 8%, transparent)',
+    backgroundColor: 'color-mix(in srgb, var(--text) 4%, transparent)',
     lineHeight: codeEm(CODE_LINE_RATIO) + ' !important',
     fontFamily: 'var(--finch-font-mono)',
     paddingTop: '0 !important',
@@ -678,9 +684,6 @@ const finchTheme = EditorView.theme({
     marginInline: 'auto',
   },
 
-  '.cm-line.cm-md-code-line span': {
-    fontSize: codeEm(CODE_TEXT_SCALE) + ' !important',
-  },
   '.cm-line.cm-md-code-open': {
     borderRadius: '8px 8px 0 0',
     height: codeEm(CODE_FENCE_BAR_RATIO),
@@ -741,9 +744,8 @@ const finchTheme = EditorView.theme({
   // height (headings, code, etc.) so nothing else needs to change.
   '.cm-line.cm-md-gap': {},
   '.cm-line.cm-md-gap-heading': {},
-  // `basicSetup` enables same-word selection matches. Keep the primary text
-  // selection, but suppress those secondary match rectangles entirely.
-  '.cm-selectionMatch': { backgroundColor: 'transparent !important' },
+  // `highlightSelectionMatches` was removed from `markdownEditorSetup`
+  // (see its comment), so `.cm-selectionMatch` no longer appears.
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--text)' },
   '.cm-gutters': {
     color: 'var(--muted)',
@@ -1023,15 +1025,32 @@ const finchTheme = EditorView.theme({
   },
   // `drawSelection()` is intentionally omitted from `markdownEditorSetup`
   // (see its comment) so the browser paints the selection natively. Native
-  // selection has no `.cm-selectionBackground` element, so it is styled via
-  // `::selection`. Scope both the text and its container so the colour also
-  // applies to text inside decorations (headings, code spans, …) that are
-  // otherwise wrapped in nested elements.
+  // selection has no `.cm-selectionBackground` element, so it could be styled
+  // via `::selection` — but native selection vanishes the instant the editor
+  // loses focus (e.g. the rewrite Composer is focused). The persistent
+  // highlight is therefore drawn by `selectionHighlightPlugin` as a
+  // `.cm-md-selection` mark decoration, which is focus-independent. To keep
+  // that as the single source of truth we neutralise the native background
+  // here (set it to transparent rather than removing the rule, so the colour
+  // is still applied to any text the plugin may not cover).
   '& .cm-content ::selection, & .cm-content::selection': {
-    backgroundColor: 'color-mix(in srgb, var(--accent) 34%, transparent)',
+    backgroundColor: 'transparent',
   },
   '& .cm-content ::-moz-selection, & .cm-content::-moz-selection': {
-    backgroundColor: 'color-mix(in srgb, var(--accent) 34%, transparent)',
+    backgroundColor: 'transparent',
+  },
+  '& .cm-content .cm-md-selection': {
+    backgroundColor: 'color-mix(in srgb, var(--accent) 24%, transparent)',
+    borderRadius: '4px',
+    // The mark must be a pure visual overlay: no font-size / line-height so
+    // selected text keeps its exact glyph rhythm. `white-space: pre-wrap`
+    // (the same as CodeMirror's own .cm-content default) is the one property
+    // it does need: without it the browser may render a run of selected
+    // spaces under the element's inherited white-space, which collapses or
+    // re-metrics them so the highlighted whitespace looks narrower than the
+    // spaces around it. pre-wrap keeps every space intact and still allows
+    // long prose to wrap. Code rows override white-space to `pre` below.
+    whiteSpace: 'pre-wrap',
   },
   '.cm-panels': {
     color: 'var(--text)',
@@ -1244,9 +1263,9 @@ const markdownHighlight = HighlightStyle.define([
   { tag: [tags.function(tags.variableName), tags.labelName], color: '#61afef' },
   { tag: [tags.color, tags.constant(tags.name), tags.standard(tags.name), tags.bool], color: '#d19a66' },
   { tag: [tags.definition(tags.name), tags.separator], color: 'var(--text)' },
-  { tag: [tags.typeName, tags.className, tags.number, tags.changed, tags.annotation, tags.modifier, tags.self, tags.namespace], color: '#e5c07b' },
+  { tag: [tags.typeName, tags.className, tags.number, tags.changed, tags.annotation, tags.modifier, tags.self, tags.namespace], color: '#d3b070' },
   { tag: [tags.operator, tags.operatorKeyword, tags.escape, tags.regexp, tags.special(tags.string), tags.contentSeparator], color: '#56b6c2' },
-  { tag: tags.string, color: '#98c379' },
+  { tag: tags.string, color: '#88b06a' },
   // Bare variableName and controlKeyword are only emitted by the mermaid
   // grammar (node IDs, message/actor labels, sequence control keywords) —
   // regular prose never hits them. Keep them on the same One Dark palette.
@@ -1822,6 +1841,45 @@ const imageWrapperExtension = StateField.define<DecorationSet>({
  * Keeping this out of the decoration set is what allows the widget to survive
  * caret movement. The class and focus are applied imperatively, which is the
  * same split Obsidian uses for its embeds. */
+// Persistent selection highlight.
+//
+// The editor deliberately omits `drawSelection()` and uses the browser's
+// native selection so the box hugs the text (no full-line fill). Native
+// selection however disappears the moment the editor loses focus — e.g. when
+// the AI rewrite Composer is focused — so the highlight would vanish. This
+// plugin paints the selection again as a mark decoration driven solely by
+// `state.selection`, which is independent of focus. A mark wraps only the
+// selected characters (never a full line), and since it is not tied to focus
+// it stays visible before AND after the editor blurs. The native `::selection`
+// background is set to transparent in the theme so the two don't stack.
+const selectionMark = Decoration.mark({ class: 'cm-md-selection' });
+const selectionHighlightPlugin = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+
+  constructor(view: EditorView) {
+    this.decorations = this.compute(view);
+  }
+
+  update(update: ViewUpdate): void {
+    if (update.selectionSet || update.docChanged || update.viewportChanged) {
+      this.decorations = this.compute(update.view);
+    }
+  }
+
+  private compute(view: EditorView): DecorationSet {
+    const { state } = view;
+    const ranges = state.selection.ranges;
+    let builder: RangeSetBuilder<Decoration> | null = null;
+    for (const range of ranges) {
+      // Ignore empty (caret-only) selections.
+      if (range.from >= range.to) continue;
+      if (!builder) builder = new RangeSetBuilder<Decoration>();
+      builder.add(range.from, range.to, selectionMark);
+    }
+    return builder ? builder.finish() : Decoration.none;
+  }
+}, { decorations: (plugin) => plugin.decorations });
+
 const imageSelectionOutline = ViewPlugin.fromClass(class {
   constructor(view: EditorView) { this.sync(view); }
 
@@ -3699,6 +3757,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       aiAddedGutterField,
       aiWorkingGutter,
       aiHintPlugin,
+      selectionHighlightPlugin,
       markdownSupport,
       // Typing `|` on an empty line pops a table-size picker (2x2/3x3/4x4)
       // via CodeMirror's own autocompletion (basicSetup already includes
@@ -3725,6 +3784,11 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
         extensions: [
           cellMarkdownSupport,
           syntaxHighlighting(markdownHighlight),
+          // The cell editor is its own CodeMirror instance, so the persistent
+          // selection highlight must be registered here too — otherwise
+          // selecting text inside a table cell paints nothing (the plugin on
+          // the root view never sees the cell's selection).
+          selectionHighlightPlugin,
           keymap.of(defaultKeymap),
         ],
       }),
