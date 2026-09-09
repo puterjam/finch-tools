@@ -3,6 +3,8 @@
   --terminal-bg: var(--finch-bg-root, #ffffff);
   --terminal-text: var(--finch-text-primary, #202124);
   --terminal-border: var(--finch-border, #dddddf);
+  --terminal-scrollbar-thumb: color-mix(in srgb, transparent 62%, var(--terminal-text));
+  --terminal-scrollbar-thumb-hover: color-mix(in srgb, transparent 42%, var(--terminal-text));
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -31,20 +33,50 @@ body {
 #terminal .xterm-screen {
   background-color: var(--terminal-bg) !important;
 }
+/* xterm may render either the native viewport scrollbar or its own DOM rail. */
 #terminal .xterm-viewport {
-  scrollbar-width: auto;
-  scrollbar-color: var(--terminal-border) transparent;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
 }
-#terminal .xterm-viewport::-webkit-scrollbar { width: 10px; }
-#terminal .xterm-viewport::-webkit-scrollbar-track {
-  background: transparent;
-  border-radius: 999px;
+#terminal[data-scrolling] .xterm-viewport {
+  scrollbar-color: var(--terminal-scrollbar-thumb) transparent;
 }
+#terminal .xterm-viewport::-webkit-scrollbar { width: 4px; }
+#terminal .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
 #terminal .xterm-viewport::-webkit-scrollbar-thumb {
-  min-height: 24px;
+  min-height: 28px;
+  border: 0;
   border-radius: 999px;
-  background: var(--terminal-border);
+  background: transparent;
 }
-#terminal .xterm-viewport::-webkit-scrollbar-thumb:hover {
-  background: var(--finch-text-tertiary, var(--terminal-border));
+#terminal[data-scrolling] .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--terminal-scrollbar-thumb);
+}
+#terminal[data-scrolling] .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: var(--terminal-scrollbar-thumb-hover);
+}
+#terminal .xterm-decoration-overview-ruler {
+  display: none !important;
+}
+#terminal .xterm-scrollable-element > .scrollbar {
+  width: 4px !important;
+  margin: 3px -3px 3px 0;
+  border-radius: 999px;
+  background: transparent !important;
+  opacity: 0 !important;
+  transition: opacity 160ms ease !important;
+}
+#terminal[data-scrolling] .xterm-scrollable-element > .scrollbar {
+  opacity: .72 !important;
+}
+#terminal[data-scrolling] .xterm-scrollable-element > .scrollbar:hover {
+  opacity: 1 !important;
+}
+#terminal .xterm-scrollable-element > .scrollbar > div {
+  border: 0 !important;
+  border-radius: 999px !important;
+  background: var(--terminal-scrollbar-thumb) !important;
+}
+#terminal .xterm-scrollable-element > .scrollbar:hover > div {
+  background: var(--terminal-scrollbar-thumb-hover) !important;
 }

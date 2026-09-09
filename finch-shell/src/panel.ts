@@ -74,25 +74,42 @@ const terminal = new Terminal({
   cursorBlink: true,
   cursorStyle: 'block',
   convertEol: false,
-  fontFamily: color('--finch-font-mono', 'Menlo, Monaco, Consolas, monospace'),
+  fontFamily: 'SF Mono, Menlo, Monaco, Consolas, monospace',
   fontSize: 13,
+  fontWeight: '400',
+  fontWeightBold: '500',
   lineHeight: 1.15,
+  overviewRuler: { width: 6 },
   scrollback: 10_000,
   theme: themeColors(),
 });
 const fitAddon = new FitAddon();
+let scrollbarHideTimer = 0;
 terminal.loadAddon(fitAddon);
 terminal.open(terminalRoot);
+
+function revealScrollbar(): void {
+  terminalRoot.dataset.scrolling = '';
+  window.clearTimeout(scrollbarHideTimer);
+  scrollbarHideTimer = window.setTimeout(() => {
+    delete terminalRoot.dataset.scrolling;
+  }, 900);
+}
+
+terminal.onScroll(revealScrollbar);
+const viewport = terminalRoot.querySelector<HTMLElement>('.xterm-viewport');
+viewport?.addEventListener('scroll', revealScrollbar, { passive: true });
 
 let initialized = false;
 let resizeFrame = 0;
 let themeSyncFrame = 0;
 let appliedThemeSignature = '';
 let cwd = '';
+let panelReadySent = false;
 
 function syncTheme(): void {
   const theme = themeColors();
-  const fontFamily = color('--finch-font-mono', 'Menlo, Monaco, Consolas, monospace');
+  const fontFamily = 'SF Mono, Menlo, Monaco, Consolas, monospace';
   const signature = JSON.stringify({ theme, fontFamily });
   if (signature === appliedThemeSignature) return;
   appliedThemeSignature = signature;
@@ -124,6 +141,13 @@ function post(message: Record<string, unknown>): void {
   bridge?.postMessage(message);
 }
 
+function sendPanelReady(): void {
+  if (panelReadySent) return;
+  panelReadySent = true;
+  fitAddon.fit();
+  post({ type: 'panelReady', cwd, cols: terminal.cols, rows: terminal.rows });
+}
+
 function fitAndNotify(): void {
   cancelAnimationFrame(resizeFrame);
   resizeFrame = requestAnimationFrame(() => {
@@ -147,6 +171,7 @@ bridge?.onMessage((raw) => {
     applyLanguage();
     updatePanelTitle();
     scheduleThemeSync();
+    sendPanelReady();
     return;
   }
   if (message.type === 'finch:menu') {
@@ -198,8 +223,4 @@ document.addEventListener('click', () => terminal.focus());
 
 requestAnimationFrame(() => {
   fitAddon.fit();
-  post({ type: 'panelReady', cwd, cols: terminal.cols, rows: terminal.rows });
-  window.setTimeout(() => {
-    if (!initialized) post({ type: 'panelReady', cwd, cols: terminal.cols, rows: terminal.rows });
-  }, 350);
 });

@@ -266,11 +266,13 @@ export function activate(ctx: finch.MiniToolContext): void {
       },
     },
     risk: 'medium',
-    async execute(input): Promise<finch.ToolResult> {
-      const cwd = String(input.cwd ?? '').trim();
-      if (cwd && !path.isAbsolute(cwd)) {
+    async execute(input, execution): Promise<finch.ToolResult> {
+      const requestedCwd = String(input.cwd ?? '').trim();
+      if (requestedCwd && !path.isAbsolute(requestedCwd)) {
         return { content: [{ type: 'text', text: '`cwd` must be an absolute path.' }], isError: true };
       }
+      const contextCwd = String(execution.cwd ?? '').trim();
+      const cwd = requestedCwd || (path.isAbsolute(contextCwd) ? contextCwd : '');
       const panel = ctx.ui.createPanel({ instanceMode: 'multiple', payload: cwd ? { cwd } : undefined });
       await panel.reveal();
       return { content: [{ type: 'text', text: `Opened an interactive terminal${cwd ? ` in ${cwd}` : ''}.` }] };

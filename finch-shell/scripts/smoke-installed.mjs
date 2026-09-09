@@ -69,13 +69,15 @@ const ctx = {
 const extension = await import(pathToFileURL(path.join(extensionRoot, 'dist/index.js')).href);
 extension.activate(ctx);
 if (!registeredTool || registeredTool.name !== 'finch_shell_open') throw new Error('Tool registration failed');
-await registeredTool.execute({ cwd: process.cwd() });
+const contextCwd = path.join(process.cwd(), 'finch-shell');
+await registeredTool.execute({}, { cwd: contextCwd });
 if (!panel || messageListeners.length !== 1) throw new Error('Panel registration failed');
+if (panel.payload?.cwd !== contextCwd) throw new Error(`Tool context cwd was not forwarded: ${JSON.stringify(panel.payload)}`);
 
 const send = async (message) => {
   for (const listener of messageListeners) await listener(message);
 };
-await send({ type: 'panelReady', cwd: process.cwd(), cols: 100, rows: 30 });
+await send({ type: 'panelReady', cwd: contextCwd, cols: 100, rows: 30 });
 await new Promise((resolve) => setTimeout(resolve, 250));
 await send({ type: 'terminalInput', data: "printf 'PANEL_SMOKE_OK\\n'\nexit\n" });
 
