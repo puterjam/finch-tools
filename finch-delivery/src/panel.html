@@ -11,7 +11,7 @@
      在那之前页面用下面这套 fallback 自己先画一遍，浅色/深色分别给出真实的
      字面量兜底（不要写成自引用的 var(--df-x)，那是无效值，等同没有兜底）。 */
   :root {
-    --df-bg-root: var(--finch-bg-root, #f7f7f8);
+    --df-bg-root: var(--finch-bg-main, #f7f7f8);
     --df-bg-elevated: var(--finch-bg-elevated, #ffffff);
     --df-bg-hover: var(--finch-bg-hover, #eeeef0);
     --df-text-primary: var(--finch-text-primary, #1a1a1a);
@@ -22,7 +22,7 @@
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --df-bg-root: var(--finch-bg-root, #17171a);
+      --df-bg-root: var(--finch-bg-main, #17171a);
       --df-bg-elevated: var(--finch-bg-elevated, #232328);
       --df-bg-hover: var(--finch-bg-hover, #2c2c32);
       --df-text-primary: var(--finch-text-primary, #ececec);
