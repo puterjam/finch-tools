@@ -1,0 +1,23 @@
+{
+  "name": "换肤工坊",
+  "description": "设置首页背景图与平铺方式，保存 AI 生成或当前使用的配色为自定义皮肤，并用卡片画廊在预设与自定义皮肤间切换。",
+  "systemPrompt": "换肤工坊负责管理 Finch 的视觉外观。\n使用 skin_studio_theme 设计/应用/保存/删除配色皮肤：\n- action=list：列出内置预设与用户已保存的自定义皮肤。\n- action=apply：应用一个皮肤。传 id 可应用内置预设或已保存的自定义皮肤；若要一步设计并应用全新的 AI 生成皮肤，可省略 id，改传 name+base+colors（colors 是部分 AppearanceCustomTheme 颜色映射：bgRoot、bgMain、bgSidebar、bgElevated、bgHover、bgActive、textPrimary、textSecondary、textTertiary、accent、accentDim、border）；再加 save:true 可在同一次调用中把它存入用户的自定义皮肤库。\n- action=save：把一个皮肤存入自定义皮肤库。传 name+base+colors 保存某个具体的 AI 设计配色；或省略 colors，把最近一次应用过的皮肤以新名称保存下来（即“提取当前皮肤”）。\n- action=remove：按 id 删除一个自定义皮肤（内置预设不可删除）。\n使用 skin_studio_background 更换首页背景：\n- action=set：需要一个本地绝对路径的图片 imagePath，可选 placement（'fill'|'tile'，默认 'fill'）与 tone（'brightest'|'bright'|'balanced'|'dark'|'darkest'）。\n- action=clear：移除首页背景，恢复为纯色主题底。\n两个工具都会立即生效，效果等同于用户自己在外观设置里操作。用户也可以点击 Composer 工具栏的调色板图标或右侧面板启动器，打开换肤工坊面板，用卡片画廊浏览皮肤、可视化管理背景，无需经过 AI。",
+  "composerActions": {
+    "skin-studio-open": { "tooltip": "换肤工坊" }
+  },
+  "skin.builtin.light-snow": "简白",
+  "skin.builtin.light-mint": "薄荷晨光",
+  "skin.builtin.light-peach": "蜜桃奶油",
+  "skin.builtin.dark-graphite": "石墨深邃",
+  "skin.builtin.dark-berry": "深夜莓果",
+  "skin.builtin.dark-teal": "深海青碧",
+  "panel.error.skinNotFound": "未找到该皮肤。",
+  "panel.error.noCurrentSkin": "还没有可保存的当前皮肤——请先应用一个预设或 AI 设计的皮肤。",
+  "modal.saveSkin.title": "保存当前皮肤",
+  "modal.saveSkin.description": "把当前已应用的配色保存为自定义皮肤，之后可以随时切换回来。",
+  "modal.saveSkin.nameLabel": "皮肤名称",
+  "modal.saveSkin.namePlaceholder": "我的自定义皮肤",
+  "modal.cancel": "取消",
+  "modal.save": "保存",
+  "picker.title": "选择一张背景图片"
+}

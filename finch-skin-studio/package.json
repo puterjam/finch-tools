@@ -1,0 +1,89 @@
+{
+  "name": "finch-skin-studio",
+  "version": "0.1.0",
+  "description": "Design Finch skins and Home backgrounds: pick a background image and tiling, save AI-designed or current color schemes as custom skins, and switch between built-in and custom skins from a card gallery.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-skin-studio"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-skin-studio#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "keywords": [
+    "finch",
+    "finch-minitool",
+    "skin",
+    "theme",
+    "appearance",
+    "wallpaper",
+    "background",
+    "panel"
+  ],
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js && cp src/panel.html dist/panel.html && cp src/panel.js dist/panel.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "name": "Skin Studio",
+    "description": "Set the Home background image and tiling, save AI-designed or current color schemes as custom skins, and switch skins from a card gallery.",
+    "systemPrompt": "Skin Studio manages Finch's visual appearance.\nUse skin_studio_theme to design/apply/save/remove color skins:\n- action=list: list built-in presets and the user's saved custom skins.\n- action=apply: apply a skin. Pass id to apply a built-in preset or a saved custom skin. To design and apply a brand-new AI-generated skin in one step, omit id and pass name+base+colors instead (colors is a partial AppearanceCustomTheme color map: bgRoot,bgMain,bgSidebar,bgElevated,bgHover,bgActive,textPrimary,textSecondary,textTertiary,accent,accentDim,border); add save:true to also persist it into the user's custom skin library in the same call.\n- action=save: persist a skin into the custom library. Pass name+base+colors to save a specific AI-designed palette, or omit colors to save the most recently applied skin (\"extract current skin\") under a new name.\n- action=remove: delete a custom skin by id (built-in presets cannot be removed).\nUse skin_studio_background to change the Home background:\n- action=set: requires an absolute local image path (imagePath), optional placement ('fill'|'tile', default 'fill') and tone ('brightest'|'bright'|'balanced'|'dark'|'darkest').\n- action=clear: remove the Home background and revert to the plain theme surface.\nBoth tools take effect immediately, exactly like the user editing Appearance Settings themselves. The user can also open the Skin Studio panel (palette icon in the Composer toolbar, or the right Panel launcher) to browse skins as cards and manage the background visually without going through the AI.",
+    "main": "dist/index.js",
+    "activationEvents": [
+      "onStartup"
+    ],
+    "miniToolType": "local",
+    "categories": [
+      "productivity",
+      "creative"
+    ],
+    "contributes": {
+      "tools": true,
+      "composerActions": [
+        {
+          "id": "skin-studio-open",
+          "icon": "palette",
+          "tooltip": "Skin Studio"
+        }
+      ],
+      "appPanel": {
+        "icon": "palette",
+        "viewType": "skin-studio.panel",
+        "instanceMode": "single",
+        "showInLauncher": true,
+        "source": {
+          "type": "local",
+          "path": "dist/panel.html"
+        }
+      }
+    },
+    "permissions": {
+      "filesystem": "read",
+      "network": false,
+      "shell": false,
+      "appearance": true
+    }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.3.2",
+    "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "i18n/",
+    "icon.png",
+    "README.md"
+  ]
+}

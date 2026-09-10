@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Skin Studio</title>
+<style>
+  :root {
+    --ss-bg-root: var(--finch-bg-root, #f6f6f8);
+    --ss-bg-main: var(--finch-bg-main, #ffffff);
+    --ss-bg-elevated: var(--finch-bg-elevated, #ffffff);
+    --ss-bg-hover: var(--finch-bg-hover, #f0f1f3);
+    --ss-bg-active: var(--finch-bg-active, #e6e8eb);
+    --ss-text-primary: var(--finch-text-primary, #1c1c1f);
+    --ss-text-secondary: var(--finch-text-secondary, #5b5d66);
+    --ss-text-tertiary: var(--finch-text-tertiary, #9a9ca6);
+    --ss-accent: var(--finch-accent, #2f6fed);
+    --ss-accent-dim: var(--finch-accent-dim, #e2ebfd);
+    --ss-border: var(--finch-border, #e4e4e7);
+    --ss-radius-sm: var(--finch-radius-sm, 8px);
+    --ss-radius-md: var(--finch-radius-md, 12px);
+    --ss-radius-lg: var(--finch-radius-lg, 16px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ss-bg-root: var(--finch-bg-root, #17181b);
+      --ss-bg-main: var(--finch-bg-main, #1b1c20);
+      --ss-bg-elevated: var(--finch-bg-elevated, #222327);
+      --ss-bg-hover: var(--finch-bg-hover, #28292e);
+      --ss-bg-active: var(--finch-bg-active, #313239);
+      --ss-text-primary: var(--finch-text-primary, #f2f2f4);
+      --ss-text-secondary: var(--finch-text-secondary, #a7a8b2);
+      --ss-text-tertiary: var(--finch-text-tertiary, #6c6d78);
+      --ss-accent: var(--finch-accent, #6366f1);
+      --ss-accent-dim: var(--finch-accent-dim, #26264a);
+      --ss-border: var(--finch-border, #2b2c31);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--ss-bg-main);
+    color: var(--ss-text-primary);
+    font-family: var(--finch-font-body, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 16px 18px 32px;
+  }
+  h1, h2 { margin: 0; font-weight: 600; }
+  h1 { font-size: 16px; margin-bottom: 14px; }
+  h2 { font-size: 13px; color: var(--ss-text-secondary); text-transform: uppercase; letter-spacing: 0.02em; }
+  .card {
+    background: var(--ss-bg-elevated);
+    border: 1px solid var(--ss-border);
+    border-radius: var(--ss-radius-lg);
+    padding: 14px;
+    margin-bottom: 20px;
+  }
+  .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border-radius: var(--ss-radius-sm);
+    border: 1px solid var(--ss-border);
+    background: var(--ss-bg-elevated);
+    color: var(--ss-text-primary);
+    padding: 6px 12px;
+  }
+  button:hover { background: var(--ss-bg-hover); }
+  button.primary { background: var(--ss-accent); color: #fff; border-color: transparent; }
+  button.primary:hover { filter: brightness(1.05); }
+  button.ghost { background: transparent; border-color: transparent; color: var(--ss-text-secondary); }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  /* ── Background section ── */
+  .bg-preview {
+    height: 120px;
+    border-radius: var(--ss-radius-md);
+    border: 1px dashed var(--ss-border);
+    background: var(--ss-bg-main);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    margin-bottom: 12px;
+    position: relative;
+  }
+  .bg-preview img { width: 100%; height: 100%; object-fit: cover; }
+  .bg-preview.tile img { object-fit: none; background-size: 64px 64px; }
+  .bg-placeholder { color: var(--ss-text-tertiary); font-size: 12px; text-align: center; padding: 8px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row + .row { margin-top: 10px; }
+  .seg { display: inline-flex; border: 1px solid var(--ss-border); border-radius: var(--ss-radius-sm); overflow: hidden; }
+  .seg button { border: none; border-radius: 0; background: transparent; }
+  .seg button + button { border-left: 1px solid var(--ss-border); }
+  .seg button.active { background: var(--ss-accent-dim); color: var(--ss-accent); font-weight: 600; }
+  .label { color: var(--ss-text-tertiary); font-size: 12px; margin-right: 2px; }
+
+  /* ── Skin grid ── */
+  .grid { display: grid; gap: 12px; }
+  .skin-card {
+    position: relative;
+    border: 1px solid var(--ss-border);
+    border-radius: var(--ss-radius-lg);
+    background: var(--ss-bg-elevated);
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform 0.12s ease, border-color 0.12s ease;
+  }
+  .skin-card:hover { transform: translateY(-2px); border-color: var(--ss-accent); }
+  .skin-card.active { border-color: var(--ss-accent); box-shadow: 0 0 0 2px var(--ss-accent-dim) inset; }
+  .thumb { height: 84px; display: flex; }
+  .thumb .side { width: 30%; }
+  .thumb .main { flex: 1; padding: 10px 8px; display: flex; flex-direction: column; gap: 5px; }
+  .thumb .bar { height: 5px; border-radius: 3px; }
+  .thumb .bar.w1 { width: 70%; }
+  .thumb .bar.w2 { width: 45%; }
+  .thumb .pill { width: 26px; height: 8px; border-radius: 4px; margin-top: 4px; }
+  .skin-name {
+    padding: 8px 10px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .skin-name span.n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .check-badge {
+    position: absolute; top: 6px; right: 6px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--ss-accent); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; line-height: 1;
+  }
+  .del-btn {
+    border: none; background: rgba(0,0,0,0.55); color: #fff;
+    width: 20px; height: 20px; border-radius: 50%;
+    display: none; align-items: center; justify-content: center;
+    font-size: 12px; padding: 0; flex: none;
+  }
+  .skin-card:hover .del-btn { display: flex; }
+  .add-card {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 84px; gap: 6px; color: var(--ss-text-tertiary);
+    border: 1px dashed var(--ss-border); border-radius: var(--ss-radius-lg);
+    background: transparent; cursor: pointer;
+  }
+  .add-card:hover { color: var(--ss-accent); border-color: var(--ss-accent); background: var(--ss-bg-hover); }
+
+  /* ── Skeleton ── */
+  .skeleton { border-radius: var(--ss-radius-lg); overflow: hidden; border: 1px solid var(--ss-border); }
+  .skeleton .thumb, .skeleton .sk-line { background: linear-gradient(90deg, var(--ss-bg-hover) 25%, var(--ss-bg-active) 37%, var(--ss-bg-hover) 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; }
+  .skeleton .sk-line { height: 12px; margin: 10px; border-radius: 4px; width: 60%; }
+  @keyframes shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ss-bg-elevated); border: 1px solid var(--ss-border); border-radius: var(--ss-radius-md); padding: 8px 14px; font-size: 12px; color: var(--ss-text-primary); box-shadow: 0 4px 16px rgba(0,0,0,0.18); opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <h1 id="t-title">Skin Studio</h1>
+
+  <section class="card" id="bg-card">
+    <div class="section-header"><h2 id="t-bg-heading">Home Background</h2></div>
+    <div class="bg-preview" id="bg-preview">
+      <div class="bg-placeholder" id="t-bg-empty">No background image set</div>
+      <img id="bg-image" style="display:none" alt="" />
+    </div>
+    <div class="row">
+      <button class="primary" id="btn-pick" type="button">＋ <span id="t-choose">Choose image</span></button>
+      <button class="ghost" id="btn-clear" type="button" disabled><span id="t-clear">Clear</span></button>
+    </div>
+    <div class="row">
+      <span class="label" id="t-placement">Placement</span>
+      <div class="seg" id="seg-placement">
+        <button data-value="fill" id="t-fill">Fill</button>
+        <button data-value="tile" id="t-tile">Tile</button>
+      </div>
+    </div>
+    <div class="row">
+      <span class="label" id="t-tone">Brightness</span>
+      <div class="seg" id="seg-tone">
+        <button data-value="brightest">☀️</button>
+        <button data-value="bright">🌤️</button>
+        <button data-value="balanced">⛅</button>
+        <button data-value="dark">🌥️</button>
+        <button data-value="darkest">🌑</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="skins-section">
+    <div class="section-header">
+      <h2 id="t-skins-heading">Skins</h2>
+    </div>
+    <div class="grid" id="skins-grid"></div>
+  </section>
+
+  <div class="toast" id="toast"></div>
+
+<script src="panel.js"></script>
+</body>
+</html>
