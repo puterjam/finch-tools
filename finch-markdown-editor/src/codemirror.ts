@@ -995,15 +995,15 @@ const finchTheme = EditorView.theme({
     content: 'var(--cm-ai-hint-code, "")',
   },
   '.cm-activeLine': {
-    backgroundColor: 'color-mix(in srgb, var(--text) 7%, transparent)',
+    backgroundColor: 'color-mix(in srgb, var(--text) 4%, transparent)',
     boxShadow: [
-      '-25vw 0 color-mix(in srgb, var(--text) 7%, transparent)',
-      '25vw 0 color-mix(in srgb, var(--text) 7%, transparent)',
+      '-25vw 0 color-mix(in srgb, var(--text) 4%, transparent)',
+      '25vw 0 color-mix(in srgb, var(--text) 4%, transparent)',
     ].join(', '),
   },
   '.cm-activeLineGutter': {
     color: 'var(--text) !important',
-    backgroundColor: 'color-mix(in srgb, var(--text) 7%, transparent)',
+    backgroundColor: 'color-mix(in srgb, var(--text) 4%, transparent)',
   },
   // Focus mode ("专注" toolbar toggle): non-active lines fade to 70% so the
   // cursor's line stands out while writing. Driven by a CSS token on the
