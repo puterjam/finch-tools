@@ -20,7 +20,7 @@
       exportSkin: 'Copy', importCard: 'Import skin',
       importInvalid: 'This file is not a valid skin export.',
       skinCopied: 'Skin copied to clipboard',
-      aiTheme: 'Design with AI',
+      aiTheme: 'Design a skin with AI',
       aiThemeChip: 'Design a new color skin for me',
       aiThemePrompt:
         'Help me design a new Finch color skin. Propose a palette that fits the mood I describe below, '
@@ -43,7 +43,7 @@
       exportSkin: '复制', importCard: '导入皮肤',
       importInvalid: '这不是有效的皮肤导出文件。',
       skinCopied: '皮肤已复制到剪贴板',
-      aiTheme: '让 AI 设计',
+      aiTheme: '让 AI 设计皮肤',
       aiThemeChip: '帮我设计一套新的配色皮肤',
       aiThemePrompt:
         '帮我设计一套新的 Finch 配色皮肤。先根据我下面描述的氛围给出配色方案，'
@@ -72,7 +72,11 @@
     document.getElementById('t-sys-auto').textContent = t('sysAuto');
     document.getElementById('t-sys-light').textContent = t('sysLight');
     document.getElementById('t-sys-dark').textContent = t('sysDark');
-    document.getElementById('t-ai-theme').textContent = t('aiTheme');
+    // The "design with AI" button is icon-only, so its label lives in the
+    // tooltip / accessible name rather than in visible text.
+    var aiThemeBtn = document.getElementById('btn-ai-theme');
+    aiThemeBtn.title = t('aiTheme');
+    aiThemeBtn.setAttribute('aria-label', t('aiTheme'));
   }
 
   // ── Color helpers ─────────────────────────────────────────────────────
