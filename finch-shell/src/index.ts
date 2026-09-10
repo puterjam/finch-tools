@@ -3,7 +3,7 @@ import { readlinkSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import type * as finch from 'finch';
-import type { IPty } from 'node-pty';
+import type { IPty } from '@homebridge/node-pty-prebuilt-multiarch';
 
 interface NodePtyModule {
   spawn(file: string, args: string[] | string, options: {
@@ -52,7 +52,16 @@ const MAX_TRANSCRIPT = 1_000_000;
 const CWD_POLL_INTERVAL = 1000;
 
 function loadNodePty(): NodePtyModule {
-  nodePtyModule ??= require('./node-pty/lib/index.js') as NodePtyModule;
+  if (nodePtyModule) return nodePtyModule;
+  try {
+    nodePtyModule = require('./node-pty/lib/index.js') as NodePtyModule;
+  } catch (error) {
+    // Surface the host runtime in the panel: native load failures are almost
+    // always a platform, arch, or ABI mismatch in the bundled binaries.
+    const reason = error instanceof Error ? error.message : String(error);
+    const runtime = process.versions.electron ? `electron ${process.versions.electron}` : `node ${process.versions.node}`;
+    throw new Error(`${reason} (${process.platform}-${process.arch}, ${runtime}, abi ${process.versions.modules})`);
+  }
   return nodePtyModule;
 }
 

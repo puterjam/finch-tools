@@ -8,7 +8,7 @@ Open **Shell** from Finch's Panel launcher, or ask Finch to open a terminal. Eve
 
 ## Platform support
 
-The package includes node-pty runtimes for macOS (Apple Silicon and Intel) and Windows (x64 and ARM64). Linux uses the native runtime compiled during `npm install`, so Linux release tarballs must be built on the matching Linux architecture.
+The package includes native runtimes for macOS (Apple Silicon and Intel), Windows (x64 and ARM64), and Linux (x64, ARM64, ARM, and ia32). Linux variants for both glibc and musl are bundled across supported Node/Electron ABIs, so no compiler or first-launch download is needed.
 
 ---
 
@@ -22,4 +22,4 @@ The package includes node-pty runtimes for macOS (Apple Silicon and Intel) and W
 
 ## 平台支持
 
-安装包包含 macOS（Apple Silicon 与 Intel）和 Windows（x64 与 ARM64）的 node-pty 运行时。Linux 使用 `npm install` 时本机编译的原生模块，因此 Linux 发布包需要在对应架构的 Linux 环境构建。
+安装包内置 macOS（Apple Silicon 与 Intel）、Windows（x64 与 ARM64）及 Linux（x64、ARM64、ARM、ia32）的原生运行时。Linux 同时包含 glibc 和 musl 版本以及受支持的 Node/Electron ABI，无需编译器，也不会在首次启动时下载依赖。

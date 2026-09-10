@@ -1,6 +1,6 @@
 {
   "name": "finch-shell",
-  "version": "0.1.1",
+  "version": "0.1.4",
   "description": "An interactive terminal panel for Finch powered by xterm.js and a native PTY.",
   "author": {
     "name": "PuterJam",
@@ -85,6 +85,7 @@
   },
   "devDependencies": {
     "@finchtoys/minitool-api": "^0.3.5",
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.14.1",
     "@types/node": "^26.1.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
