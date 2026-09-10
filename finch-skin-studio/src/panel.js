@@ -17,8 +17,9 @@
       dropInvalidType: 'Please choose a supported image file (PNG / JPEG / WebP / GIF / AVIF).',
       dropTooLarge: 'Image is too large (max 15MB).',
       systemTheme: 'System Appearance', sysAuto: 'Auto', sysLight: 'Light', sysDark: 'Dark',
-      exportSkin: 'Export', importCard: 'Import skin',
+      exportSkin: 'Copy', importCard: 'Import skin',
       importInvalid: 'This file is not a valid skin export.',
+      skinCopied: 'Skin copied to clipboard',
     },
     'zh-CN': {
       title: '换肤工坊', bgHeading: '首页背景', bgEmpty: '尚未设置背景图',
@@ -33,8 +34,9 @@
       dropInvalidType: '请选择支持的图片格式（PNG / JPEG / WebP / GIF / AVIF）。',
       dropTooLarge: '图片过大（最多 15MB）。',
       systemTheme: '系统外观', sysAuto: '跟随系统', sysLight: '浅色', sysDark: '深色',
-      exportSkin: '导出', importCard: '导入皮肤',
+      exportSkin: '复制', importCard: '导入皮肤',
       importInvalid: '这不是有效的皮肤导出文件。',
+      skinCopied: '皮肤已复制到剪贴板',
     },
   };
   DICT['zh-HK'] = DICT['zh-CN'];
@@ -179,7 +181,7 @@
       var exp = document.createElement('button');
       exp.className = 'del-btn';
       exp.type = 'button';
-      exp.textContent = '⇩';
+      exp.textContent = '⧉';
       exp.title = t('exportSkin');
       exp.addEventListener('click', function (ev) {
         ev.stopPropagation();
@@ -225,17 +227,28 @@
     });
   }
 
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    // Fallback for webviews without the async Clipboard API.
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } finally { document.body.removeChild(ta); }
+    return Promise.resolve();
+  }
+
   function exportSkin(skin) {
     var payload = { schema: 'finch-skin-studio.skin@1', name: skin.name, base: skin.base, colors: skin.colors || {} };
-    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = (skin.name || 'skin').replace(/[\\/:*?"<>|]+/g, '_') + '.json';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+    copyText(JSON.stringify(payload)).then(function () {
+      showToast(t('skinCopied'));
+    }, function () {
+      showToast(t('importInvalid'));
+    });
   }
 
   function renderSkins() {
@@ -271,7 +284,7 @@
     importCard.className = 'add-card';
     importCard.innerHTML = '<span class="add-icon">⇪</span><span class="add-label">' + t('importCard') + '</span>';
     importCard.addEventListener('click', function () {
-      document.getElementById('skin-file-input').click();
+      api.postMessage({ type: 'requestImportSkin' });
     });
     grid.appendChild(importCard);
     computeColumns();
@@ -379,33 +392,6 @@
   document.addEventListener('dragover', function (ev) { if (isFileDrag(ev)) ev.preventDefault(); });
   document.addEventListener('drop', function (ev) { if (isFileDrag(ev)) ev.preventDefault(); });
 
-  // ── Custom skin import (native file dialog) ────────────────────────────
-  document.getElementById('skin-file-input').addEventListener('change', function (ev) {
-    var file = ev.target.files && ev.target.files[0];
-    ev.target.value = '';
-    if (!file) return;
-    var reader = new FileReader();
-    reader.onload = function () {
-      var data;
-      try {
-        data = JSON.parse(String(reader.result || '{}'));
-      } catch (e) {
-        showToast(t('importInvalid'));
-        return;
-      }
-      var name = typeof data.name === 'string' ? data.name.trim() : '';
-      var base = data.base === 'dark' ? 'dark' : 'light';
-      var colors = data.colors && typeof data.colors === 'object' ? data.colors : {};
-      if (!name || Object.keys(colors).length === 0) {
-        showToast(t('importInvalid'));
-        return;
-      }
-      api.postMessage({ type: 'requestImportSkin', name: name, base: base, colors: colors });
-    };
-    reader.onerror = function () { showToast(t('importInvalid')); };
-    reader.readAsText(file);
-  });
-
   new ResizeObserver(function () { computeColumns(); }).observe(document.getElementById('skins-grid'));
 
   // ── Bridge messages ───────────────────────────────────────────────────
@@ -429,7 +415,7 @@
       renderSkins();
       return;
     }
-    if (msg.type === 'error') {
+    if (msg.type === 'error' || msg.type === 'toast') {
       showToast(String(msg.message || ''));
       return;
     }

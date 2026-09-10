@@ -462,9 +462,6 @@ interface PanelMessage {
   dataUrl?: string;
   /** For setSystemTheme. */
   theme?: 'system' | 'light' | 'dark';
-  /** For requestImportSkin. */
-  base?: SkinBase;
-  colors?: unknown;
 }
 
 async function handlePanelMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, message: unknown): Promise<void> {
@@ -554,40 +551,56 @@ async function handlePanelMessage(ctx: finch.MiniToolContext, panel: finch.AppPa
     }
 
     case 'requestImportSkin': {
-      const importedName = typeof msg.name === 'string' ? msg.name.trim() : '';
-      const importedBase: SkinBase = msg.base === 'dark' ? 'dark' : 'light';
-      const importedColors = sanitizeColors(msg.colors);
-      if (!importedName || Object.keys(importedColors).length === 0) {
-        await panel.postMessage({
-          type: 'error',
-          message: tr(ctx, 'panel.error.importInvalid', 'This file is not a valid skin export.'),
-        });
-        break;
-      }
+      // Panel opens a paste-JSON modal rather than a file dialog: the whole
+      // point of export-as-copy is that the round trip never touches disk.
       const result = await ctx.ui.showModalDialog({
         title: tr(ctx, 'modal.importSkin.title', 'Import skin'),
-        description: tr(ctx, 'modal.importSkin.description', 'Save this imported skin to your custom library.'),
+        description: tr(
+          ctx,
+          'modal.importSkin.description',
+          'Paste a skin exported from Skin Studio to add it to your library.',
+        ),
         fields: [
           {
-            key: 'name',
-            label: tr(ctx, 'modal.saveSkin.nameLabel', 'Skin name'),
-            type: 'text',
+            key: 'json',
+            label: tr(ctx, 'modal.importSkin.jsonLabel', 'Skin data'),
+            type: 'textarea',
             required: true,
-            default: importedName,
-            placeholder: tr(ctx, 'modal.saveSkin.namePlaceholder', 'My Custom Skin'),
+            placeholder: tr(ctx, 'modal.importSkin.jsonPlaceholder', 'Paste the copied skin JSON here…'),
           },
         ],
         actions: [
           { id: 'cancel', label: tr(ctx, 'modal.cancel', 'Cancel') },
-          { id: 'save', label: tr(ctx, 'modal.save', 'Save'), variant: 'primary' },
+          { id: 'import', label: tr(ctx, 'modal.import', 'Import'), variant: 'primary' },
         ],
       });
-      if (result.action !== 'save') break;
-      const finalName = String(result.values?.name ?? '').trim() || importedName;
+      if (result.action !== 'import') break;
+      const raw = String(result.values?.json ?? '').trim();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        await panel.postMessage({
+          type: 'error',
+          message: tr(ctx, 'panel.error.importInvalid', 'This is not a valid skin export.'),
+        });
+        break;
+      }
+      const record = parsed as { name?: unknown; base?: unknown; colors?: unknown };
+      const importedName = typeof record.name === 'string' ? record.name.trim() : '';
+      const importedBase: SkinBase = record.base === 'dark' ? 'dark' : 'light';
+      const importedColors = sanitizeColors(record.colors);
+      if (!importedName || Object.keys(importedColors).length === 0) {
+        await panel.postMessage({
+          type: 'error',
+          message: tr(ctx, 'panel.error.importInvalid', 'This is not a valid skin export.'),
+        });
+        break;
+      }
       const custom = await loadCustomSkins(ctx);
       const entry: CustomSkin = {
         id: randomUUID(),
-        name: finalName,
+        name: importedName,
         base: importedBase,
         colors: importedColors,
         createdAt: Date.now(),
@@ -595,6 +608,7 @@ async function handlePanelMessage(ctx: finch.MiniToolContext, panel: finch.AppPa
       custom.push(entry);
       await saveCustomSkins(ctx, custom);
       await broadcastState(ctx);
+      await panel.postMessage({ type: 'toast', message: tr(ctx, 'panel.skinImported', 'Skin imported') });
       break;
     }
 
