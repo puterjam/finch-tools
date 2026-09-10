@@ -68,6 +68,7 @@
       'appview.libraryReorderDone': '已完成',
       'appview.rewrite': '改写',
       'appview.focus': '专注',
+      'appview.focusExit': '退出专注模式',
       'appview.openSession': '打开改写会话',
       'appview.rewriting': '已发起改写，会话正在处理并将直接写回文件。',
       'appview.continuing': '已发起续写，会话正在处理并将直接写回文件。',
@@ -236,6 +237,7 @@
       'appview.libraryReorderDone': 'Done',
       'appview.rewrite': 'Rewrite',
       'appview.focus': 'Focus',
+      'appview.focusExit': 'Exit focus mode',
       'appview.openSession': 'Open rewrite session',
       'appview.rewriting': 'Rewrite started. The session will apply its revision directly to the file.',
       'appview.continuing': 'Continuation started. The session will write the new text directly to the file.',
@@ -1467,7 +1469,16 @@
       if (icSave) icSave.hidden = savedFlash;
       if (icCheck) icCheck.hidden = !savedFlash;
     }
-    if (appFocus) { appFocus.disabled = !hasDoc; appFocus.classList.toggle('checked', focusMode); }
+    if (appFocus) {
+      appFocus.disabled = !hasDoc;
+      appFocus.classList.toggle('checked', focusMode);
+      // Once collapsed to a lone floating pill (see .focus-mode in panel.css),
+      // this is the only surviving control — its tooltip should say what
+      // clicking it now does (leave focus mode), not just name the feature.
+      var focusTooltip = t(focusMode ? 'appview.focusExit' : 'appview.focus');
+      appFocus.setAttribute('data-tooltip', focusTooltip);
+      appFocus.setAttribute('aria-label', focusTooltip);
+    }
     if (appPreview) { appPreview.disabled = !hasDoc; appPreview.classList.toggle('checked', previewVisible); }
     if (appOpen) appOpen.disabled = nativePickPending;
     if (appStyle) {
@@ -1562,6 +1573,10 @@
   cm.setFontFamily(EDITOR_FONTS[editorFont]);
   cm.setComfortWriting(comfortWriting);
   cm.setFocusMode(focusMode);
+  // Mirrors the toggle in toggleFocusMode() — applies a focus mode restored
+  // from localStorage before the first click, so a session that starts in
+  // focus mode also starts with the App View toolbar already collapsed.
+  document.body.classList.toggle('focus-mode', focusMode);
   cm.scrollDOM.addEventListener('scroll', closePopup);
 
   // ---- Markdown <-> bm.md rendering ----
@@ -3410,6 +3425,10 @@
       annotationsEnabled = true;
     }
     cm.setFocusMode(focusMode);
+    // App View only: collapse the toolbar to a single floating toggle (see
+    // `.focus-mode` in panel.css). Harmless to set outside App View too —
+    // the sidebar AppPanel toolbar has no rule keyed off this class.
+    document.body.classList.toggle('focus-mode', focusMode);
     try { localStorage.setItem('md-editor-focus-mode', focusMode ? '1' : '0'); } catch (e) {}
     syncToolbar();
     setStatus(focusMode ? t('status.focusOn') : t('status.focusOff'));
