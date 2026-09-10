@@ -1,6 +1,6 @@
 {
   "name": "finch-shell",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "An interactive terminal panel for Finch powered by xterm.js and a native PTY.",
   "author": {
     "name": "PuterJam",

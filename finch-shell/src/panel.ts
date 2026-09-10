@@ -160,6 +160,43 @@ function fitAndNotify(): void {
   });
 }
 
+function copySelection(): boolean {
+  const selection = terminal.getSelection();
+  if (!selection) return false;
+  navigator.clipboard?.writeText(selection).catch(() => {
+    // Clipboard access can be rejected while the panel is unfocused. xterm draws
+    // its selection on a canvas, so fall back to a throwaway DOM node instead.
+    const carrier = document.createElement('textarea');
+    carrier.value = selection;
+    carrier.setAttribute('aria-hidden', 'true');
+    carrier.style.position = 'fixed';
+    carrier.style.opacity = '0';
+    document.body.appendChild(carrier);
+    carrier.select();
+    try {
+      document.execCommand('copy');
+    } finally {
+      carrier.remove();
+      terminal.focus();
+    }
+  });
+  return true;
+}
+
+// Ctrl+Shift+C has no default browser action, so without this the shortcut does
+// nothing on Linux and Windows. Paste already works through Chromium's built-in
+// "paste as plain text", so leave Ctrl+Shift+V alone rather than risk breaking
+// it behind a clipboard-read permission prompt. macOS keeps Cmd+C/Cmd+V.
+terminal.attachCustomKeyEventHandler((event) => {
+  if (event.type !== 'keydown') return true;
+  if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return true;
+  if (event.code !== 'KeyC' && event.key.toLowerCase() !== 'c') return true;
+  // With no selection, fall through so the keypress keeps its normal meaning.
+  if (!copySelection()) return true;
+  event.preventDefault();
+  return false;
+});
+
 terminal.onData((data) => post({ type: 'terminalInput', data }));
 terminal.onResize(({ cols, rows }) => post({ type: 'terminalResize', cols, rows }));
 

@@ -6,6 +6,8 @@ Open a real interactive terminal inside Finch. It starts in the current workspac
 
 Open **Shell** from Finch's Panel launcher, or ask Finch to open a terminal. Every open creates an independent Panel tab and shell process. Use **Restart** to replace the current shell process and the clear button to clear the visible terminal buffer.
 
+Select text with the mouse, then copy with `Ctrl+Shift+C` and paste with `Ctrl+Shift+V` (`Cmd+C` and `Cmd+V` on macOS). Plain `Ctrl+C` still sends an interrupt to the running program, as in any terminal.
+
 ## Platform support
 
 The package includes native runtimes for macOS (Apple Silicon and Intel), Windows (x64 and ARM64), and Linux (x64, ARM64, ARM, and ia32). Linux variants for both glibc and musl are bundled across supported Node/Electron ABIs, so no compiler or first-launch download is needed.
@@ -19,6 +21,8 @@ The package includes native runtimes for macOS (Apple Silicon and Intel), Window
 ## 使用方式
 
 从 Finch 的 Panel 启动器打开「终端」，也可以直接让 Finch 打开终端。每次打开都会新建独立的 Panel 标签和 shell 进程。使用「重新启动」替换当前 shell 进程，使用清空按钮清除当前可见缓冲区。
+
+用鼠标选中文本后，可用 `Ctrl+Shift+C` 复制、`Ctrl+Shift+V` 粘贴（macOS 为 `Cmd+C` 与 `Cmd+V`）。单独的 `Ctrl+C` 仍然向正在运行的程序发送中断信号，与常规终端一致。
 
 ## 平台支持
 
