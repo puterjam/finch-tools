@@ -20,6 +20,12 @@
       exportSkin: 'Copy', importCard: 'Import skin',
       importInvalid: 'This file is not a valid skin export.',
       skinCopied: 'Skin copied to clipboard',
+      aiTheme: 'Design with AI',
+      aiThemeChip: 'Design a new color skin for me',
+      aiThemePrompt:
+        'Help me design a new Finch color skin. Propose a palette that fits the mood I describe below, '
+        + 'then apply it with skin_studio_theme and save it to my custom skins. Mood / keywords: ',
+      aiThemeUnavailable: 'No chat input here — open a chat or a Space first.',
     },
     'zh-CN': {
       title: '换肤工坊', bgHeading: '首页背景', bgEmpty: '尚未设置背景图',
@@ -37,6 +43,12 @@
       exportSkin: '复制', importCard: '导入皮肤',
       importInvalid: '这不是有效的皮肤导出文件。',
       skinCopied: '皮肤已复制到剪贴板',
+      aiTheme: '让 AI 设计',
+      aiThemeChip: '帮我设计一套新的配色皮肤',
+      aiThemePrompt:
+        '帮我设计一套新的 Finch 配色皮肤。先根据我下面描述的氛围给出配色方案，'
+        + '再用 skin_studio_theme 应用并保存到我的自定义皮肤库。风格关键词：',
+      aiThemeUnavailable: '当前场景没有可用的输入框，请先打开一个对话或空间。',
     },
   };
   DICT['zh-HK'] = DICT['zh-CN'];
@@ -60,6 +72,7 @@
     document.getElementById('t-sys-auto').textContent = t('sysAuto');
     document.getElementById('t-sys-light').textContent = t('sysLight');
     document.getElementById('t-sys-dark').textContent = t('sysDark');
+    document.getElementById('t-ai-theme').textContent = t('aiTheme');
   }
 
   // ── Color helpers ─────────────────────────────────────────────────────
@@ -325,6 +338,25 @@
     var btn = ev.target.closest('button[data-value]');
     if (!btn) return;
     api.postMessage({ type: 'setSystemTheme', theme: btn.getAttribute('data-value') });
+  });
+
+  // Drops a guiding prompt into the Composer draft as a removable annotation
+  // chip, so the user can add their own mood keywords and hit send. This is
+  // the only Composer-writing API a Panel page gets (`ctx.composerActions`'
+  // `composer.fill()` only exists inside a toolbar-button handler), it needs a
+  // real user gesture like this click, and it never sends the message itself.
+  document.getElementById('btn-ai-theme').addEventListener('click', function () {
+    var composer = api.composer;
+    if (!composer || typeof composer.addContexts !== 'function') {
+      showToast(t('aiThemeUnavailable'));
+      return;
+    }
+    composer
+      .addContexts([{ type: 'annotation', label: t('aiThemeChip'), promptText: t('aiThemePrompt') }])
+      .catch(function () {
+        // Rejects on container / no-draft scopes.
+        showToast(t('aiThemeUnavailable'));
+      });
   });
 
   // ── Background image upload (native file dialog + drag & drop) ────────

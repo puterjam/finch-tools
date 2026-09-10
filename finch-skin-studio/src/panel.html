@@ -97,6 +97,12 @@
   .seg button + button { border-left: 1px solid var(--ss-border); }
   .seg button.active { background: var(--ss-accent-dim); color: var(--ss-accent); font-weight: 600; }
   .label { color: var(--ss-text-tertiary); font-size: 12px; margin-right: 2px; }
+  .ai-theme-btn {
+    margin-left: auto; flex: none;
+    background: transparent; border-color: transparent; color: var(--ss-accent);
+    padding: 4px 8px; font-size: 12px;
+  }
+  .ai-theme-btn:hover { background: var(--ss-accent-dim); }
 
   /* ── Skin grid ── */
   .grid { display: grid; gap: 12px; }
@@ -210,6 +216,7 @@
         <button data-value="light" id="t-sys-light">Light</button>
         <button data-value="dark" id="t-sys-dark">Dark</button>
       </div>
+      <button class="ai-theme-btn" id="btn-ai-theme" type="button">✧ <span id="t-ai-theme">Design with AI</span></button>
     </div>
     <div class="grid" id="skins-grid"></div>
   </section>
