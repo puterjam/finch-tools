@@ -103,13 +103,13 @@
   .seg button + button { border-left: 1px solid var(--ss-border); }
   .seg button.active { background: var(--ss-accent-dim); color: var(--ss-accent); font-weight: 600; }
   .label { color: var(--ss-text-tertiary); font-size: 12px; margin-right: 2px; }
-  .ai-theme-btn {
-    margin-left: auto; flex: none;
+  .row-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: none; }
+  .icon-btn {
     width: 28px; height: 28px; padding: 0; border-radius: 50%;
     display: inline-flex; align-items: center; justify-content: center;
     background: transparent; border-color: transparent; color: var(--ss-accent);
   }
-  .ai-theme-btn:hover { background: var(--ss-accent-dim); }
+  .icon-btn:hover { background: var(--ss-accent-dim); }
 
   /* ── Skin grid ── */
   .grid { display: grid; gap: 12px; }
@@ -133,6 +133,9 @@
   .thumb .pill { width: 26px; height: 8px; border-radius: 4px; margin-top: 4px; }
   .skin-name {
     padding: 8px 10px;
+    /* Reserves room for the 20px hover-revealed action buttons so showing
+       them cannot grow the card, the row, or the page. */
+    min-height: 36px;
     font-size: 12px;
     display: flex;
     align-items: center;
@@ -156,7 +159,9 @@
   .skin-card:hover .del-btn { display: flex; }
   .add-card {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 6px; min-height: 116px;
+    /* Matches a skin card exactly (2px border + 84px thumb + 36px name row)
+       so the dashed box is the same size even when it sits alone in a row. */
+    gap: 6px; min-height: 122px;
     color: var(--ss-text-tertiary);
     border: 1px dashed var(--ss-border); border-radius: var(--ss-radius-lg);
     background: transparent; cursor: pointer; padding: 0;
@@ -276,9 +281,14 @@
         <button data-value="light" id="t-sys-light">Light</button>
         <button data-value="dark" id="t-sys-dark">Dark</button>
       </div>
-      <button class="ai-theme-btn" id="btn-ai-theme" type="button">
-        <svg class="ico" aria-hidden="true"><use href="#i-paintbrush"></use></svg>
-      </button>
+      <div class="row-actions">
+        <button class="icon-btn" id="btn-ai-theme" type="button">
+          <svg class="ico" aria-hidden="true"><use href="#i-paintbrush"></use></svg>
+        </button>
+        <button class="icon-btn" id="btn-import-skin" type="button">
+          <svg class="ico" aria-hidden="true"><use href="#i-paste"></use></svg>
+        </button>
+      </div>
     </div>
     <div class="grid" id="skins-grid"></div>
   </section>

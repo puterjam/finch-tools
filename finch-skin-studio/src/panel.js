@@ -17,7 +17,7 @@
       dropInvalidType: 'Please choose a supported image file (PNG / JPEG / WebP / GIF / AVIF).',
       dropTooLarge: 'Image is too large (max 15MB).',
       systemTheme: 'System Appearance', sysAuto: 'Auto', sysLight: 'Light', sysDark: 'Dark',
-      exportSkin: 'Copy', importCard: 'Import skin',
+      exportSkin: 'Copy', importSkin: 'Import a shared skin',
       importInvalid: 'This file is not a valid skin export.',
       skinCopied: 'Skin copied to clipboard',
       aiTheme: 'Design a skin with AI',
@@ -40,7 +40,7 @@
       dropInvalidType: '请选择支持的图片格式（PNG / JPEG / WebP / GIF / AVIF）。',
       dropTooLarge: '图片过大（最多 15MB）。',
       systemTheme: '系统外观', sysAuto: '跟随系统', sysLight: '浅色', sysDark: '深色',
-      exportSkin: '复制', importCard: '导入皮肤',
+      exportSkin: '复制', importSkin: '导入别人分享的皮肤',
       importInvalid: '这不是有效的皮肤导出文件。',
       skinCopied: '皮肤已复制到剪贴板',
       aiTheme: '让 AI 设计皮肤',
@@ -72,11 +72,14 @@
     document.getElementById('t-sys-auto').textContent = t('sysAuto');
     document.getElementById('t-sys-light').textContent = t('sysLight');
     document.getElementById('t-sys-dark').textContent = t('sysDark');
-    // The "design with AI" button is icon-only, so its label lives in the
-    // tooltip / accessible name rather than in visible text.
-    var aiThemeBtn = document.getElementById('btn-ai-theme');
-    aiThemeBtn.title = t('aiTheme');
-    aiThemeBtn.setAttribute('aria-label', t('aiTheme'));
+    // The row's icon buttons carry no visible text, so each label lives in
+    // the tooltip / accessible name.
+    [['btn-ai-theme', 'aiTheme'], ['btn-import-skin', 'importSkin']].forEach(function (pair) {
+      var el = document.getElementById(pair[0]);
+      var label = t(pair[1]);
+      el.title = label;
+      el.setAttribute('aria-label', label);
+    });
   }
 
   // ── Color helpers ─────────────────────────────────────────────────────
@@ -317,15 +320,6 @@
       api.postMessage({ type: 'requestSaveCurrent' });
     });
     grid.appendChild(addCard);
-    var importCard = document.createElement('button');
-    importCard.type = 'button';
-    importCard.className = 'add-card';
-    importCard.appendChild(makeIcon('i-paste', 'ico-lg'));
-    importCard.appendChild(makeLabel(t('importCard')));
-    importCard.addEventListener('click', function () {
-      api.postMessage({ type: 'requestImportSkin' });
-    });
-    grid.appendChild(importCard);
     computeColumns();
   }
 
@@ -349,6 +343,9 @@
   });
   document.getElementById('btn-clear').addEventListener('click', function () {
     api.postMessage({ type: 'clearBackground' });
+  });
+  document.getElementById('btn-import-skin').addEventListener('click', function () {
+    api.postMessage({ type: 'requestImportSkin' });
   });
   document.getElementById('seg-placement').addEventListener('click', function (ev) {
     var btn = ev.target.closest('button[data-value]');
