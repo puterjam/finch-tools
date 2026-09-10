@@ -1,5 +1,7 @@
 {
   "name": "成果库",
+  "tool.title": "记录成果",
+  "tool.description": "当你完成一份面向用户的文件，并需要将它收录到成果库时，使用此工具。支持 Markdown、Word、PowerPoint、PDF、Excel、网页和图片。\n\n不要收录源代码、配置文件或项目文件，例如 .ts、.js、.py、.css、.json。\n\naction：\n  record — 将完成的文件收录到成果库（需要 filePath 和 title；Markdown 请附 textPreview）\n  list   — 查看已收录的成果，可用 sessionId 筛选\n  remove — 按 id 删除一条成果记录",
   "appView": {
     "description": "浏览 AI 在所有会话中生成的成果。"
   },

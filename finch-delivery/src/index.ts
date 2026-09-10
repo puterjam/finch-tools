@@ -369,14 +369,18 @@ export function activate(ctx: finch.MiniToolContext): void {
   // ── Agent tool ───────────────────────────────────────────────────────────
   const tool = ctx.tools.register({
     name: 'record_artifact',
-    title: 'Artifact Recorder',
-    description:
-      "Record and manage deliverables (finished document-type files: Markdown, Word, PPT, PDF, Excel, web pages, images) produced for the user.\n" +
-      "Never call action 'record' for source code, config, or project files (.ts, .js, .py, .css, .json, etc) — those are not deliverables.\n" +
-      'action:\n' +
-      '  record — log a new deliverable (filePath, title, description, textPreview for md)\n' +
-      '  list   — list deliverables, optionally filtered by sessionId\n' +
-      '  remove — remove a deliverable by id',
+    title: ctx.i18n.t('tool.title'),
+    description: ctx.i18n.t('tool.description'),
+    callDisplay: {
+      inline: {
+        mode: 'single',
+        fields: [
+          { path: 'filePath', format: 'path', maxLength: 48 },
+          { path: 'sessionId', format: 'truncate', maxLength: 32 },
+          { path: 'id', format: 'truncate', maxLength: 32 },
+        ],
+      },
+    },
     inputSchema: {
       type: 'object',
       properties: {

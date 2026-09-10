@@ -1,4 +1,6 @@
 {
+  "tool.title": "Record Deliverables",
+  "tool.description": "Use this tool whenever you create a finished, user-facing file and want it saved to the Deliverables library. Supported files: Markdown, Word, PowerPoint, PDF, Excel, web pages, and images.\n\nDo not record source code, configuration, or project files such as .ts, .js, .py, .css, or .json.\n\naction:\n  record — add a finished file to the library (requires filePath and title; add textPreview for Markdown)\n  list   — show saved deliverables; optionally filter by sessionId\n  remove — delete a deliverable record by id",
   "appView": {
     "description": "Browse every artifact produced by the AI across all sessions."
   },
