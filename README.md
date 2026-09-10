@@ -8,6 +8,7 @@ Mini tools that extend [Finch](https://finchwork.app/) with focused, user-facing
 - [`finch-ego-lite`](./finch-ego-lite/) — lets Finch browse the web in isolated [Ego Lite](https://lite.ego.app/) task spaces while users follow, inspect, and take over its pages.
 - [`finch-helper`](./finch-helper/) — an assistant that answers questions about Finch usage, features and mini tool development from the official documentation knowledge base.
 - [`finch-delivery`](./finch-delivery/) — tracks and browses deliverables (Markdown, Word, PPT, PDF, Excel, web pages, images) produced by the AI across all sessions, with a card gallery Panel and Markdown text previews.
+- [`finch-skin-studio`](./finch-skin-studio/) — sets the Home background image and tiling, saves AI-designed or current color schemes as custom skins, and switches between 6 built-in and custom skins from a card gallery Panel.
 - [`finch-markdown-editor`](./finch-markdown-editor/) — edits Markdown with contextual AI revisions and bm.md-powered WeChat Official Account previews.
 - [`finch-shell`](./finch-shell/) — opens a real interactive terminal in Finch with workspace-aware startup, full-screen terminal programs, colors, and resize support.
 - [`finch-cli-bridge`](./finch-cli-bridge/) — pairs the `finch` command-line tool with Finch over a loopback-only, user-approved HTTP bridge, so a terminal can drive Sessions, watch events, and answer permission cards.
@@ -25,6 +26,7 @@ Mini tools that extend [Finch](https://finchwork.app/) with focused, user-facing
 - [`finch-ego-lite`](./finch-ego-lite/)：让 Finch 在独立的 [Ego Lite](https://lite.ego.app/) 任务空间中浏览网页，用户可以查看、接管并关闭 Agent 的页面。
 - [`finch-helper`](./finch-helper/)：一个基于官方文档知识库回答 Finch 用法、功能与小程序开发问题的助手。
 - [`finch-delivery`](./finch-delivery/)：记录和浏览 AI 生成的交付物（Markdown、Word、PPT、PDF、Excel、网页、图片），以卡片画廊面板展示，支持 Markdown 文字预览和跨会话浏览。
+- [`finch-skin-studio`](./finch-skin-studio/)：设置首页背景图与平铺方式，把 AI 设计或当前使用的配色保存为自定义皮肤，用卡片画廊面板在 6 套内置与自定义皮肤间切换。
 - [`finch-markdown-editor`](./finch-markdown-editor/)：专注 Markdown 编辑体验，支持上下文 AI 改稿与 bm.md 驱动的公众号预览。
 - [`finch-shell`](./finch-shell/)：在 Finch 中打开真正的交互式终端，支持工作区目录启动、全屏终端程序、彩色输出与尺寸同步。
 - [`finch-cli-bridge`](./finch-cli-bridge/)：把 `finch` 命令行工具与 Finch 配对——通过一个只监听本机、需要用户点头确认的 HTTP 桥接，让终端能创建/驱动会话、查看事件、应答权限卡。
