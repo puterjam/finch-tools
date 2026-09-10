@@ -14,8 +14,11 @@
       deleteConfirm: 'Delete', deleteCancel: 'Cancel', applied: 'Skin applied', removed: 'Skin removed',
       backgroundUpdated: 'Background updated', backgroundCleared: 'Background cleared',
       noCurrentSkin: 'No applied skin to save yet — apply a preset first.',
-      dropInvalidType: 'Please drop an image file (PNG / JPEG / WebP / GIF / AVIF).',
+      dropInvalidType: 'Please choose a supported image file (PNG / JPEG / WebP / GIF / AVIF).',
       dropTooLarge: 'Image is too large (max 15MB).',
+      systemTheme: 'System Appearance', sysAuto: 'Auto', sysLight: 'Light', sysDark: 'Dark',
+      exportSkin: 'Export', importCard: 'Import skin',
+      importInvalid: 'This file is not a valid skin export.',
     },
     'zh-CN': {
       title: '换肤工坊', bgHeading: '首页背景', bgEmpty: '尚未设置背景图',
@@ -27,8 +30,11 @@
       deleteConfirm: '删除', deleteCancel: '取消', applied: '已应用皮肤', removed: '已删除皮肤',
       backgroundUpdated: '背景已更新', backgroundCleared: '背景已清除',
       noCurrentSkin: '还没有可保存的当前皮肤，请先应用一个预设。',
-      dropInvalidType: '请拖拽图片文件（PNG / JPEG / WebP / GIF / AVIF）。',
+      dropInvalidType: '请选择支持的图片格式（PNG / JPEG / WebP / GIF / AVIF）。',
       dropTooLarge: '图片过大（最多 15MB）。',
+      systemTheme: '系统外观', sysAuto: '跟随系统', sysLight: '浅色', sysDark: '深色',
+      exportSkin: '导出', importCard: '导入皮肤',
+      importInvalid: '这不是有效的皮肤导出文件。',
     },
   };
   DICT['zh-HK'] = DICT['zh-CN'];
@@ -48,6 +54,10 @@
     document.getElementById('t-tile').textContent = t('tile');
     document.getElementById('t-tone').textContent = t('tone');
     document.getElementById('t-skins-heading').textContent = t('skinsHeading');
+    document.getElementById('t-systemTheme').textContent = t('systemTheme');
+    document.getElementById('t-sys-auto').textContent = t('sysAuto');
+    document.getElementById('t-sys-light').textContent = t('sysLight');
+    document.getElementById('t-sys-dark').textContent = t('sysDark');
   }
 
   // ── Color helpers ─────────────────────────────────────────────────────
@@ -90,7 +100,10 @@
   }
 
   // ── State ─────────────────────────────────────────────────────────────
-  var state = { builtin: [], custom: [], background: { placement: 'fill', tone: 'balanced' }, lastAppliedId: undefined, loaded: false };
+  var state = {
+    builtin: [], custom: [], background: { placement: 'fill', tone: 'balanced' },
+    lastAppliedId: undefined, activeMode: null, loaded: false,
+  };
 
   function toFinchFileUrl(absolutePath) {
     return 'finch-file://local?path=' + encodeURIComponent(absolutePath);
@@ -123,6 +136,15 @@
     });
   }
 
+  function renderSystemThemeSeg() {
+    var seg = document.getElementById('seg-system-theme');
+    var mode = state.activeMode;
+    var active = mode && mode.mode === 'system' ? mode.systemTheme : null;
+    Array.prototype.forEach.call(seg.querySelectorAll('button'), function (b) {
+      b.classList.toggle('active', b.getAttribute('data-value') === active);
+    });
+  }
+
   function computeColumns() {
     var grid = document.getElementById('skins-grid');
     var width = grid.clientWidth || window.innerWidth || 360;
@@ -132,9 +154,18 @@
     grid.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
   }
 
+  function isSkinActive(skin) {
+    var mode = state.activeMode;
+    // Before anything has ever been applied through Skin Studio (no
+    // activeMode on record yet), fall back to just matching lastAppliedId.
+    if (mode && mode.mode !== 'skin') return false;
+    return state.lastAppliedId === skin.id;
+  }
+
   function makeSkinCard(skin, isCustom) {
+    var active = isSkinActive(skin);
     var card = document.createElement('div');
-    card.className = 'skin-card' + (state.lastAppliedId === skin.id ? ' active' : '');
+    card.className = 'skin-card' + (active ? ' active' : '');
     card.appendChild(buildThumb(skin));
     var nameRow = document.createElement('div');
     nameRow.className = 'skin-name';
@@ -143,6 +174,17 @@
     nameSpan.textContent = skin.name;
     nameRow.appendChild(nameSpan);
     if (isCustom) {
+      var actions = document.createElement('div');
+      actions.className = 'skin-actions';
+      var exp = document.createElement('button');
+      exp.className = 'del-btn';
+      exp.type = 'button';
+      exp.textContent = '⇩';
+      exp.title = t('exportSkin');
+      exp.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        exportSkin(skin);
+      });
       var del = document.createElement('button');
       del.className = 'del-btn';
       del.type = 'button';
@@ -152,10 +194,12 @@
         ev.stopPropagation();
         confirmRemove(skin);
       });
-      nameRow.appendChild(del);
+      actions.appendChild(exp);
+      actions.appendChild(del);
+      nameRow.appendChild(actions);
     }
     card.appendChild(nameRow);
-    if (state.lastAppliedId === skin.id) {
+    if (active) {
       var badge = document.createElement('div');
       badge.className = 'check-badge';
       badge.textContent = '✓';
@@ -181,6 +225,19 @@
     });
   }
 
+  function exportSkin(skin) {
+    var payload = { schema: 'finch-skin-studio.skin@1', name: skin.name, base: skin.base, colors: skin.colors || {} };
+    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = (skin.name || 'skin').replace(/[\\/:*?"<>|]+/g, '_') + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+  }
+
   function renderSkins() {
     var grid = document.getElementById('skins-grid');
     grid.innerHTML = '';
@@ -204,11 +261,19 @@
     var addCard = document.createElement('button');
     addCard.type = 'button';
     addCard.className = 'add-card';
-    addCard.innerHTML = '<span style="font-size:20px;line-height:1;">＋</span><span>' + t('addCard') + '</span>';
+    addCard.innerHTML = '<span class="add-icon">＋</span><span class="add-label">' + t('addCard') + '</span>';
     addCard.addEventListener('click', function () {
       api.postMessage({ type: 'requestSaveCurrent' });
     });
     grid.appendChild(addCard);
+    var importCard = document.createElement('button');
+    importCard.type = 'button';
+    importCard.className = 'add-card';
+    importCard.innerHTML = '<span class="add-icon">⇪</span><span class="add-label">' + t('importCard') + '</span>';
+    importCard.addEventListener('click', function () {
+      document.getElementById('skin-file-input').click();
+    });
+    grid.appendChild(importCard);
     computeColumns();
   }
 
@@ -224,7 +289,11 @@
 
   // ── Wire up controls ──────────────────────────────────────────────────
   document.getElementById('btn-pick').addEventListener('click', function () {
-    api.postMessage({ type: 'pickBackgroundImage' });
+    // A plain <input type=file> click opens the OS's real native "open
+    // file" dialog — standard web platform behavior, not a Finch API —
+    // which is the closest thing to a system file picker mini tools can
+    // reach. See the upload handling below.
+    document.getElementById('bg-file-input').click();
   });
   document.getElementById('btn-clear').addEventListener('click', function () {
     api.postMessage({ type: 'clearBackground' });
@@ -239,8 +308,13 @@
     if (!btn) return;
     api.postMessage({ type: 'setBackgroundOptions', tone: btn.getAttribute('data-value') });
   });
+  document.getElementById('seg-system-theme').addEventListener('click', function (ev) {
+    var btn = ev.target.closest('button[data-value]');
+    if (!btn) return;
+    api.postMessage({ type: 'setSystemTheme', theme: btn.getAttribute('data-value') });
+  });
 
-  // ── Drag & drop background image ───────────────────────────────────────
+  // ── Background image upload (native file dialog + drag & drop) ────────
   var MAX_DROPPED_IMAGE_BYTES = 15 * 1024 * 1024; // 15 MB, mirrors the backend limit
   var IMAGE_TYPE_RE = /^image\/(png|jpeg|jpg|webp|gif|avif)$/;
   var bgPreview = document.getElementById('bg-preview');
@@ -250,6 +324,32 @@
     var types = ev.dataTransfer && ev.dataTransfer.types;
     return !!types && Array.prototype.indexOf.call(types, 'Files') !== -1;
   }
+
+  function uploadBackgroundFile(file) {
+    if (!file) return;
+    if (!IMAGE_TYPE_RE.test(file.type)) {
+      showToast(t('dropInvalidType'));
+      return;
+    }
+    if (file.size > MAX_DROPPED_IMAGE_BYTES) {
+      showToast(t('dropTooLarge'));
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      api.postMessage({ type: 'uploadBackgroundImage', dataUrl: String(reader.result || ''), name: file.name });
+    };
+    reader.onerror = function () {
+      showToast(t('dropInvalidType'));
+    };
+    reader.readAsDataURL(file);
+  }
+
+  document.getElementById('bg-file-input').addEventListener('change', function (ev) {
+    var file = ev.target.files && ev.target.files[0];
+    ev.target.value = ''; // allow re-picking the same file later
+    uploadBackgroundFile(file);
+  });
 
   bgPreview.addEventListener('dragenter', function (ev) {
     if (!isFileDrag(ev)) return;
@@ -271,24 +371,7 @@
     dragDepth = 0;
     bgPreview.classList.remove('drag-over');
     var files = ev.dataTransfer && ev.dataTransfer.files;
-    if (!files || files.length === 0) return;
-    var file = files[0];
-    if (!IMAGE_TYPE_RE.test(file.type)) {
-      showToast(t('dropInvalidType'));
-      return;
-    }
-    if (file.size > MAX_DROPPED_IMAGE_BYTES) {
-      showToast(t('dropTooLarge'));
-      return;
-    }
-    var reader = new FileReader();
-    reader.onload = function () {
-      api.postMessage({ type: 'dropBackgroundImage', dataUrl: String(reader.result || ''), name: file.name });
-    };
-    reader.onerror = function () {
-      showToast(t('dropInvalidType'));
-    };
-    reader.readAsDataURL(file);
+    uploadBackgroundFile(files && files[0]);
   });
 
   // Prevent an errant drop outside the preview box from navigating the whole
@@ -296,13 +379,40 @@
   document.addEventListener('dragover', function (ev) { if (isFileDrag(ev)) ev.preventDefault(); });
   document.addEventListener('drop', function (ev) { if (isFileDrag(ev)) ev.preventDefault(); });
 
+  // ── Custom skin import (native file dialog) ────────────────────────────
+  document.getElementById('skin-file-input').addEventListener('change', function (ev) {
+    var file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var data;
+      try {
+        data = JSON.parse(String(reader.result || '{}'));
+      } catch (e) {
+        showToast(t('importInvalid'));
+        return;
+      }
+      var name = typeof data.name === 'string' ? data.name.trim() : '';
+      var base = data.base === 'dark' ? 'dark' : 'light';
+      var colors = data.colors && typeof data.colors === 'object' ? data.colors : {};
+      if (!name || Object.keys(colors).length === 0) {
+        showToast(t('importInvalid'));
+        return;
+      }
+      api.postMessage({ type: 'requestImportSkin', name: name, base: base, colors: colors });
+    };
+    reader.onerror = function () { showToast(t('importInvalid')); };
+    reader.readAsText(file);
+  });
+
   new ResizeObserver(function () { computeColumns(); }).observe(document.getElementById('skins-grid'));
 
   // ── Bridge messages ───────────────────────────────────────────────────
   api.onMessage(function (msg) {
     if (!msg || typeof msg !== 'object') return;
     if (msg.type === 'finch:env') {
-      if (msg.locale) { locale = msg.locale; applyStaticI18n(); renderBackground(); renderSkins(); }
+      if (msg.locale) { locale = msg.locale; applyStaticI18n(); renderBackground(); renderSystemThemeSeg(); renderSkins(); }
       return;
     }
     if (msg.type === 'state') {
@@ -311,9 +421,11 @@
       state.custom = msg.custom || [];
       state.background = msg.background || { placement: 'fill', tone: 'balanced' };
       state.lastAppliedId = msg.lastAppliedId;
+      state.activeMode = msg.activeMode || null;
       state.loaded = true;
       applyStaticI18n();
       renderBackground();
+      renderSystemThemeSeg();
       renderSkins();
       return;
     }
@@ -325,6 +437,7 @@
 
   applyStaticI18n();
   renderBackground();
+  renderSystemThemeSeg();
   renderSkins();
   api.postMessage({ type: 'requestState' });
 })();

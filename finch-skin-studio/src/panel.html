@@ -142,12 +142,17 @@
   }
   .skin-card:hover .del-btn { display: flex; }
   .add-card {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    height: 84px; gap: 6px; color: var(--ss-text-tertiary);
+    display: flex; flex-direction: column;
+    color: var(--ss-text-tertiary);
     border: 1px dashed var(--ss-border); border-radius: var(--ss-radius-lg);
-    background: transparent; cursor: pointer;
+    background: transparent; cursor: pointer; padding: 0;
   }
+  .add-card .add-icon {
+    height: 84px; display: flex; align-items: center; justify-content: center; font-size: 20px; line-height: 1;
+  }
+  .add-card .add-label { padding: 8px 10px; font-size: 12px; text-align: center; }
   .add-card:hover { color: var(--ss-accent); border-color: var(--ss-accent); background: var(--ss-bg-hover); }
+  .skin-actions { display: flex; gap: 4px; flex: none; }
 
   /* ── Skeleton ── */
   .skeleton { border-radius: var(--ss-radius-lg); overflow: hidden; border: 1px solid var(--ss-border); }
@@ -171,6 +176,7 @@
       </div>
       <img id="bg-image" style="display:none" alt="" />
     </div>
+    <input type="file" id="bg-file-input" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" style="display:none" />
     <div class="row">
       <button class="primary" id="btn-pick" type="button">＋ <span id="t-choose">Choose image</span></button>
       <button class="ghost" id="btn-clear" type="button" disabled><span id="t-clear">Clear</span></button>
@@ -198,7 +204,16 @@
     <div class="section-header">
       <h2 id="t-skins-heading">Skins</h2>
     </div>
+    <div class="row" style="margin-bottom: 12px;">
+      <span class="label" id="t-systemTheme">System appearance</span>
+      <div class="seg" id="seg-system-theme">
+        <button data-value="system" id="t-sys-auto">Auto</button>
+        <button data-value="light" id="t-sys-light">Light</button>
+        <button data-value="dark" id="t-sys-dark">Dark</button>
+      </div>
+    </div>
     <div class="grid" id="skins-grid"></div>
+    <input type="file" id="skin-file-input" accept="application/json,.json" style="display:none" />
   </section>
 
   <div class="toast" id="toast"></div>

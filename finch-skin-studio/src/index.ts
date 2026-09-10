@@ -1,7 +1,6 @@
 import type * as finch from 'finch';
 import { randomUUID } from 'node:crypto';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join, sep } from 'node:path';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -93,11 +92,16 @@ interface LastApplied {
   appliedAt: number;
 }
 
+/** Tracks whether a custom color skin or Finch's own built-in system theme
+ * is currently active, purely so the panel knows what to highlight. */
+type ActiveMode = { mode: 'skin' } | { mode: 'system'; systemTheme: 'system' | 'light' | 'dark' };
+
 // ── Storage keys ────────────────────────────────────────────────────────────
 
 const KEY_CUSTOM_SKINS = 'customSkins';
 const KEY_BACKGROUND = 'background';
 const KEY_LAST_APPLIED = 'lastApplied';
+const KEY_ACTIVE_MODE = 'activeMode';
 
 // ── Built-in presets: 3 light + 3 dark ─────────────────────────────────────
 
@@ -253,9 +257,11 @@ async function saveBackground(ctx: finch.MiniToolContext, cfg: BackgroundConfig)
   await ctx.storage.set(KEY_BACKGROUND, cfg);
 }
 
-// ── Dropped-image storage (drag & drop backgrounds) ─────────────────────────
-// `ctx.ui.pickFile()` only returns paths to files that already live on disk —
-// there is nothing to copy. A dropped `<input type=file>`/DataTransfer file in
+// ── Uploaded background image storage ───────────────────────────────────────
+// The panel offers no OS-native "open file" dialog through Finch's own APIs,
+// so background images come in from a hidden `<input type=file>` (which does
+// trigger the OS's real picker — that's a plain web platform feature, not a
+// Finch API) or from a drag-and-drop. Either way the resulting File object in
 // the Panel webview has no reliable absolute path (sandboxed renderer), so we
 // receive its raw bytes instead and persist a copy under this mini tool's own
 // storage directory. Anything we write here is "managed": safe to delete once
@@ -335,6 +341,14 @@ async function saveLastApplied(ctx: finch.MiniToolContext, applied: LastApplied)
   await ctx.storage.set(KEY_LAST_APPLIED, applied);
 }
 
+async function loadActiveMode(ctx: finch.MiniToolContext): Promise<ActiveMode | undefined> {
+  return (await ctx.storage.get<ActiveMode>(KEY_ACTIVE_MODE)) ?? undefined;
+}
+
+async function saveActiveMode(ctx: finch.MiniToolContext, mode: ActiveMode): Promise<void> {
+  await ctx.storage.set(KEY_ACTIVE_MODE, mode);
+}
+
 // ── Skin lookup & apply ─────────────────────────────────────────────────────
 
 interface ResolvedSkin {
@@ -371,6 +385,14 @@ async function applySkin(
     colors: skin.colors,
     appliedAt: Date.now(),
   });
+  await saveActiveMode(ctx, { mode: 'skin' });
+}
+
+/** Switches back to Finch's own built-in light/dark/system theme, dropping
+ * any custom color skin. */
+async function applySystemTheme(ctx: finch.MiniToolContext, theme: 'system' | 'light' | 'dark'): Promise<void> {
+  await getAppearance(ctx).setTheme({ theme });
+  await saveActiveMode(ctx, { mode: 'system', systemTheme: theme });
 }
 
 function sanitizeColors(input: unknown): SkinColors {
@@ -391,10 +413,11 @@ function sanitizeColors(input: unknown): SkinColors {
 // ── Panel state payload ─────────────────────────────────────────────────────
 
 async function buildStatePayload(ctx: finch.MiniToolContext, panel: finch.AppPanel) {
-  const [customSkins, background, lastApplied] = await Promise.all([
+  const [customSkins, background, lastApplied, activeMode] = await Promise.all([
     loadCustomSkins(ctx),
     loadBackground(ctx),
     loadLastApplied(ctx),
+    loadActiveMode(ctx),
   ]);
   const builtin = BUILTIN_SKINS.map((s) => ({ id: s.id, name: builtinSkinName(ctx, s), base: s.base, colors: s.colors }));
   return {
@@ -403,6 +426,7 @@ async function buildStatePayload(ctx: finch.MiniToolContext, panel: finch.AppPan
     custom: customSkins,
     background,
     lastAppliedId: lastApplied?.id,
+    activeMode: activeMode ?? null,
     env: {
       sessionId: panel.sessionId ?? '',
       view: panel.view ?? '',
@@ -434,8 +458,13 @@ interface PanelMessage {
   name?: string;
   placement?: BackgroundPlacement;
   tone?: BackgroundTone;
-  /** `data:image/...;base64,...` payload for a drag-and-dropped background image. */
+  /** `data:image/...;base64,...` payload for a dropped/chosen background image. */
   dataUrl?: string;
+  /** For setSystemTheme. */
+  theme?: 'system' | 'light' | 'dark';
+  /** For requestImportSkin. */
+  base?: SkinBase;
+  colors?: unknown;
 }
 
 async function handlePanelMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, message: unknown): Promise<void> {
@@ -524,28 +553,55 @@ async function handlePanelMessage(ctx: finch.MiniToolContext, panel: finch.AppPa
       break;
     }
 
-    case 'pickBackgroundImage': {
-      // `pickFile` only browses inside a Space/workspace directory tree —
-      // there is no OS-native "open file" dialog exposed to mini tools.
-      // Rooting the browser at the user's home directory instead of the
-      // current project gets closest to a system-wide picker (Desktop,
-      // Downloads, Pictures, etc. are all reachable), and drag & drop below
-      // covers the rest.
-      const picker = ctx.ui.pickFile({
-        title: tr(ctx, 'picker.title', 'Choose a background image'),
-        multiple: false,
-        filter: { extensions: ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif'] },
-        root: { directoryPath: homedir() },
+    case 'requestImportSkin': {
+      const importedName = typeof msg.name === 'string' ? msg.name.trim() : '';
+      const importedBase: SkinBase = msg.base === 'dark' ? 'dark' : 'light';
+      const importedColors = sanitizeColors(msg.colors);
+      if (!importedName || Object.keys(importedColors).length === 0) {
+        await panel.postMessage({
+          type: 'error',
+          message: tr(ctx, 'panel.error.importInvalid', 'This file is not a valid skin export.'),
+        });
+        break;
+      }
+      const result = await ctx.ui.showModalDialog({
+        title: tr(ctx, 'modal.importSkin.title', 'Import skin'),
+        description: tr(ctx, 'modal.importSkin.description', 'Save this imported skin to your custom library.'),
+        fields: [
+          {
+            key: 'name',
+            label: tr(ctx, 'modal.saveSkin.nameLabel', 'Skin name'),
+            type: 'text',
+            required: true,
+            default: importedName,
+            placeholder: tr(ctx, 'modal.saveSkin.namePlaceholder', 'My Custom Skin'),
+          },
+        ],
+        actions: [
+          { id: 'cancel', label: tr(ctx, 'modal.cancel', 'Cancel') },
+          { id: 'save', label: tr(ctx, 'modal.save', 'Save'), variant: 'primary' },
+        ],
       });
-      const result = await picker;
-      if (result.action !== 'select' || result.files.length === 0) break;
-      const imagePath = result.files[0].path;
-      const cfg = await loadBackground(ctx);
-      const next: BackgroundConfig = { ...cfg, imagePath };
+      if (result.action !== 'save') break;
+      const finalName = String(result.values?.name ?? '').trim() || importedName;
+      const custom = await loadCustomSkins(ctx);
+      const entry: CustomSkin = {
+        id: randomUUID(),
+        name: finalName,
+        base: importedBase,
+        colors: importedColors,
+        createdAt: Date.now(),
+      };
+      custom.push(entry);
+      await saveCustomSkins(ctx, custom);
+      await broadcastState(ctx);
+      break;
+    }
+
+    case 'setSystemTheme': {
+      const theme = msg.theme === 'light' || msg.theme === 'dark' ? msg.theme : 'system';
       try {
-        await getAppearance(ctx).setHomeBackground({ imagePath, placement: next.placement, tone: next.tone });
-        await cleanupManagedBackground(ctx, cfg.imagePath);
-        await saveBackground(ctx, next);
+        await applySystemTheme(ctx, theme);
         await broadcastState(ctx);
       } catch (err) {
         await panel.postMessage({ type: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -553,7 +609,13 @@ async function handlePanelMessage(ctx: finch.MiniToolContext, panel: finch.AppPa
       break;
     }
 
-    case 'dropBackgroundImage': {
+    case 'uploadBackgroundImage': {
+      // The panel triggers this both for a picked file (a hidden native
+      // <input type=file>, giving the OS's real "open file" dialog — mini
+      // tools have no other way to reach one) and for a drag-and-dropped
+      // file. Either way the page hands us raw bytes (no reliable absolute
+      // path exists for a sandboxed-renderer File), so we persist a managed
+      // copy under this mini tool's own storage directory.
       const dataUrl = typeof msg.dataUrl === 'string' ? msg.dataUrl : '';
       const originalName = typeof msg.name === 'string' ? msg.name : undefined;
       const cfg = await loadBackground(ctx);
@@ -629,14 +691,19 @@ function registerThemeTool(ctx: finch.MiniToolContext): finch.Disposable {
       'Design, apply, save, and remove Finch color skins. Changes take effect immediately, same as editing Appearance Settings.\n' +
       'action:\n' +
       '  list   — list built-in presets (3 light + 3 dark) and the user\'s saved custom skins.\n' +
-      '  apply  — apply a skin. Pass id to apply a built-in preset or a saved custom skin. To design and apply a new AI-generated skin in one step, omit id and pass name+base+colors instead; add save:true to also persist it as a custom skin in the same call.\n' +
+      '  apply  — apply a skin. Pass id to apply a built-in preset or a saved custom skin. To design and apply a new AI-generated skin in one step, omit id and pass name+base+colors instead; add save:true to also persist it as a custom skin in the same call. To switch back to Finch\'s own built-in theme instead of a custom color skin, pass systemTheme ("system"|"light"|"dark") and omit id/name/colors.\n' +
       '  save   — persist a skin into the custom library. Pass name+base+colors to save a specific palette (e.g. one just designed by AI), or omit colors to save the most recently applied skin under a new name ("extract current skin").\n' +
       '  remove — delete a custom skin by id (built-in presets cannot be removed).',
     inputSchema: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['list', 'apply', 'save', 'remove'] },
-        id: { type: 'string', description: 'Built-in preset id or custom skin id. Required for remove; for apply, provide this OR name+base+colors.' },
+        id: { type: 'string', description: 'Built-in preset id or custom skin id. Required for remove; for apply, provide this, OR name+base+colors, OR systemTheme.' },
+        systemTheme: {
+          type: 'string',
+          enum: ['system', 'light', 'dark'],
+          description: 'For action=apply only: switch back to Finch\'s own built-in light/dark/system theme instead of a custom color skin. Takes priority over id/name+base+colors when present.',
+        },
         name: { type: 'string', description: 'Skin display name. Required for save when colors is provided, and for an ad-hoc apply without id.' },
         base: { type: 'string', enum: ['light', 'dark'], description: 'Base preset unspecified colors inherit from. Required alongside colors.' },
         colors: {
@@ -666,6 +733,15 @@ function registerThemeTool(ctx: finch.MiniToolContext): finch.Disposable {
         }
 
         case 'apply': {
+          const systemTheme =
+            input.systemTheme === 'light' || input.systemTheme === 'dark' || input.systemTheme === 'system'
+              ? input.systemTheme
+              : undefined;
+          if (systemTheme) {
+            await applySystemTheme(ctx, systemTheme);
+            await broadcastState(ctx);
+            return text(`Switched to Finch's own built-in "${systemTheme}" theme.`);
+          }
           const id = typeof input.id === 'string' ? input.id.trim() : '';
           if (id) {
             const resolved = await resolveSkinById(ctx, id);
