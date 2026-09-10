@@ -114,6 +114,26 @@
     return thumb;
   }
 
+  // ── Icons ─────────────────────────────────────────────────────────────
+  // References one of the inline Lucide <symbol>s in panel.html.
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+  function makeIcon(symbolId, extraClass) {
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', 'ico' + (extraClass ? ' ' + extraClass : ''));
+    svg.setAttribute('aria-hidden', 'true');
+    var use = document.createElementNS(SVG_NS, 'use');
+    use.setAttribute('href', '#' + symbolId);
+    svg.appendChild(use);
+    return svg;
+  }
+
+  function makeLabel(text) {
+    var span = document.createElement('span');
+    span.className = 'add-label';
+    span.textContent = text;
+    return span;
+  }
+
   // ── State ─────────────────────────────────────────────────────────────
   var state = {
     builtin: [], custom: [], background: { placement: 'fill', tone: 'balanced' },
@@ -194,7 +214,7 @@
       var exp = document.createElement('button');
       exp.className = 'del-btn';
       exp.type = 'button';
-      exp.textContent = '⧉';
+      exp.appendChild(makeIcon('i-copy', 'ico-sm'));
       exp.title = t('exportSkin');
       exp.addEventListener('click', function (ev) {
         ev.stopPropagation();
@@ -203,7 +223,7 @@
       var del = document.createElement('button');
       del.className = 'del-btn';
       del.type = 'button';
-      del.textContent = '✕';
+      del.appendChild(makeIcon('i-trash', 'ico-sm'));
       del.title = t('deleteConfirm');
       del.addEventListener('click', function (ev) {
         ev.stopPropagation();
@@ -217,7 +237,7 @@
     if (active) {
       var badge = document.createElement('div');
       badge.className = 'check-badge';
-      badge.textContent = '✓';
+      badge.appendChild(makeIcon('i-check'));
       card.appendChild(badge);
     }
     card.addEventListener('click', function () {
@@ -287,7 +307,8 @@
     var addCard = document.createElement('button');
     addCard.type = 'button';
     addCard.className = 'add-card';
-    addCard.innerHTML = '<span class="add-icon">＋</span><span class="add-label">' + t('addCard') + '</span>';
+    addCard.appendChild(makeIcon('i-plus', 'ico-lg'));
+    addCard.appendChild(makeLabel(t('addCard')));
     addCard.addEventListener('click', function () {
       api.postMessage({ type: 'requestSaveCurrent' });
     });
@@ -295,7 +316,8 @@
     var importCard = document.createElement('button');
     importCard.type = 'button';
     importCard.className = 'add-card';
-    importCard.innerHTML = '<span class="add-icon">⇪</span><span class="add-label">' + t('importCard') + '</span>';
+    importCard.appendChild(makeIcon('i-paste', 'ico-lg'));
+    importCard.appendChild(makeLabel(t('importCard')));
     importCard.addEventListener('click', function () {
       api.postMessage({ type: 'requestImportSkin' });
     });

@@ -71,6 +71,12 @@
   button.primary:hover { filter: brightness(1.05); }
   button.ghost { background: transparent; border-color: transparent; color: var(--ss-text-secondary); }
   button:disabled { opacity: 0.5; cursor: default; }
+  /* Inline Lucide icons (see the <symbol> sprite at the top of <body>).
+     Presentation properties inherit into <use> shadow content, so size and
+     stroke are set here once instead of on every path. */
+  .ico { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .ico-sm { width: 12px; height: 12px; }
+  .ico-lg { width: 20px; height: 20px; stroke-width: 1.75; }
 
   /* ── Background section ── */
   .bg-preview {
@@ -138,13 +144,13 @@
     width: 18px; height: 18px; border-radius: 50%;
     background: var(--ss-accent); color: #fff;
     display: flex; align-items: center; justify-content: center;
-    font-size: 11px; line-height: 1;
   }
+  .check-badge .ico { width: 12px; height: 12px; stroke-width: 3; }
   .del-btn {
     border: none; background: rgba(0,0,0,0.55); color: #fff;
     width: 20px; height: 20px; border-radius: 50%;
     display: none; align-items: center; justify-content: center;
-    font-size: 12px; padding: 0; flex: none;
+    padding: 0; flex: none;
   }
   .skin-card:hover .del-btn { display: flex; }
   .add-card {
@@ -154,8 +160,8 @@
     border: 1px dashed var(--ss-border); border-radius: var(--ss-radius-lg);
     background: transparent; cursor: pointer; padding: 0;
   }
-  .add-card .add-icon { font-size: 20px; line-height: 1; }
   .add-card .add-label { font-size: 12px; text-align: center; }
+  #btn-pick, #btn-clear, .ai-theme-btn { display: inline-flex; align-items: center; gap: 6px; }
   .add-card:hover { color: var(--ss-accent); border-color: var(--ss-accent); background: var(--ss-bg-hover); }
   .skin-actions { display: flex; gap: 4px; flex: none; }
 
@@ -170,6 +176,54 @@
 </style>
 </head>
 <body>
+  <!-- Inline Lucide sprite (lucide-static v1.44.0, ISC). The panel is a
+       packaged offline page, so the paths are embedded rather than fetched
+       from a CDN. Sizing/stroke come from the .ico class. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="i-copy" viewBox="0 0 24 24">
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24">
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24">
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
+    </symbol>
+    <symbol id="i-paste" viewBox="0 0 24 24">
+      <path d="M11 14h10" />
+      <path d="M16 4h2a2 2 0 0 1 2 2v1.344" />
+      <path d="m17 18 4-4-4-4" />
+      <path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 1.793-1.113" />
+      <rect x="8" y="2" width="8" height="4" rx="1" />
+    </symbol>
+    <symbol id="i-sparkles" viewBox="0 0 24 24">
+      <path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+      <path d="M20 2v4" />
+      <path d="M22 4h-4" />
+      <circle cx="4" cy="20" r="2" />
+    </symbol>
+    <symbol id="i-check" viewBox="0 0 24 24">
+      <path d="M20 6 9 17l-5-5" />
+    </symbol>
+    <symbol id="i-x" viewBox="0 0 24 24">
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </symbol>
+    <symbol id="i-image-plus" viewBox="0 0 24 24">
+      <path d="M16 5h6" />
+      <path d="M19 2v6" />
+      <path d="M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5" />
+      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+      <circle cx="9" cy="9" r="2" />
+    </symbol>
+  </svg>
+
   <h1 id="t-title">Skin Studio</h1>
 
   <section class="card" id="bg-card">
@@ -183,8 +237,14 @@
     </div>
     <input type="file" id="bg-file-input" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" style="display:none" />
     <div class="row">
-      <button class="primary" id="btn-pick" type="button">＋ <span id="t-choose">Choose image</span></button>
-      <button class="ghost" id="btn-clear" type="button" disabled><span id="t-clear">Clear</span></button>
+      <button class="primary" id="btn-pick" type="button">
+        <svg class="ico" aria-hidden="true"><use href="#i-image-plus"></use></svg>
+        <span id="t-choose">Choose image</span>
+      </button>
+      <button class="ghost" id="btn-clear" type="button" disabled>
+        <svg class="ico" aria-hidden="true"><use href="#i-x"></use></svg>
+        <span id="t-clear">Clear</span>
+      </button>
     </div>
     <div class="row">
       <span class="label" id="t-placement">Placement</span>
@@ -216,7 +276,10 @@
         <button data-value="light" id="t-sys-light">Light</button>
         <button data-value="dark" id="t-sys-dark">Dark</button>
       </div>
-      <button class="ai-theme-btn" id="btn-ai-theme" type="button">✧ <span id="t-ai-theme">Design with AI</span></button>
+      <button class="ai-theme-btn" id="btn-ai-theme" type="button">
+        <svg class="ico" aria-hidden="true"><use href="#i-sparkles"></use></svg>
+        <span id="t-ai-theme">Design with AI</span>
+      </button>
     </div>
     <div class="grid" id="skins-grid"></div>
   </section>
