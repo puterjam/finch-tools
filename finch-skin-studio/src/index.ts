@@ -1,5 +1,8 @@
 import type * as finch from 'finch';
 import { randomUUID } from 'node:crypto';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join, sep } from 'node:path';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -250,6 +253,80 @@ async function saveBackground(ctx: finch.MiniToolContext, cfg: BackgroundConfig)
   await ctx.storage.set(KEY_BACKGROUND, cfg);
 }
 
+// ── Dropped-image storage (drag & drop backgrounds) ─────────────────────────
+// `ctx.ui.pickFile()` only returns paths to files that already live on disk —
+// there is nothing to copy. A dropped `<input type=file>`/DataTransfer file in
+// the Panel webview has no reliable absolute path (sandboxed renderer), so we
+// receive its raw bytes instead and persist a copy under this mini tool's own
+// storage directory. Anything we write here is "managed": safe to delete once
+// superseded, so drops don't pile up on disk indefinitely.
+const BACKGROUNDS_DIR_NAME = 'backgrounds';
+const MAX_DROPPED_IMAGE_BYTES = 15 * 1024 * 1024; // 15 MB
+const IMAGE_MIME_EXTENSIONS: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'image/avif': 'avif',
+};
+
+function backgroundsDir(ctx: finch.MiniToolContext): string {
+  return join(ctx.storagePath, BACKGROUNDS_DIR_NAME);
+}
+
+function isManagedBackgroundPath(ctx: finch.MiniToolContext, imagePath: string | undefined): boolean {
+  if (!imagePath) return false;
+  const dir = backgroundsDir(ctx) + sep;
+  return imagePath.startsWith(dir);
+}
+
+/** Best-effort delete of a previously-saved dropped-image copy. Never throws. */
+async function cleanupManagedBackground(ctx: finch.MiniToolContext, imagePath: string | undefined): Promise<void> {
+  if (!isManagedBackgroundPath(ctx, imagePath)) return;
+  try {
+    await unlink(imagePath as string);
+  } catch {
+    // Already gone or inaccessible — nothing to do.
+  }
+}
+
+function sanitizeDroppedFileName(name: string | undefined): string {
+  const base = (name ?? 'background').replace(/\.[^./\\]+$/, '');
+  const cleaned = base.replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]+/g, '-').slice(0, 60);
+  return cleaned || 'background';
+}
+
+/** Decodes a `data:image/...;base64,...` URL into a saved file under this
+ * mini tool's storage directory. Throws with a localized message on failure. */
+async function saveDroppedImage(
+  ctx: finch.MiniToolContext,
+  dataUrl: string,
+  originalName: string | undefined,
+): Promise<string> {
+  const match = /^data:([a-zA-Z0-9.+/-]+);base64,(.+)$/.exec(dataUrl);
+  if (!match) {
+    throw new Error(tr(ctx, 'panel.error.dropInvalidType', 'Please drop an image file.'));
+  }
+  const mime = match[1].toLowerCase();
+  const ext = IMAGE_MIME_EXTENSIONS[mime];
+  if (!ext) {
+    throw new Error(tr(ctx, 'panel.error.dropInvalidType', 'Please drop an image file.'));
+  }
+  const base64 = match[2];
+  const approxBytes = (base64.length * 3) / 4;
+  if (approxBytes > MAX_DROPPED_IMAGE_BYTES) {
+    throw new Error(tr(ctx, 'panel.error.dropTooLarge', 'Image is too large (max 15MB).'));
+  }
+  const buffer = Buffer.from(base64, 'base64');
+  const dir = backgroundsDir(ctx);
+  await mkdir(dir, { recursive: true });
+  const fileName = `${Date.now()}-${sanitizeDroppedFileName(originalName)}.${ext}`;
+  const filePath = join(dir, fileName);
+  await writeFile(filePath, buffer);
+  return filePath;
+}
+
 async function loadLastApplied(ctx: finch.MiniToolContext): Promise<LastApplied | undefined> {
   return (await ctx.storage.get<LastApplied>(KEY_LAST_APPLIED)) ?? undefined;
 }
@@ -357,6 +434,8 @@ interface PanelMessage {
   name?: string;
   placement?: BackgroundPlacement;
   tone?: BackgroundTone;
+  /** `data:image/...;base64,...` payload for a drag-and-dropped background image. */
+  dataUrl?: string;
 }
 
 async function handlePanelMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, message: unknown): Promise<void> {
@@ -446,10 +525,17 @@ async function handlePanelMessage(ctx: finch.MiniToolContext, panel: finch.AppPa
     }
 
     case 'pickBackgroundImage': {
+      // `pickFile` only browses inside a Space/workspace directory tree —
+      // there is no OS-native "open file" dialog exposed to mini tools.
+      // Rooting the browser at the user's home directory instead of the
+      // current project gets closest to a system-wide picker (Desktop,
+      // Downloads, Pictures, etc. are all reachable), and drag & drop below
+      // covers the rest.
       const picker = ctx.ui.pickFile({
         title: tr(ctx, 'picker.title', 'Choose a background image'),
         multiple: false,
         filter: { extensions: ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif'] },
+        root: { directoryPath: homedir() },
       });
       const result = await picker;
       if (result.action !== 'select' || result.files.length === 0) break;
@@ -458,6 +544,24 @@ async function handlePanelMessage(ctx: finch.MiniToolContext, panel: finch.AppPa
       const next: BackgroundConfig = { ...cfg, imagePath };
       try {
         await getAppearance(ctx).setHomeBackground({ imagePath, placement: next.placement, tone: next.tone });
+        await cleanupManagedBackground(ctx, cfg.imagePath);
+        await saveBackground(ctx, next);
+        await broadcastState(ctx);
+      } catch (err) {
+        await panel.postMessage({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+      }
+      break;
+    }
+
+    case 'dropBackgroundImage': {
+      const dataUrl = typeof msg.dataUrl === 'string' ? msg.dataUrl : '';
+      const originalName = typeof msg.name === 'string' ? msg.name : undefined;
+      const cfg = await loadBackground(ctx);
+      try {
+        const imagePath = await saveDroppedImage(ctx, dataUrl, originalName);
+        const next: BackgroundConfig = { ...cfg, imagePath };
+        await getAppearance(ctx).setHomeBackground({ imagePath, placement: next.placement, tone: next.tone });
+        await cleanupManagedBackground(ctx, cfg.imagePath);
         await saveBackground(ctx, next);
         await broadcastState(ctx);
       } catch (err) {
@@ -493,6 +597,8 @@ async function handlePanelMessage(ctx: finch.MiniToolContext, panel: finch.AppPa
         await panel.postMessage({ type: 'error', message: err instanceof Error ? err.message : String(err) });
         break;
       }
+      const cfg = await loadBackground(ctx);
+      await cleanupManagedBackground(ctx, cfg.imagePath);
       await saveBackground(ctx, { placement: 'fill', tone: 'balanced' });
       await broadcastState(ctx);
       break;

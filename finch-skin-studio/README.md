@@ -16,10 +16,12 @@ Design and manage how Finch looks — Home background and color skins — from o
 
 **From the panel:** click the palette icon in the Composer toolbar to open the Skin Studio panel. The background card lets you pick an image, toggle Fill/Tile, and adjust brightness. The skin gallery shows built-in presets plus anything you've saved; click a card to apply it, hover a custom card to delete it, or click "Save current skin" to name and keep whatever's currently applied.
 
+**Picking a background image:** click "Choose image" to browse starting from your home folder (Desktop, Downloads, Pictures, etc. are all reachable) — mini tools don't have access to the OS's native "open file" dialog, so this is Finch's own themed file browser rather than a true system picker. You can also just **drag an image file and drop it onto the preview box**; that works for any image on disk regardless of where it lives, no browsing required. Dropped images are copied into this mini tool's private storage (max 15MB), and the previous copy is cleaned up automatically once you set a new one.
+
 ## Notes
 
 - Skin Studio can only "remember" a skin's exact colors if it was applied or saved through Skin Studio itself (a built-in preset, an AI-designed skin, or something you explicitly saved) — it has no way to read an already-applied skin that came from somewhere else.
-- All data (saved skins, last-set background path) is stored locally in this mini tool's private storage; nothing is sent over the network.
+- All data (saved skins, last-set background path, dropped background copies) is stored locally in this mini tool's private storage; nothing is sent over the network.
 - Requires a Finch version whose Appearance API is enabled; older builds show a clear error instead of silently failing.
 
 ---
@@ -42,8 +44,10 @@ Design and manage how Finch looks — Home background and color skins — from o
 
 **在面板中：** 点击 Composer 工具栏的调色板图标打开换肤工坊面板。背景卡片可以选图、切换铺满/平铺、调整明暗；皮肤画廊展示内置预设和已保存的自定义皮肤，点击卡片即可应用，鼠标悬停自定义卡片可删除，点击"保存当前皮肤"即可为当前效果命名保存。
 
+**选择背景图片：** 点击"选择图片"会从你的主目录开始浏览（桌面、下载、图片等都能进去）——小程序目前拿不到操作系统原生的"打开文件"对话框，所以这是 Finch 自带的文件浏览器，而不是真正的系统级选择框。你也可以直接**把一张图片拖拽到预览框里**，不管它存在磁盘上哪个位置都能用，不用一层层翻文件夹。拖放进来的图片会被复制一份保存到本小程序的私有存储里（最大 15MB），换新图后旧的那份会自动清理掉。
+
 ## 说明
 
 - 换肤工坊只能"记住"通过它自己应用或保存过的皮肤配色（内置预设、AI 设计的皮肤、或手动保存过的皮肤）——无法读取从其他途径应用、从未经过换肤工坊的皮肤。
-- 所有数据（已保存的皮肤、最近设置的背景路径）都保存在本小程序的本地私有存储中，不会上传到网络。
+- 所有数据（已保存的皮肤、最近设置的背景路径、拖放进来的背景图副本）都保存在本小程序的本地私有存储中，不会上传到网络。
 - 需要 Finch 版本已启用外观（Appearance）API；旧版本会给出明确的错误提示，而不是静默失败。

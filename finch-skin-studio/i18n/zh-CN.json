@@ -13,6 +13,8 @@
   "skin.builtin.dark-teal": "深海青碧",
   "panel.error.skinNotFound": "未找到该皮肤。",
   "panel.error.noCurrentSkin": "还没有可保存的当前皮肤——请先应用一个预设或 AI 设计的皮肤。",
+  "panel.error.dropInvalidType": "请拖拽图片文件（PNG / JPEG / WebP / GIF / AVIF）。",
+  "panel.error.dropTooLarge": "图片过大（最多 15MB）。",
   "modal.saveSkin.title": "保存当前皮肤",
   "modal.saveSkin.description": "把当前已应用的配色保存为自定义皮肤，之后可以随时切换回来。",
   "modal.saveSkin.nameLabel": "皮肤名称",

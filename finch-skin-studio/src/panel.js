@@ -6,6 +6,7 @@
   var DICT = {
     'en-US': {
       title: 'Skin Studio', bgHeading: 'Home Background', bgEmpty: 'No background image set',
+      bgEmptyHint: 'Drag & drop an image here, or',
       choose: 'Choose image', clear: 'Clear', placement: 'Placement', fill: 'Fill', tile: 'Tile',
       tone: 'Brightness', skinsHeading: 'Skins', addCard: 'Save current skin',
       current: 'Current', deleteConfirmTitle: 'Delete this skin?',
@@ -13,9 +14,12 @@
       deleteConfirm: 'Delete', deleteCancel: 'Cancel', applied: 'Skin applied', removed: 'Skin removed',
       backgroundUpdated: 'Background updated', backgroundCleared: 'Background cleared',
       noCurrentSkin: 'No applied skin to save yet — apply a preset first.',
+      dropInvalidType: 'Please drop an image file (PNG / JPEG / WebP / GIF / AVIF).',
+      dropTooLarge: 'Image is too large (max 15MB).',
     },
     'zh-CN': {
       title: '换肤工坊', bgHeading: '首页背景', bgEmpty: '尚未设置背景图',
+      bgEmptyHint: '拖拽图片到这里，或',
       choose: '选择图片', clear: '清除', placement: '铺放方式', fill: '铺满', tile: '平铺',
       tone: '明暗程度', skinsHeading: '配色皮肤', addCard: '保存当前皮肤',
       current: '使用中', deleteConfirmTitle: '删除这个皮肤？',
@@ -23,6 +27,8 @@
       deleteConfirm: '删除', deleteCancel: '取消', applied: '已应用皮肤', removed: '已删除皮肤',
       backgroundUpdated: '背景已更新', backgroundCleared: '背景已清除',
       noCurrentSkin: '还没有可保存的当前皮肤，请先应用一个预设。',
+      dropInvalidType: '请拖拽图片文件（PNG / JPEG / WebP / GIF / AVIF）。',
+      dropTooLarge: '图片过大（最多 15MB）。',
     },
   };
   DICT['zh-HK'] = DICT['zh-CN'];
@@ -34,6 +40,7 @@
     document.getElementById('t-title').textContent = t('title');
     document.getElementById('t-bg-heading').textContent = t('bgHeading');
     document.getElementById('t-bg-empty').textContent = t('bgEmpty');
+    document.getElementById('t-bg-empty-hint').textContent = t('bgEmptyHint');
     document.getElementById('t-choose').textContent = t('choose');
     document.getElementById('t-clear').textContent = t('clear');
     document.getElementById('t-placement').textContent = t('placement');
@@ -92,7 +99,7 @@
   function renderBackground() {
     var preview = document.getElementById('bg-preview');
     var img = document.getElementById('bg-image');
-    var placeholder = document.getElementById('t-bg-empty');
+    var placeholder = document.getElementById('bg-placeholder');
     var btnClear = document.getElementById('btn-clear');
     var bg = state.background || {};
     preview.classList.toggle('tile', bg.placement === 'tile');
@@ -232,6 +239,62 @@
     if (!btn) return;
     api.postMessage({ type: 'setBackgroundOptions', tone: btn.getAttribute('data-value') });
   });
+
+  // ── Drag & drop background image ───────────────────────────────────────
+  var MAX_DROPPED_IMAGE_BYTES = 15 * 1024 * 1024; // 15 MB, mirrors the backend limit
+  var IMAGE_TYPE_RE = /^image\/(png|jpeg|jpg|webp|gif|avif)$/;
+  var bgPreview = document.getElementById('bg-preview');
+  var dragDepth = 0;
+
+  function isFileDrag(ev) {
+    var types = ev.dataTransfer && ev.dataTransfer.types;
+    return !!types && Array.prototype.indexOf.call(types, 'Files') !== -1;
+  }
+
+  bgPreview.addEventListener('dragenter', function (ev) {
+    if (!isFileDrag(ev)) return;
+    ev.preventDefault();
+    dragDepth++;
+    bgPreview.classList.add('drag-over');
+  });
+  bgPreview.addEventListener('dragover', function (ev) {
+    if (!isFileDrag(ev)) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = 'copy';
+  });
+  bgPreview.addEventListener('dragleave', function () {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) bgPreview.classList.remove('drag-over');
+  });
+  bgPreview.addEventListener('drop', function (ev) {
+    ev.preventDefault();
+    dragDepth = 0;
+    bgPreview.classList.remove('drag-over');
+    var files = ev.dataTransfer && ev.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    var file = files[0];
+    if (!IMAGE_TYPE_RE.test(file.type)) {
+      showToast(t('dropInvalidType'));
+      return;
+    }
+    if (file.size > MAX_DROPPED_IMAGE_BYTES) {
+      showToast(t('dropTooLarge'));
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      api.postMessage({ type: 'dropBackgroundImage', dataUrl: String(reader.result || ''), name: file.name });
+    };
+    reader.onerror = function () {
+      showToast(t('dropInvalidType'));
+    };
+    reader.readAsDataURL(file);
+  });
+
+  // Prevent an errant drop outside the preview box from navigating the whole
+  // panel away to the dropped image (default browser behavior).
+  document.addEventListener('dragover', function (ev) { if (isFileDrag(ev)) ev.preventDefault(); });
+  document.addEventListener('drop', function (ev) { if (isFileDrag(ev)) ev.preventDefault(); });
 
   new ResizeObserver(function () { computeColumns(); }).observe(document.getElementById('skins-grid'));
 
