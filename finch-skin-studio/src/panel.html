@@ -105,11 +105,35 @@
   .label { color: var(--ss-text-tertiary); font-size: 12px; margin-right: 2px; }
   .row-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; flex: none; }
   .icon-btn {
+    position: relative;
     width: 28px; height: 28px; padding: 0; border-radius: 50%;
     display: inline-flex; align-items: center; justify-content: center;
     background: transparent; border-color: transparent; color: var(--ss-accent);
   }
   .icon-btn:hover { background: var(--ss-accent-dim); }
+  /* Custom tooltip. These buttons sit against the panel's right edge, so the
+     bubble is right-aligned and grows leftwards instead of overflowing. */
+  .icon-btn::after {
+    content: attr(data-tip);
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 8px);
+    padding: 5px 9px;
+    border-radius: var(--ss-radius-sm);
+    border: 1px solid var(--ss-border);
+    background: var(--ss-bg-elevated);
+    color: var(--ss-text-primary);
+    font-size: 12px; font-weight: 400; line-height: 1.3; letter-spacing: normal;
+    white-space: nowrap;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.16);
+    opacity: 0; pointer-events: none; visibility: hidden;
+    transform: translateY(2px);
+    transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
+    z-index: 20;
+  }
+  .icon-btn:hover::after, .icon-btn:focus-visible::after {
+    opacity: 1; visibility: visible; transform: translateY(0);
+  }
 
   /* ── Skin grid ── */
   .grid { display: grid; gap: 12px; }
@@ -282,10 +306,12 @@
         <button data-value="dark" id="t-sys-dark">Dark</button>
       </div>
       <div class="row-actions">
-        <button class="icon-btn" id="btn-ai-theme" type="button">
+        <button class="icon-btn" id="btn-ai-theme" type="button"
+                aria-label="Design a skin with AI" data-tip="Design a skin with AI">
           <svg class="ico" aria-hidden="true"><use href="#i-paintbrush"></use></svg>
         </button>
-        <button class="icon-btn" id="btn-import-skin" type="button">
+        <button class="icon-btn" id="btn-import-skin" type="button"
+                aria-label="Import a shared skin" data-tip="Import a shared skin">
           <svg class="ico" aria-hidden="true"><use href="#i-paste"></use></svg>
         </button>
       </div>

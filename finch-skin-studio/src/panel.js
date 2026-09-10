@@ -72,13 +72,14 @@
     document.getElementById('t-sys-auto').textContent = t('sysAuto');
     document.getElementById('t-sys-light').textContent = t('sysLight');
     document.getElementById('t-sys-dark').textContent = t('sysDark');
-    // The row's icon buttons carry no visible text, so each label lives in
-    // the tooltip / accessible name.
+    // The row's icon buttons carry no visible text. The label feeds both the
+    // accessible name and the CSS tooltip (data-tip -> .icon-btn::after);
+    // no native `title`, so the two never show at once.
     [['btn-ai-theme', 'aiTheme'], ['btn-import-skin', 'importSkin']].forEach(function (pair) {
       var el = document.getElementById(pair[0]);
       var label = t(pair[1]);
-      el.title = label;
       el.setAttribute('aria-label', label);
+      el.setAttribute('data-tip', label);
     });
   }
 
