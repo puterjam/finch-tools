@@ -1,6 +1,6 @@
 {
   "name": "finch-shell",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "description": "An interactive terminal panel for Finch powered by xterm.js and a native PTY.",
   "author": {
     "name": "PuterJam",
@@ -35,7 +35,7 @@
     "minVersion": "1.6.1",
     "name": "Shell",
     "description": "Open an interactive terminal in Finch for the current workspace.",
-    "systemPrompt": "When the user asks to open an interactive terminal or shell panel in Finch, call finch_shell_open. Use the current workspace by default; pass cwd only when the user explicitly requests another directory.",
+    "systemPrompt": "When the user asks to open an interactive terminal or shell panel in Finch, call finch_shell_open. Use the current workspace by default; pass cwd only when the user explicitly requests another directory. To hand the user a command to run themselves, pass command: it is typed at the prompt of the new terminal and deliberately left unexecuted so they can read and edit it first. Only add run: true when the user clearly asked for it to run right away. command must be a single line without control characters; for work you should carry out yourself, use the normal shell tooling instead of typing into the user's terminal.",
     "main": "dist/index.js",
     "activationEvents": [
       "onStartup"

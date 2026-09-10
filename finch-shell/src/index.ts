@@ -30,6 +30,12 @@ interface PanelMessage {
   cwd?: unknown;
   cols?: unknown;
   rows?: unknown;
+  url?: unknown;
+}
+
+interface PendingInjection {
+  text: string;
+  run: boolean;
 }
 
 interface TerminalSession {
@@ -42,6 +48,8 @@ interface TerminalSession {
   ready: boolean;
   visible: boolean;
   generation: number;
+  injection?: PendingInjection;
+  injectionConsumed?: boolean;
 }
 
 const require = createRequire(import.meta.url);
@@ -50,6 +58,11 @@ const sessions = new Map<string, TerminalSession>();
 const panels = new Map<string, finch.AppPanel>();
 const MAX_TRANSCRIPT = 1_000_000;
 const CWD_POLL_INTERVAL = 1000;
+// Give the shell a moment to finish drawing its prompt before typing into it,
+// and type anyway if it stays silent (a shell may print no prompt at all).
+const INJECTION_SETTLE = 120;
+const INJECTION_FALLBACK = 1500;
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 
 function loadNodePty(): NodePtyModule {
   if (nodePtyModule) return nodePtyModule;
@@ -147,15 +160,31 @@ function readProcessCwd(pid: number): string | undefined {
   return undefined;
 }
 
+function readPayload(panel: finch.AppPanel): Record<string, unknown> | undefined {
+  const payload = panel.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  return payload as Record<string, unknown>;
+}
+
 function resolveCwd(message: PanelMessage, panel: finch.AppPanel): string {
   const requested = String(message.cwd ?? '').trim();
-  const payload = panel.payload;
-  const payloadCwd = payload && typeof payload === 'object' && !Array.isArray(payload)
-    ? String((payload as Record<string, unknown>).cwd ?? '').trim()
-    : '';
+  const payload = readPayload(panel);
+  const payloadCwd = payload ? String(payload.cwd ?? '').trim() : '';
   const home = process.env.HOME || process.env.USERPROFILE || process.cwd();
   const candidate = payloadCwd || requested || home;
   return path.isAbsolute(candidate) ? candidate : home;
+}
+
+// The panel is opened with a command already staged, so the user sees it typed
+// at a real prompt and stays in control of whether it runs.
+function flushInjection(session: TerminalSession, generation: number): void {
+  const injection = session.injection;
+  if (!injection) return;
+  session.injection = undefined;
+  setTimeout(() => {
+    if (session.generation !== generation) return;
+    session.backend?.write(injection.run ? `${injection.text}\r` : injection.text);
+  }, INJECTION_SETTLE);
 }
 
 function appendTranscript(session: TerminalSession, data: string): void {
@@ -197,6 +226,7 @@ function startBackend(ctx: finch.MiniToolContext, panel: finch.AppPanel, session
     const dataDisposable = backend.onData((data) => {
       if (session.generation !== generation) return;
       appendTranscript(session, data);
+      flushInjection(session, generation);
       if (session.ready && session.visible) {
         void safePost(panel, { type: 'terminalData', data });
       } else {
@@ -215,6 +245,7 @@ function startBackend(ctx: finch.MiniToolContext, panel: finch.AppPanel, session
       void safePost(panel, { type: 'terminalExit', exitCode: event.exitCode });
     });
     void safePost(panel, { type: 'terminalStarted', cwd: session.cwd });
+    if (session.injection) setTimeout(() => flushInjection(session, generation), INJECTION_FALLBACK);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     ctx.logger.error(`Could not start PTY: ${message}`);
@@ -240,15 +271,24 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
   }
 
   switch (message.type) {
-    case 'panelReady':
+    case 'panelReady': {
       session.ready = true;
       session.cwd = resolveCwd(message, panel);
       session.cols = normalizeDimension(message.cols, session.cols, 500);
       session.rows = normalizeDimension(message.rows, session.rows, 200);
+      const payload = readPayload(panel);
+      const command = payload && typeof payload.command === 'string' ? payload.command : '';
+      // Stage it once per panel: a webview reload replays panelReady with the
+      // same payload, and re-typing the command then would surprise the user.
+      if (command && !session.injectionConsumed) {
+        session.injectionConsumed = true;
+        session.injection = { text: command, run: payload?.run === true };
+      }
       await safePost(panel, { type: 'terminalInit', data: session.transcript, cwd: session.cwd, running: Boolean(session.backend) });
       session.pendingOutput = '';
       if (!session.backend) startBackend(ctx, panel, session);
       return;
+    }
     case 'terminalInput':
       if (session.backend && typeof message.data === 'string') session.backend.write(message.data);
       return;
@@ -260,6 +300,25 @@ async function handleMessage(ctx: finch.MiniToolContext, panel: finch.AppPanel, 
     case 'terminalRestart':
       startBackend(ctx, panel, session);
       return;
+    case 'openUrl': {
+      const raw = String(message.url ?? '').trim();
+      if (!raw) return;
+      let parsed: URL;
+      try {
+        parsed = new URL(raw);
+      } catch {
+        return;
+      }
+      // Terminal output is untrusted, so only ever hand plain web URLs to the
+      // browser panel — never file:, javascript:, or a custom app scheme.
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+      try {
+        await ctx.browser.open(parsed.toString());
+      } catch (error) {
+        ctx.logger.error(`Could not open ${parsed.hostname}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return;
+    }
   }
 }
 
@@ -323,11 +382,19 @@ export function activate(ctx: finch.MiniToolContext): void {
   ctx.subscriptions.push(ctx.tools.register({
     name: 'finch_shell_open',
     title: 'Open terminal',
-    description: 'Open an interactive shell terminal in a Finch panel. The terminal starts in the current workspace unless an absolute cwd is provided.',
+    description: 'Open an interactive shell terminal in a Finch panel. The terminal starts in the current workspace unless an absolute cwd is provided. Pass command to type a command at the new terminal\'s prompt; it is only typed for the user to review, and runs only when run is true.',
     inputSchema: {
       type: 'object',
       properties: {
         cwd: { type: 'string', description: 'Optional absolute working directory for the terminal.' },
+        command: {
+          type: 'string',
+          description: 'Optional single-line command to type at the prompt of the new terminal. It is left unexecuted so the user can review or edit it, unless run is true.',
+        },
+        run: {
+          type: 'boolean',
+          description: 'Set true to also press Enter so the command runs immediately. Defaults to false, which leaves the command waiting at the prompt.',
+        },
       },
     },
     risk: 'medium',
@@ -336,11 +403,33 @@ export function activate(ctx: finch.MiniToolContext): void {
       if (requestedCwd && !path.isAbsolute(requestedCwd)) {
         return { content: [{ type: 'text', text: '`cwd` must be an absolute path.' }], isError: true };
       }
+      const command = typeof input.command === 'string' ? input.command : '';
+      // A newline would run the command even when run is false, and an escape
+      // sequence could drive the terminal itself, so refuse both outright.
+      if (command && CONTROL_CHARACTERS.test(command)) {
+        return {
+          content: [{ type: 'text', text: '`command` must be a single line with no control characters.' }],
+          isError: true,
+        };
+      }
+      const run = input.run === true;
       const contextCwd = String(execution.cwd ?? '').trim();
       const cwd = requestedCwd || (path.isAbsolute(contextCwd) ? contextCwd : '');
-      const panel = ctx.ui.createPanel({ instanceMode: 'multiple', payload: cwd ? { cwd } : undefined });
+      const payload: { cwd?: string; command?: string; run?: boolean } = {};
+      if (cwd) payload.cwd = cwd;
+      if (command) {
+        payload.command = command;
+        payload.run = run;
+      }
+      const panel = ctx.ui.createPanel({
+        instanceMode: 'multiple',
+        payload: Object.keys(payload).length ? payload : undefined,
+      });
       await panel.reveal();
-      return { content: [{ type: 'text', text: `Opened an interactive terminal${cwd ? ` in ${cwd}` : ''}.` }] };
+      const where = cwd ? ` in ${cwd}` : '';
+      if (!command) return { content: [{ type: 'text', text: `Opened an interactive terminal${where}.` }] };
+      const what = run ? `and ran \`${command}\`` : `with \`${command}\` typed at the prompt, waiting for the user to run it`;
+      return { content: [{ type: 'text', text: `Opened an interactive terminal${where} ${what}.` }] };
     },
   }));
 }

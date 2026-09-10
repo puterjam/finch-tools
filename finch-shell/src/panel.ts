@@ -1,4 +1,5 @@
 import { Terminal } from '@xterm/xterm';
+import type { IBufferRange, ILink } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import './panel.css';
@@ -196,6 +197,135 @@ terminal.attachCustomKeyEventHandler((event) => {
   event.preventDefault();
   return false;
 });
+
+// ── Ctrl/Cmd-click to open a URL ────────────────────────────────────────────
+// Underlining every URL all the time would fight with the terminal's own
+// colouring, so links stay invisible until the modifier is down, exactly like
+// an editor. xterm tracks reassignment of `decorations`, so a hovered link
+// restyles the moment the key state changes.
+const isMac = /mac|iphone|ipad/i.test(navigator.userAgent);
+const URL_PATTERN = /(?:https?:\/\/|www\.)[^\s<>"'`\u0000-\u001f]{2,}/g;
+const TRAILING_PUNCTUATION = /[.,;:!?'"]+$/;
+const BRACKET_PAIRS: ReadonlyArray<readonly [string, string]> = [['(', ')'], ['[', ']'], ['{', '}']];
+
+let modifierHeld = false;
+const liveLinks = new Set<ILink>();
+
+function hasModifier(event: { ctrlKey: boolean; metaKey: boolean }): boolean {
+  return isMac ? event.metaKey : event.ctrlKey;
+}
+
+function setModifier(held: boolean): void {
+  if (held === modifierHeld) return;
+  modifierHeld = held;
+  for (const link of liveLinks) link.decorations = { pointerCursor: held, underline: held };
+}
+
+function occurrences(text: string, character: string): number {
+  let count = 0;
+  for (const char of text) if (char === character) count += 1;
+  return count;
+}
+
+// Shells and log lines love to wrap or follow a URL with punctuation, and that
+// trailing noise is almost never part of the address.
+function tidyUrl(raw: string): string {
+  let url = raw.replace(TRAILING_PUNCTUATION, '');
+  let trimming = true;
+  while (trimming) {
+    trimming = false;
+    for (const [open, close] of BRACKET_PAIRS) {
+      if (url.endsWith(close) && occurrences(url, open) < occurrences(url, close)) {
+        url = url.slice(0, -1).replace(TRAILING_PUNCTUATION, '');
+        trimming = true;
+      }
+    }
+  }
+  return url;
+}
+
+interface CellRef {
+  x: number;
+  y: number;
+}
+
+// A long URL is split across several buffer lines, so scan the whole wrapped
+// block and keep a per-character cell map: with wide glyphs on the line, a
+// string index is not a column.
+function collectWrappedBlock(lineIndex: number): { text: string; cells: CellRef[] } | undefined {
+  const buffer = terminal.buffer.active;
+  if (lineIndex < 0 || lineIndex >= buffer.length) return undefined;
+  let start = lineIndex;
+  while (start > 0 && buffer.getLine(start)?.isWrapped) start -= 1;
+  let end = lineIndex;
+  while (end + 1 < buffer.length && buffer.getLine(end + 1)?.isWrapped) end += 1;
+
+  let text = '';
+  const cells: CellRef[] = [];
+  for (let y = start; y <= end; y += 1) {
+    const line = buffer.getLine(y);
+    if (!line) continue;
+    for (let x = 0; x < line.length; x += 1) {
+      const cell = line.getCell(x);
+      if (!cell) continue;
+      // Width 0 is the trailing half of a wide glyph and holds no character.
+      if (cell.getWidth() === 0) continue;
+      const chars = cell.getChars() || ' ';
+      for (let index = 0; index < chars.length; index += 1) cells.push({ x, y });
+      text += chars;
+    }
+  }
+  return { text, cells };
+}
+
+function createLink(range: IBufferRange, url: string): ILink {
+  const link: ILink = {
+    range,
+    text: url,
+    decorations: { pointerCursor: modifierHeld, underline: modifierHeld },
+    activate(event, text) {
+      if (!hasModifier(event)) return;
+      post({ type: 'openUrl', url: /^www\./i.test(text) ? `https://${text}` : text });
+    },
+    dispose() {
+      liveLinks.delete(link);
+    },
+  };
+  liveLinks.add(link);
+  return link;
+}
+
+terminal.registerLinkProvider({
+  provideLinks(bufferLineNumber, callback) {
+    const block = collectWrappedBlock(bufferLineNumber - 1);
+    if (!block) {
+      callback(undefined);
+      return;
+    }
+    const links: ILink[] = [];
+    for (const match of block.text.matchAll(URL_PATTERN)) {
+      if (typeof match.index !== 'number') continue;
+      const url = tidyUrl(match[0]);
+      if (url.length < 5) continue;
+      const first = block.cells[match.index];
+      const last = block.cells[match.index + url.length - 1];
+      if (!first || !last) continue;
+      links.push(createLink({
+        start: { x: first.x + 1, y: first.y + 1 },
+        end: { x: last.x + 1, y: last.y + 1 },
+      }, url));
+    }
+    callback(links.length ? links : undefined);
+  },
+});
+
+window.addEventListener('keydown', (event) => {
+  if (hasModifier(event)) setModifier(true);
+});
+window.addEventListener('keyup', (event) => {
+  if (!hasModifier(event)) setModifier(false);
+});
+window.addEventListener('blur', () => setModifier(false));
 
 terminal.onData((data) => post({ type: 'terminalInput', data }));
 terminal.onResize(({ cols, rows }) => post({ type: 'terminalResize', cols, rows }));
