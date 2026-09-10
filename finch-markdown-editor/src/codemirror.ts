@@ -317,7 +317,7 @@ const finchTheme = EditorView.theme({
   '&': {
     height: '100%',
     color: 'var(--text)',
-    backgroundColor: 'var(--card)',
+    backgroundColor: 'var(--bg)',
     fontSize: `${CM_ROOT_PX}px`,
   },
   '.cm-foldGutter':{display:'none !important'},
@@ -749,7 +749,7 @@ const finchTheme = EditorView.theme({
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--text)' },
   '.cm-gutters': {
     color: 'var(--muted)',
-    backgroundColor: 'var(--card)',
+    backgroundColor: 'var(--bg)',
     borderRight: '0px',
     // `.cm-gutters` is a direct child of `.cm-editor` (a sibling of
     // `.cm-scroller`, not nested inside it), so this `em` resolves against
