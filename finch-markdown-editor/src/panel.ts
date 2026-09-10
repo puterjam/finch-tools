@@ -1577,7 +1577,17 @@
   // from localStorage before the first click, so a session that starts in
   // focus mode also starts with the App View toolbar already collapsed.
   document.body.classList.toggle('focus-mode', focusMode);
-  cm.scrollDOM.addEventListener('scroll', closePopup);
+  var scrollbarHideTimer = 0;
+  cm.scrollDOM.addEventListener('scroll', function () {
+    closePopup();
+    // Non-macOS scrollbars otherwise remain permanently visible. Reveal the
+    // thumb during input, then let it fade away after scrolling settles.
+    cm.scrollDOM.classList.add('cm-scrollbar-active');
+    window.clearTimeout(scrollbarHideTimer);
+    scrollbarHideTimer = window.setTimeout(function () {
+      cm.scrollDOM.classList.remove('cm-scrollbar-active');
+    }, 800);
+  });
 
   // ---- Markdown <-> bm.md rendering ----
 
@@ -2241,6 +2251,9 @@
   // (address-bar search, etc.) on those platforms.
   var uaPlatform = (navigator.platform || navigator.userAgent || '');
   var isMacPlatform = /Mac|iPhone|iPod|iPad/.test(uaPlatform);
+  // Non-macOS desktop scrollbars reserve a visible track by default. Keep
+  // scrolling intact while letting the editor use the full writing width.
+  document.body.classList.toggle('non-mac-platform', !isMacPlatform);
 
   function isRewriteFocusShortcut(e) {
     if (String(e.key).toLowerCase() !== 'e') return false;
