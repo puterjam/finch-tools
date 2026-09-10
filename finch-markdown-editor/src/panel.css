@@ -1,5 +1,5 @@
 :root{
-  --bg:var(--finch-bg-root,#f7f7f8);
+  --bg:var(--finch-bg-main,#f7f7f8);
   --card:var(--finch-bg-elevated,#fff);
   --text:var(--finch-text-primary,#1d1d20);
   --muted:var(--finch-text-secondary,#777);
@@ -8,7 +8,7 @@
 }
 @media (prefers-color-scheme: dark) {
   :root{
-    --bg:var(--finch-bg-root,#17171a);
+    --bg:var(--finch-bg-main,#17171a);
     --card:var(--finch-bg-elevated,#242429);
     --text:var(--finch-text-primary,#eee);
     --muted:var(--finch-text-secondary,#aaa);
@@ -177,7 +177,7 @@ body.app-view .status-inline-btn:hover{background:var(--finch-bg-hover,var(--bg)
 
 /* Full-screen App View shell. The same document remains a compact, host-toolbar-
    driven Panel App until finch:env explicitly identifies the appView surface. */
-.app-toolbar{height:48px;flex:none;align-items:center;gap:12px;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--card)}
+.app-toolbar{height:48px;flex:none;align-items:center;gap:12px;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--finch-bg-main)}
 body.app-view .app-toolbar{display:flex!important}
 .app-toolbar-group{display:flex;align-items:center;gap:6px;flex:none}
 .app-toolbar-end{margin-left:auto}
