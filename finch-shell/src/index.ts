@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { readlinkSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import type * as finch from 'finch';
@@ -14,6 +16,7 @@ interface NodePtyModule {
 }
 
 interface TerminalBackend {
+  readonly pid: number;
   write(data: string): void;
   resize(cols: number, rows: number): void;
   kill(): void;
@@ -44,7 +47,9 @@ interface TerminalSession {
 const require = createRequire(import.meta.url);
 let nodePtyModule: NodePtyModule | undefined;
 const sessions = new Map<string, TerminalSession>();
+const panels = new Map<string, finch.AppPanel>();
 const MAX_TRANSCRIPT = 1_000_000;
+const CWD_POLL_INTERVAL = 1000;
 
 function loadNodePty(): NodePtyModule {
   nodePtyModule ??= require('./node-pty/lib/index.js') as NodePtyModule;
@@ -79,6 +84,10 @@ class NodePtyBackend implements TerminalBackend {
     this.pty.write(data);
   }
 
+  get pid(): number {
+    return this.pty.pid;
+  }
+
   resize(cols: number, rows: number): void {
     this.pty.resize(cols, rows);
   }
@@ -99,6 +108,30 @@ class NodePtyBackend implements TerminalBackend {
 function normalizeDimension(value: unknown, fallback: number, max: number): number {
   const number = Math.floor(Number(value));
   return Number.isFinite(number) ? Math.max(2, Math.min(max, number)) : fallback;
+}
+
+function readProcessCwd(pid: number): string | undefined {
+  if (!pid || pid <= 0) return undefined;
+  try {
+    if (process.platform === 'linux') {
+      const cwd = readlinkSync(`/proc/${pid}/cwd`);
+      return cwd || undefined;
+    }
+    if (['darwin', 'freebsd', 'openbsd', 'netbsd'].includes(process.platform)) {
+      const result = spawnSync('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], {
+        encoding: 'utf8',
+        timeout: 1500,
+      });
+      if (result.status === 0 && result.stdout) {
+        for (const line of result.stdout.split('\n')) {
+          if (line.length > 1 && line.startsWith('n')) return line.slice(1);
+        }
+      }
+    }
+  } catch {
+    // The shell process may have exited between the tick and the probe.
+  }
+  return undefined;
 }
 
 function resolveCwd(message: PanelMessage, panel: finch.AppPanel): string {
@@ -228,6 +261,7 @@ export function activate(ctx: finch.MiniToolContext): void {
   }));
 
   ctx.subscriptions.push(ctx.ui.onDidOpenPanel((panel) => {
+    panels.set(panel.id, panel);
     const existing = sessions.get(panel.id);
     if (existing) existing.visible = panel.visible;
 
@@ -252,8 +286,26 @@ export function activate(ctx: finch.MiniToolContext): void {
       const session = sessions.get(panel.id);
       if (session) stopBackend(session);
       sessions.delete(panel.id);
+      panels.delete(panel.id);
     }));
   }));
+
+  // Track the real working directory of every live shell so tab titles follow
+  // the user when they cd inside the terminal. Polling is shell-agnostic and
+  // avoids injecting hooks into user rc files.
+  const cwdPollTimer = setInterval(() => {
+    for (const [id, session] of sessions) {
+      const pid = session.backend?.pid;
+      const panel = panels.get(id);
+      if (!pid || !panel) continue;
+      const cwd = readProcessCwd(pid);
+      if (cwd && cwd !== session.cwd) {
+        session.cwd = cwd;
+        void safePost(panel, { type: 'terminalCwd', cwd });
+      }
+    }
+  }, CWD_POLL_INTERVAL);
+  ctx.subscriptions.push({ dispose: () => clearInterval(cwdPollTimer) });
 
   ctx.subscriptions.push(ctx.tools.register({
     name: 'finch_shell_open',

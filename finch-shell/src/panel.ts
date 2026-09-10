@@ -199,6 +199,11 @@ bridge?.onMessage((raw) => {
     terminal.focus();
     return;
   }
+  if (message.type === 'terminalCwd') {
+    cwd = String(message.cwd ?? cwd);
+    updatePanelTitle();
+    return;
+  }
   if (message.type === 'terminalData' && typeof message.data === 'string') {
     terminal.write(message.data);
     return;
