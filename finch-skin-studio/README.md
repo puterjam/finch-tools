@@ -17,7 +17,7 @@ Design and manage how Finch looks — Home background and color skins — from o
 
 **From chat:** just describe what you want — "把首页背景换成这张图，铺满显示" or "apply the Deep Teal skin" or "save this as 'My Sunset'" or "switch back to the system dark theme". The assistant calls the right tool and it takes effect immediately, exactly like editing Appearance Settings yourself.
 
-**From the panel:** click the palette icon in the Composer toolbar to open the Skin Studio panel. The background card lets you pick an image, toggle Fill/Tile, and adjust brightness. Above the skin gallery, a small Auto/Light/Dark control switches back to Finch's own built-in theme, and the "Design with AI" button beside it drops a design request into the Composer for you to top up and send. The gallery itself shows built-in presets plus anything you've saved; click a card to apply it, hover a custom card to copy or delete it, click "Save current skin" to name and keep whatever's currently applied, or click "Import skin" to open a small dialog and paste a skin someone shared with you.
+**From the panel:** click the palette icon in the Composer toolbar to open the Skin Studio panel. The background card lets you pick an image, toggle Fill/Tile, and adjust brightness. Above the skin gallery, a small Auto/Light/Dark control switches back to Finch's own built-in theme, followed by two round buttons: the paintbrush drops a design request into the Composer for you to top up and send, and the clipboard next to it opens a dialog where you can paste a skin someone shared with you. The gallery itself shows built-in presets plus anything you've saved; click a card to apply it, hover a custom card to copy or delete it, or click "Save current skin" to name and keep whatever's currently applied.
 
 **Picking a background image:** click "Choose image" to open your operating system's own native file dialog — no more browsing through a Finch-themed file tree. You can also just **drag an image file and drop it onto the preview box**; that works for any image on disk regardless of where it lives. Dropped/picked images are copied into this mini tool's private storage (max 15MB), and the previous copy is cleaned up automatically once you set a new one.
 
@@ -49,7 +49,7 @@ Design and manage how Finch looks — Home background and color skins — from o
 
 **在对话中：** 直接说出你想要的效果——"把首页背景换成这张图，铺满显示"、"应用深海青碧皮肤"、"把这个保存为『我的落日』"、"切回系统深色主题"，AI 会调用对应工具立即生效，效果等同于自己在外观设置里操作。
 
-**在面板中：** 点击 Composer 工具栏的调色板图标打开换肤工坊面板。背景卡片可以选图、切换铺满/平铺、调整明暗；皮肤画廊上方有一个跟随系统/浅色/深色的小控件，可以切回 Finch 自带主题，旁边的"让 AI 设计"按钮会把一句设计需求插进输入框，你补充一下再发送。画廊本身展示内置预设和已保存的自定义皮肤，点击卡片即可应用，鼠标悬停自定义卡片可复制或删除它，点击"保存当前皮肤"即可为当前效果命名保存，点击"导入皮肤"会弹出一个小对话框，粘贴别人分享的皮肤数据即可。
+**在面板中：** 点击 Composer 工具栏的调色板图标打开换肤工坊面板。背景卡片可以选图、切换铺满/平铺、调整明暗；皮肤画廊上方有一个跟随系统/浅色/深色的小控件，可以切回 Finch 自带主题，右侧两个圆形按钮：画笔会把一句设计需求插进输入框，你补充一下再发送；旁边的剪贴板会弹出一个小对话框，粘贴别人分享的皮肤数据即可导入。画廊本身展示内置预设和已保存的自定义皮肤，点击卡片即可应用，鼠标悬停自定义卡片可复制或删除它，点击"保存当前皮肤"即可为当前效果命名保存。
 
 **选择背景图片：** 点击"选择图片"会直接打开操作系统自带的原生文件选择框，不再是 Finch 自己的文件树浏览器。你也可以直接**把一张图片拖拽到预览框里**，不管它存在磁盘上哪个位置都能用。拖放/选中的图片会被复制一份保存到本小程序的私有存储里（最大 15MB），换新图后旧的那份会自动清理掉。
 
