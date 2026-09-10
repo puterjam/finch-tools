@@ -54,7 +54,11 @@ const CWD_POLL_INTERVAL = 1000;
 function loadNodePty(): NodePtyModule {
   if (nodePtyModule) return nodePtyModule;
   try {
-    nodePtyModule = require('./node-pty/lib/index.js') as NodePtyModule;
+    // node-pty publishes no Linux binaries, so Linux loads the Homebridge fork
+    // staged alongside it; both expose the same spawn API.
+    nodePtyModule = (process.platform === 'linux'
+      ? require('./node-pty-linux/lib/index.js')
+      : require('./node-pty/lib/index.js')) as NodePtyModule;
   } catch (error) {
     // Surface the host runtime in the panel: native load failures are almost
     // always a platform, arch, or ABI mismatch in the bundled binaries.
