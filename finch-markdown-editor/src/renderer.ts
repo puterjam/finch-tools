@@ -37,78 +37,6 @@ const FINCH_FILE_IMAGE_RE = /finch-file:\/\/local\?path=[^\s)"']+/g;
 const FINCH_IMAGE_PLACEHOLDER_ORIGIN = 'https://finch-local.invalid/markdown-image/';
 const MARKDOWN_IMAGE_ALT_RE = /!\[([^\]\n]*)\](?=\()/g;
 
-// The editor treats each ordinary source line as a complete paragraph. bmmd
-// follows CommonMark and normally folds adjacent text lines into one <p>, so
-// insert the blank separators it expects only in the render-only copy. The
-// source Markdown is never changed. Structured blocks deliberately retain
-// their native line semantics: fenced code, tables, lists, HTML, frontmatter,
-// and explicit hard line breaks are all left untouched.
-const FENCE_RE = /^\s{0,3}(`{3,}|~{3,})/;
-const FRONTMATTER_BOUNDARY_RE = /^(---|\.\.\.)\s*$/;
-const TABLE_ROW_RE = /^\s*\|.*\|\s*$/;
-const TABLE_DIVIDER_RE = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
-const BLOCK_LINE_RE = /^(?:\s{0,3}(?:#{1,6}(?:\s|$)|[-+*]\s+|\d+[.)]\s+|>\s?|(?:---|\*\*\*|___)\s*$)|\s+|\[\^[^\]]+\]:|\[[^\]]+\]:|<\/?[A-Za-z][^>]*>|<!--|\$\$)/;
-const HTML_BLOCK_OPEN_RE = /^\s*<(address|article|aside|blockquote|body|caption|center|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|html|iframe|li|main|menu|nav|ol|pre|script|section|style|summary|table|tbody|td|tfoot|th|thead|title|tr|ul)(?:\s|>|\/)/i;
-const EXPLICIT_BREAK_RE = /(?: {2,}|\\|<br\s*\/?>)\s*$/i;
-
-function isPlainParagraphLine(line: string): boolean {
-  return line.trim().length > 0
-    && !BLOCK_LINE_RE.test(line)
-    // A pipe can be a table row without leading/trailing pipes. Avoid
-    // splitting it until bmmd has had a chance to recognize the full table.
-    && !line.includes('|')
-    && !TABLE_ROW_RE.test(line)
-    && !TABLE_DIVIDER_RE.test(line);
-}
-
-export function splitSingleLineParagraphs(markdown: string): string {
-  const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
-  const output: string[] = [];
-  let fenceMarker = '';
-  let htmlBlockTag = '';
-  let inFrontmatter = lines[0]?.trim() === '---';
-
-  for (let index = 0; index < lines.length; index++) {
-    const line = lines[index];
-    const next = lines[index + 1];
-    output.push(line);
-
-    if (inFrontmatter) {
-      if (index > 0 && FRONTMATTER_BOUNDARY_RE.test(line)) inFrontmatter = false;
-      continue;
-    }
-
-    if (htmlBlockTag) {
-      if (new RegExp(`</${htmlBlockTag}\\s*>`, 'i').test(line)) htmlBlockTag = '';
-      continue;
-    }
-    const htmlBlock = HTML_BLOCK_OPEN_RE.exec(line);
-    if (htmlBlock) {
-      const tag = htmlBlock[1];
-      if (!new RegExp(`</${tag}\\s*>`, 'i').test(line)) htmlBlockTag = tag;
-      continue;
-    }
-
-    const fence = FENCE_RE.exec(line);
-    if (fence) {
-      const marker = fence[1][0];
-      if (!fenceMarker) fenceMarker = marker;
-      else if (fenceMarker === marker) fenceMarker = '';
-      continue;
-    }
-    if (fenceMarker || next === undefined || !isPlainParagraphLine(line) || !isPlainParagraphLine(next)) continue;
-
-    // A Setext underline turns the preceding line into a heading. Splitting
-    // here would prevent the Markdown parser from recognizing that heading.
-    if (/^\s{0,3}(?:=+|-+)\s*$/.test(next)) continue;
-    // Preserve an explicit Markdown/HTML hard break as authored.
-    if (EXPLICIT_BREAK_RE.test(line)) continue;
-
-    output.push('');
-  }
-  return output.join('\n');
-}
-
 interface ObsidianImageWidthMarker {
   token: string;
   width: number;
@@ -238,8 +166,7 @@ export async function renderWithBm(markdown: string, markdownStyle: string, cust
   const mermaidTheme = MERMAID_THEME_BY_STYLE[style];
   if (mermaidTheme) args.push('--mermaid-theme', mermaidTheme);
   if (customCss && customCss.trim()) args.push('--custom-css', customCss);
-  const paragraphSeparated = splitSingleLineParagraphs(markdown);
-  const sized = prepareObsidianImageWidths(paragraphSeparated);
+  const sized = prepareObsidianImageWidths(markdown);
   const prepared = substituteFinchFileImagesForBm(sized.markdown);
   let html = await runBmmd(args, prepared.markdown);
   if (mermaidTheme) html = applyMermaidThemeVars(html, mermaidTheme);
