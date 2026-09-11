@@ -480,6 +480,7 @@
   var appPreview = document.getElementById('appPreview');
   var appStyle = document.getElementById('appStyle');
   var appStyleMenu = document.getElementById('appStyleMenu');
+  var appWordCountWrap = document.getElementById('appWordCountWrap');
   var appWordCount = document.getElementById('appWordCount');
   var appWordCountValue = document.getElementById('appWordCountValue');
   var appWordCountIcon = document.getElementById('appWordCountIcon');
@@ -1373,7 +1374,7 @@
     }
     var hasDoc = hasDocument();
     var wordCountPresentation = getWordCountPresentation(markdown, hasDoc);
-    return [
+    var toolbar = [
       {
         // Always available — a one-click way back to the recent-documents
         // launch page, regardless of what's currently open.
@@ -1404,7 +1405,7 @@
       { type: 'spacer' },
       {
         // Character uses the built-in Lucide Hash; Word uses this mini tool's
-        // text-lines icon, so the active counting method is visible at a glance.
+        // whole-word icon, so the active counting method is visible at a glance.
         type: 'menu', id: 'wordCount', icon: wordCountPresentation.icon,
         label: wordCountPresentation.label, tooltip: wordCountPresentation.tooltip, disabled: !hasDoc,
         items: [
@@ -1454,6 +1455,10 @@
         ],
       },
     ];
+    // AppPanel's toolbar is live: omit the count menu entirely when the
+    // panel is showing Home instead of a document.
+    if (!hasDoc) return toolbar.filter(function (item) { return !('id' in item) || item.id !== 'wordCount'; });
+    return toolbar;
   }
 
   function appMenuButton(id, label, checked, disabled) {
@@ -1561,6 +1566,7 @@
   function syncAppToolbar() {
     if (!isAppView) return;
     var hasDoc = hasDocument();
+    if (appWordCountWrap) appWordCountWrap.hidden = !hasDoc;
     updateWordCount();
     if (appSave) {
       appSave.disabled = !dirty;
