@@ -160,23 +160,6 @@ function applyMermaidThemeVars(html: string, themeId: string): string {
   return html.replace(MERMAID_FIGURE_SVG_STYLE_RE, (_match, prefix: string) => `${prefix}${vars}`);
 }
 
-// bm.md inlines the article's own padding on the root <section id="bm-md">
-// (e.g. `padding: 28px 24px` for kami, `1.5em 1em` for terminal). That inline
-// style travels with the copied HTML, so pasting into the WeChat editor gave
-// an inset article instead of a full-bleed one. Zero it on the root only —
-// inner blocks (table cells, code blocks, blockquotes) keep their own padding
-// — and let the preview pane supply the visual inset as the article's parent
-// instead; see the iframe <style> in panel.ts.
-const ROOT_SECTION_STYLE_RE = /(<section\b[^>]*\bid="bm-md"[^>]*\bstyle=")([^"]*)(")/;
-
-function stripRootArticlePadding(html: string): string {
-  return html.replace(ROOT_SECTION_STYLE_RE, (match: string, prefix: string, style: string, suffix: string) => {
-    // Only `padding:` itself — `padding-top` and friends must stay untouched.
-    const stripped = style.replace(/(^|;)\s*padding\s*:[^;]*/i, '$1 padding: 0');
-    return stripped === style ? match : prefix + stripped + suffix;
-  });
-}
-
 export async function renderWithBm(markdown: string, markdownStyle: string, customCss: string | undefined): Promise<string> {
   const style = markdownStyle || 'kami';
   // `--breaks` (bmmd 0.3.4+) is the whole line-break story, matching bmmd's own
@@ -185,6 +168,12 @@ export async function renderWithBm(markdown: string, markdownStyle: string, cust
   const args = ['render', '--platform', 'wechat', '--markdown-style', style, '--breaks'];
   const mermaidTheme = MERMAID_THEME_BY_STYLE[style];
   if (mermaidTheme) args.push('--mermaid-theme', mermaidTheme);
+  // bmmd owns the article's spacing: it inlines the markdown style's own root
+  // padding (28px 24px for kami) and, when a custom theme is passed, inlines
+  // that theme's #bm-md padding over it — including an explicit `padding: 0`.
+  // So the default stays as bm.md ships it and a theme can take it over;
+  // nothing here overrides either case, and the preview frame adds no padding
+  // of its own (see showHtml in panel.ts).
   if (customCss && customCss.trim()) args.push('--custom-css', customCss);
   const sized = prepareObsidianImageWidths(markdown);
   const prepared = substituteFinchFileImagesForBm(sized.markdown);
@@ -192,5 +181,5 @@ export async function renderWithBm(markdown: string, markdownStyle: string, cust
   if (mermaidTheme) html = applyMermaidThemeVars(html, mermaidTheme);
   html = applyObsidianImageWidths(html, sized.markers);
   for (const [placeholder, originalUrl] of prepared.urls) html = html.split(placeholder).join(originalUrl);
-  return stripRootArticlePadding(html);
+  return html;
 }
