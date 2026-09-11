@@ -254,6 +254,16 @@ body.app-view.has-document.focus-mode #appFocus[data-tooltip]::after{
 body.app-view.has-document.focus-mode #appFocus[data-tooltip]:hover::after{
   transform:translateY(0);
 }
+/* The count pill sits against the right edge in focus mode too. Its detail
+   tooltip has two lines, so anchor its right edge instead of centering it
+   beyond the window boundary. */
+body.app-view #appWordCount[data-tooltip]::after{white-space:pre-line;line-height:1.45;text-align:left}
+body.app-view.has-document.focus-mode #appWordCount[data-tooltip]::after{
+  left:auto;right:0;transform:translateY(-3px);
+}
+body.app-view.has-document.focus-mode #appWordCount[data-tooltip]:hover::after{
+  transform:translateY(0);
+}
 body.app-view .stage{display:grid;grid-template-columns:minmax(0,1fr) 6px var(--preview-width,480px);background:var(--bg)}
 body.app-view .pane{position:relative;inset:auto;min-width:0;min-height:0}
 body.app-view .pane.active{display:block}
