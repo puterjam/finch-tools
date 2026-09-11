@@ -467,6 +467,7 @@
   var appStyle = document.getElementById('appStyle');
   var appStyleMenu = document.getElementById('appStyleMenu');
   var appWordCount = document.getElementById('appWordCount');
+  var appWordCountValue = document.getElementById('appWordCountValue');
   var appFocus = document.getElementById('appFocus');
   var appFont = document.getElementById('appFont');
   var appFontMenu = document.getElementById('appFontMenu');
@@ -1351,6 +1352,8 @@
       saveTooltip = t('toolbar.save.tooltipSaved');
     }
     var hasDoc = hasDocument();
+    var wordCount = countArticleWords(markdown);
+    var wordCountValues = { total: wordCount.total, nonEnglish: wordCount.nonEnglish, english: wordCount.english };
     return [
       {
         // Always available — a one-click way back to the recent-documents
@@ -1380,6 +1383,12 @@
         items: buildStyleMenuItems(),
       },
       { type: 'spacer' },
+      {
+        // `hash` is Finch's built-in Lucide Hash icon. The host toolbar is
+        // recreated whenever text changes, so this stays live in AppPanel.
+        id: 'wordCount', icon: 'hash', label: t('wordCount.label', wordCountValues),
+        tooltip: t('wordCount.tooltip', wordCountValues), disabled: !hasDoc,
+      },
       // NOTE: copy/export/AI-layout deliberately do NOT live here. A host
       // toolbar click reaches this page as a postMessage, which carries no
       // user activation, so clipboard writes and composer.addContexts() were
@@ -1489,7 +1498,7 @@
     var count = countArticleWords(markdown);
     var values = { total: count.total, nonEnglish: count.nonEnglish, english: count.english };
     var tooltip = t('wordCount.tooltip', values);
-    appWordCount.textContent = t('wordCount.label', values);
+    if (appWordCountValue) appWordCountValue.textContent = t('wordCount.label', values);
     appWordCount.setAttribute('data-tooltip', tooltip);
     appWordCount.setAttribute('aria-label', tooltip);
   }
