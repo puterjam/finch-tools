@@ -37,82 +37,6 @@ const FINCH_FILE_IMAGE_RE = /finch-file:\/\/local\?path=[^\s)"']+/g;
 const FINCH_IMAGE_PLACEHOLDER_ORIGIN = 'https://finch-local.invalid/markdown-image/';
 const MARKDOWN_IMAGE_ALT_RE = /!\[([^\]\n]*)\](?=\()/g;
 
-// bmmd's `--breaks` only turns a soft line break into `<br>` *inside* one
-// paragraph, so two adjacent lines still share a single <p> and get no
-// paragraph spacing — the editor wants each ordinary line to stand as its own
-// paragraph. Insert the blank separators bmmd expects, in the render-only
-// copy (the source Markdown is never changed). Structured blocks keep their
-// native line semantics: fenced code, tables, lists, HTML, frontmatter and
-// explicit hard line breaks are all left untouched, so `--breaks` still does
-// the right thing for a genuinely authored hard break.
-const FENCE_RE = /^\s{0,3}(`{3,}|~{3,})/;
-const FRONTMATTER_BOUNDARY_RE = /^(---|\.\.\.)\s*$/;
-const TABLE_ROW_RE = /^\s*\|.*\|\s*$/;
-const TABLE_DIVIDER_RE = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
-const BLOCK_LINE_RE = /^(?:\s{0,3}(?:#{1,6}(?:\s|$)|[-+*]\s+|\d+[.)]\s+|>\s?|(?:---|\*\*\*|___)\s*$)|\s+|\[\^[^\]]+\]:|\[[^\]]+\]:|<\/?[A-Za-z][^>]*>|<!--|\$\$)/;
-const HTML_BLOCK_OPEN_RE = /^\s*<(address|article|aside|blockquote|body|caption|center|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|head|header|html|iframe|li|main|menu|nav|ol|pre|script|section|style|summary|table|tbody|td|tfoot|th|thead|title|tr|ul)(?:\s|>|\/)/i;
-const EXPLICIT_BREAK_RE = /(?: {2,}|\\|<br\s*\/?>)\s*$/i;
-
-function isPlainParagraphLine(line: string): boolean {
-  return line.trim().length > 0
-    && !BLOCK_LINE_RE.test(line)
-    // A pipe can be a table row without leading/trailing pipes. Avoid
-    // splitting it until bmmd has had a chance to recognize the full table.
-    && !line.includes('|')
-    && !TABLE_ROW_RE.test(line)
-    && !TABLE_DIVIDER_RE.test(line);
-}
-
-export function splitSingleLineParagraphs(markdown: string): string {
-  const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
-  const output: string[] = [];
-  let fenceMarker = '';
-  let htmlBlockTag = '';
-  let inFrontmatter = lines[0]?.trim() === '---';
-
-  for (let index = 0; index < lines.length; index++) {
-    const line = lines[index];
-    const next = lines[index + 1];
-    output.push(line);
-
-    if (inFrontmatter) {
-      if (index > 0 && FRONTMATTER_BOUNDARY_RE.test(line)) inFrontmatter = false;
-      continue;
-    }
-
-    if (htmlBlockTag) {
-      if (new RegExp(`</${htmlBlockTag}\\s*>`, 'i').test(line)) htmlBlockTag = '';
-      continue;
-    }
-    const htmlBlock = HTML_BLOCK_OPEN_RE.exec(line);
-    if (htmlBlock) {
-      const tag = htmlBlock[1];
-      if (!new RegExp(`</${tag}\\s*>`, 'i').test(line)) htmlBlockTag = tag;
-      continue;
-    }
-
-    const fence = FENCE_RE.exec(line);
-    if (fence) {
-      const marker = fence[1][0];
-      if (!fenceMarker) fenceMarker = marker;
-      else if (fenceMarker === marker) fenceMarker = '';
-      continue;
-    }
-    if (fenceMarker || next === undefined || !isPlainParagraphLine(line) || !isPlainParagraphLine(next)) continue;
-
-    // A Setext underline turns the preceding line into a heading. Splitting
-    // here would prevent the Markdown parser from recognizing that heading.
-    if (/^\s{0,3}(?:=+|-+)\s*$/.test(next)) continue;
-    // Preserve an explicit Markdown/HTML hard break as authored — with
-    // `--breaks` these two lines stay one paragraph joined by <br> instead of
-    // becoming two spaced paragraphs.
-    if (EXPLICIT_BREAK_RE.test(line)) continue;
-
-    output.push('');
-  }
-  return output.join('\n');
-}
-
 interface ObsidianImageWidthMarker {
   token: string;
   width: number;
@@ -238,16 +162,14 @@ function applyMermaidThemeVars(html: string, themeId: string): string {
 
 export async function renderWithBm(markdown: string, markdownStyle: string, customCss: string | undefined): Promise<string> {
   const style = markdownStyle || 'kami';
-  // `--breaks` (bmmd 0.3.4+) keeps an authored hard break (two trailing
-  // spaces / trailing "\") as a <br> rather than collapsing it, and leaves
-  // fenced code alone. Paragraph separation itself is done by
-  // splitSingleLineParagraphs below, because `--breaks` alone only joins
-  // adjacent lines inside one <p>.
+  // `--breaks` (bmmd 0.3.4+) is the whole line-break story, matching bmmd's own
+  // demo: a single newline inside a paragraph becomes a <br/>, while a blank
+  // line still starts a new <p>. Fenced code is untouched either way.
   const args = ['render', '--platform', 'wechat', '--markdown-style', style, '--breaks'];
   const mermaidTheme = MERMAID_THEME_BY_STYLE[style];
   if (mermaidTheme) args.push('--mermaid-theme', mermaidTheme);
   if (customCss && customCss.trim()) args.push('--custom-css', customCss);
-  const sized = prepareObsidianImageWidths(splitSingleLineParagraphs(markdown));
+  const sized = prepareObsidianImageWidths(markdown);
   const prepared = substituteFinchFileImagesForBm(sized.markdown);
   let html = await runBmmd(args, prepared.markdown);
   if (mermaidTheme) html = applyMermaidThemeVars(html, mermaidTheme);
