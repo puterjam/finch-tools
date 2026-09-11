@@ -117,12 +117,12 @@ const MERMAID_THEME_BY_STYLE: Record<string, string> = {
   terminal: 'one-dark',
 };
 
-// bmmd@0.3.2's own bundled mermaid renderer colors every node/text/arrow via
+// bmmd's own bundled mermaid renderer colors every node/text/arrow via
 // `var(--fg)`, `var(--_node-fill)`, etc. (see the `<style>` block it emits
 // inside each `figure.figure-mermaid > svg`), but the `render` CLI command
 // never actually defines the base `--bg`/`--fg`/`--line`/`--accent`/`--muted`
-// custom properties anywhere in its output — verified against 0.3.1 and
-// 0.3.2, with and without `--mermaid-theme`, on both `wechat` and `html`
+// custom properties anywhere in its output — verified against 0.3.1, 0.3.2
+// and 0.3.4, with and without `--mermaid-theme`, on both `wechat` and `html`
 // platforms. Every color var is therefore unresolved and falls back to the
 // browser default (`fill: black`), so diagrams render as solid black shapes
 // with invisible black-on-black text — this is what the user is actually
@@ -162,7 +162,13 @@ function applyMermaidThemeVars(html: string, themeId: string): string {
 
 export async function renderWithBm(markdown: string, markdownStyle: string, customCss: string | undefined): Promise<string> {
   const style = markdownStyle || 'kami';
-  const args = ['render', '--platform', 'wechat', '--markdown-style', style];
+  // `--breaks` (bmmd 0.3.4+) turns a soft line break inside a paragraph into a
+  // literal <br>, so one ordinary newline already renders as its own line and
+  // the source no longer needs a blank separator line to start a new
+  // paragraph. Authored hard breaks (two trailing spaces / trailing "\") and
+  // fenced code blocks keep their existing behavior either way, so this
+  // replaces the old render-time blank-line preprocessing entirely.
+  const args = ['render', '--platform', 'wechat', '--markdown-style', style, '--breaks'];
   const mermaidTheme = MERMAID_THEME_BY_STYLE[style];
   if (mermaidTheme) args.push('--mermaid-theme', mermaidTheme);
   if (customCss && customCss.trim()) args.push('--custom-css', customCss);
