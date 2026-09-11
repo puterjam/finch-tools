@@ -532,6 +532,9 @@
   // 'lastSessionInfo' push right after the new document lands.
   var lastSessionId = null;
   var previewVisible = true;
+  // Preview visibility the user had just before focus mode closed the pane
+  // (App View only). null = not currently in focus mode. See toggleFocusMode.
+  var previewBeforeFocus = null;
   // Whether an App View AI-style design Session is currently running for
   // this document — drives the wand icon's loading spinner. Restored from
   // the host on panelReady if the panel was destroyed/rebound mid-flight.
@@ -3539,6 +3542,18 @@
     syncToolbar();
   }
 
+  // Single place that flips the App View preview pane, so focus mode and the
+  // toolbar's Preview button can't drift out of sync. `render()` re-lays out
+  // the article into a pane that was display:none a moment ago.
+  function setPreviewVisible(next) {
+    var visible = !!next;
+    if (visible === previewVisible) return;
+    previewVisible = visible;
+    document.body.classList.toggle('preview-hidden', !previewVisible);
+    syncToolbar();
+    if (previewVisible) requestAnimationFrame(function () { cm.layout(); render(); });
+  }
+
   function toggleFocusMode() {
     focusMode = !focusMode;
     // Selection-triggered rewrite has no on/off toggle anymore (it's
@@ -3558,6 +3573,20 @@
     // `.focus-mode` in panel.css). Harmless to set outside App View too —
     // the sidebar AppPanel toolbar has no rule keyed off this class.
     document.body.classList.toggle('focus-mode', focusMode);
+    // App View only: focus mode is a distraction-free writing surface, so it
+    // takes the preview pane down with it. Opening it again isn't possible
+    // while collapsed (the Preview button is hidden), so the user's earlier
+    // choice is remembered and restored when focus mode ends.
+    if (isAppView) {
+      if (focusMode) {
+        if (previewBeforeFocus === null) previewBeforeFocus = previewVisible;
+        setPreviewVisible(false);
+      } else if (previewBeforeFocus !== null) {
+        var restorePreview = previewBeforeFocus;
+        previewBeforeFocus = null;
+        setPreviewVisible(restorePreview);
+      }
+    }
     try { localStorage.setItem('md-editor-focus-mode', focusMode ? '1' : '0'); } catch (e) {}
     syncToolbar();
     setStatus(focusMode ? t('status.focusOn') : t('status.focusOff'));
@@ -3718,10 +3747,7 @@
   if (appSave) appSave.addEventListener('click', saveNow);
   if (appFocus) appFocus.addEventListener('click', toggleFocusMode);
   if (appPreview) appPreview.addEventListener('click', function () {
-    previewVisible = !previewVisible;
-    document.body.classList.toggle('preview-hidden', !previewVisible);
-    syncToolbar();
-    if (previewVisible) requestAnimationFrame(function () { cm.layout(); render(); });
+    setPreviewVisible(!previewVisible);
   });
   bindAppMenu(appStyle, appStyleMenu);
   bindAppMenu(appWordCount, appWordCountMenu);
