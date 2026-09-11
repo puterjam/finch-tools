@@ -93,6 +93,9 @@
       'confirm.message': '「{file}」还有未保存的改动，要保存后再返回首页吗？',
       'common.markdownDocDefault': 'Markdown 文档',
       'common.customStyleDefault': '自定义风格',
+      'wordCount.home.label': '字数',
+      'wordCount.home.tooltip.character': '按字符统计',
+      'wordCount.home.tooltip.word': '按词组统计',
       'wordCount.label.character': '{total}',
       'wordCount.label.word': '{total}',
       'wordCount.tooltip.character': '按字符统计 · {total}（非英文字符 {nonEnglish}，英文字符 {english}）',
@@ -268,6 +271,9 @@
       'confirm.message': '\u201c{file}\u201d has unsaved changes. Save before returning to Home?',
       'common.markdownDocDefault': 'Markdown document',
       'common.customStyleDefault': 'Custom style',
+      'wordCount.home.label': 'Word count',
+      'wordCount.home.tooltip.character': 'Character count',
+      'wordCount.home.tooltip.word': 'Word count',
       'wordCount.label.character': '{total}',
       'wordCount.label.word': '{total}',
       'wordCount.tooltip.character': 'Character count · {total} · {nonEnglish} non-English characters · {english} English characters',
@@ -476,8 +482,7 @@
   var appStyleMenu = document.getElementById('appStyleMenu');
   var appWordCount = document.getElementById('appWordCount');
   var appWordCountValue = document.getElementById('appWordCountValue');
-  var appWordCountCharacterIcon = document.getElementById('appWordCountCharacterIcon');
-  var appWordCountWordIcon = document.getElementById('appWordCountWordIcon');
+  var appWordCountIcon = document.getElementById('appWordCountIcon');
   var appWordCountMenu = document.getElementById('appWordCountMenu');
   var appFocus = document.getElementById('appFocus');
   var appFont = document.getElementById('appFont');
@@ -1367,7 +1372,7 @@
       saveTooltip = t('toolbar.save.tooltipSaved');
     }
     var hasDoc = hasDocument();
-    var wordCountPresentation = getWordCountPresentation(markdown);
+    var wordCountPresentation = getWordCountPresentation(markdown, hasDoc);
     return [
       {
         // Always available — a one-click way back to the recent-documents
@@ -1515,24 +1520,40 @@
     return { englishWords: englishWords, englishCharacters: englishCharacters, nonEnglish: nonEnglish };
   }
 
-  function getWordCountPresentation(source) {
-    var count = countArticleWords(source);
+  function getWordCountPresentation(source, hasDoc) {
     var isCharacter = wordCountMode === 'character';
+    var icon = isCharacter ? 'hash' : 'ext:markdown-editor-icons/whole-word';
+    if (!hasDoc) return {
+      icon: icon,
+      label: t('wordCount.home.label'),
+      tooltip: t(isCharacter ? 'wordCount.home.tooltip.character' : 'wordCount.home.tooltip.word'),
+    };
+    var count = countArticleWords(source);
     var english = isCharacter ? count.englishCharacters : count.englishWords;
     var values = { total: count.nonEnglish + english, nonEnglish: count.nonEnglish, english: english };
     return {
-      icon: isCharacter ? 'hash' : 'ext:markdown-editor-icons/whole-word',
+      icon: icon,
       label: t(isCharacter ? 'wordCount.label.character' : 'wordCount.label.word', values),
       tooltip: t(isCharacter ? 'wordCount.tooltip.character' : 'wordCount.tooltip.word', values),
     };
   }
 
+  function wordCountIconMarkup() {
+    return wordCountMode === 'character'
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg>'
+      : '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-whole-word" aria-hidden="true"><circle cx="7" cy="12" r="3"/><path d="M10 9v6"/><circle cx="17" cy="12" r="3"/><path d="M14 7v8"/><path d="M22 17v1c0 .5-.5 1-1 1H3c-.5 0-1-.5-1-1v-1"/></svg>';
+  }
+
   function updateWordCount() {
     if (!appWordCount) return;
-    var presentation = getWordCountPresentation(markdown);
+    var presentation = getWordCountPresentation(markdown, hasDocument());
     if (appWordCountValue) appWordCountValue.textContent = presentation.label;
-    if (appWordCountCharacterIcon) appWordCountCharacterIcon.hidden = wordCountMode !== 'character';
-    if (appWordCountWordIcon) appWordCountWordIcon.hidden = wordCountMode !== 'word';
+    // Rebuild the one icon node instead of relying on a pair of `hidden`
+    // attributes. This guarantees AppView updates after a menu selection.
+    if (appWordCountIcon && appWordCountIcon.getAttribute('data-mode') !== wordCountMode) {
+      appWordCountIcon.innerHTML = wordCountIconMarkup();
+      appWordCountIcon.setAttribute('data-mode', wordCountMode);
+    }
     appWordCount.setAttribute('data-tooltip', presentation.tooltip);
     appWordCount.setAttribute('aria-label', presentation.tooltip);
   }
