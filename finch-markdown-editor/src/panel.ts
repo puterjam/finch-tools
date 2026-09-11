@@ -93,12 +93,12 @@
       'confirm.message': '「{file}」还有未保存的改动，要保存后再返回首页吗？',
       'common.markdownDocDefault': 'Markdown 文档',
       'common.customStyleDefault': '自定义风格',
-      'wordCount.label.character': '{total} 字符',
-      'wordCount.label.word': '{total} 词',
-      'wordCount.tooltip.character': '字符数 {total}（非英文字符 {nonEnglish}，英文字符 {english}）',
-      'wordCount.tooltip.word': '词组数 {total}（非英文字符 {nonEnglish}，英文词组 {english}）',
-      'wordCount.mode.character': '按字符（Character）',
-      'wordCount.mode.word': '按词组（Word）',
+      'wordCount.label.character': '{total}',
+      'wordCount.label.word': '{total}',
+      'wordCount.tooltip.character': '按字符统计 · {total}（非英文字符 {nonEnglish}，英文字符 {english}）',
+      'wordCount.tooltip.word': '按词组统计 · {total}（非英文字符 {nonEnglish}，英文词组 {english}）',
+      'wordCount.mode.character': '按字符',
+      'wordCount.mode.word': '按词组',
       'toolbar.home.tooltip': '返回首页',
       'toolbar.open.tooltipDefault': '打开 Markdown 文件',
       'toolbar.save.label': '保存',
@@ -268,10 +268,10 @@
       'confirm.message': '\u201c{file}\u201d has unsaved changes. Save before returning to Home?',
       'common.markdownDocDefault': 'Markdown document',
       'common.customStyleDefault': 'Custom style',
-      'wordCount.label.character': '{total} characters',
-      'wordCount.label.word': '{total} words',
-      'wordCount.tooltip.character': '{total} characters · {nonEnglish} non-English characters · {english} English characters',
-      'wordCount.tooltip.word': '{total} words · {nonEnglish} non-English characters · {english} English words',
+      'wordCount.label.character': '{total}',
+      'wordCount.label.word': '{total}',
+      'wordCount.tooltip.character': 'Character count · {total} · {nonEnglish} non-English characters · {english} English characters',
+      'wordCount.tooltip.word': 'Word count · {total} · {nonEnglish} non-English characters · {english} English words',
       'wordCount.mode.character': 'Character',
       'wordCount.mode.word': 'Word',
       'toolbar.home.tooltip': 'Back to Home',
@@ -1404,7 +1404,7 @@
         label: wordCountPresentation.label, tooltip: wordCountPresentation.tooltip, disabled: !hasDoc,
         items: [
           { id: 'word-count:character', label: t('wordCount.mode.character'), icon: 'hash', checked: wordCountMode === 'character' },
-          { id: 'word-count:word', label: t('wordCount.mode.word'), icon: 'ext:markdown-editor-icons/text-lines', checked: wordCountMode === 'word' },
+          { id: 'word-count:word', label: t('wordCount.mode.word'), icon: 'ext:markdown-editor-icons/whole-word', checked: wordCountMode === 'word' },
         ],
       },
       // NOTE: copy/export/AI-layout deliberately do NOT live here. A host
@@ -1521,7 +1521,7 @@
     var english = isCharacter ? count.englishCharacters : count.englishWords;
     var values = { total: count.nonEnglish + english, nonEnglish: count.nonEnglish, english: english };
     return {
-      icon: isCharacter ? 'hash' : 'ext:markdown-editor-icons/text-lines',
+      icon: isCharacter ? 'hash' : 'ext:markdown-editor-icons/whole-word',
       label: t(isCharacter ? 'wordCount.label.character' : 'wordCount.label.word', values),
       tooltip: t(isCharacter ? 'wordCount.tooltip.character' : 'wordCount.tooltip.word', values),
     };
