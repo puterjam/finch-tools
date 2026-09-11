@@ -257,7 +257,7 @@ body.app-view.has-document.focus-mode #appFocus[data-tooltip]:hover::after{
 /* The count pill sits against the right edge in focus mode too. Its detail
    tooltip has two lines, so anchor its right edge instead of centering it
    beyond the window boundary. */
-body.app-view #appWordCount[data-tooltip]::after{white-space:pre-line;line-height:1.45;text-align:left}
+body.app-view #appWordCount[data-tooltip]::after{white-space:pre;line-height:1.45;text-align:left}
 body.app-view.has-document.focus-mode #appWordCount[data-tooltip]::after{
   left:auto;right:0;transform:translateY(-3px);
 }
