@@ -2060,13 +2060,17 @@
       convertSvgFiguresToImages();
       return;
     }
-    // Only reset the iframe's own html/body box model here. bm.md already
-    // inlines its own spacing (e.g. "padding: 2em 1.75em") and background
-    // directly onto the #bm-md section — do NOT override those, or the
-    // article loses its official top padding/background and looks flush
-    // against the frame edge.
+    // Only reset the iframe's own html/body box model here. bm.md's article
+    // padding is stripped at render time (see stripRootArticlePadding in
+    // renderer.ts) because that inline style is what gets copied to WeChat —
+    // a padded root produced a pasted article that was inset rather than
+    // full-bleed. The visual inset the preview still needs is supplied here
+    // instead, by the article's parent: a fixed padding on this iframe's body,
+    // which never travels with the copied HTML.
     frame.srcdoc = '<!doctype html><meta charset="utf-8"><base target="_blank">' +
-      '<style>html,body{margin:0!important;padding:0!important;min-height:100%}' +
+      '<style>html{margin:0!important;padding:0!important;min-height:100%}' +
+      ':root{--md-preview-pad-y:28px;--md-preview-pad-x:24px}' +
+      'body{margin:0!important;padding:var(--md-preview-pad-y) var(--md-preview-pad-x)!important;min-height:100%}' +
       'body{background:' + (bg || 'transparent') + '}' +
       // bm.md's own inline style on #bm-md never sets a height, so a short
       // article's background only covers its own content and the rest of
@@ -2075,9 +2079,10 @@
       // it means the "所见即所得" canvas/PDF export and the raw #bm-md
       // outerHTML used for copy would both crop right at the last line —
       // no full-bleed backdrop the way the actual WeChat article does once
-      // published. Forcing #bm-md to at least fill the viewport keeps its
-      // own background (not just the iframe's) reaching all the way down.
-      '#bm-md{min-height:100dvh}</style>' +
+      // published. Forcing #bm-md to at least fill the viewport (minus the
+      // body padding above) keeps its own background reaching all the way
+      // down without overflowing the frame.
+      '#bm-md{min-height:calc(100dvh - var(--md-preview-pad-y) * 2)}</style>' +
       '<body>' + html;
   }
 
