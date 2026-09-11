@@ -271,6 +271,13 @@ body.app-view.has-document #editPane,body.app-view.has-document #previewPane{dis
 body.app-view #editPane{border-right:1px solid var(--border)}
 body.app-view .preview-shell{padding:20px;display:flex;justify-content:center;align-items:stretch}
 body.app-view #article{width:100%;border:1px solid var(--border)}
+/* The sidebar panel had no such cap, so widening the Finch panel stretched the
+   rendered article edge to edge — an unreadably long measure on a big display.
+   Reuse App View's maximum preview width (560px, the top of its 370–560 clamp)
+   as a plain reading cap here: the article centers and stops growing past it,
+   while a panel narrower than 560px keeps its previous full-width behavior. */
+body:not(.app-view) .preview-shell{display:flex;justify-content:center;align-items:stretch}
+body:not(.app-view) #article{max-width:560px;border:1px solid var(--border)}
 body.app-view.preview-hidden .stage{grid-template-columns:minmax(0,1fr)}body.app-view.preview-hidden #previewPane,body.app-view.preview-hidden .preview-resizer{display:none!important}
 @keyframes cm-ai-spin{to{transform:rotate(360deg)}}
 .ic-ai-style-loading{animation:cm-ai-spin .8s linear infinite}
