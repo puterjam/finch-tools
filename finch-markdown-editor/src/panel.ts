@@ -93,6 +93,8 @@
       'confirm.message': '「{file}」还有未保存的改动，要保存后再返回首页吗？',
       'common.markdownDocDefault': 'Markdown 文档',
       'common.customStyleDefault': '自定义风格',
+      'wordCount.label': '{total} 字',
+      'wordCount.tooltip': '字数 {total}（非英文字符 {nonEnglish}，英文单词 {english}）',
       'toolbar.home.tooltip': '返回首页',
       'toolbar.open.tooltipDefault': '打开 Markdown 文件',
       'toolbar.save.label': '保存',
@@ -262,6 +264,8 @@
       'confirm.message': '\u201c{file}\u201d has unsaved changes. Save before returning to Home?',
       'common.markdownDocDefault': 'Markdown document',
       'common.customStyleDefault': 'Custom style',
+      'wordCount.label': '{total} words',
+      'wordCount.tooltip': '{total} total · {nonEnglish} non-English characters · {english} English words',
       'toolbar.home.tooltip': 'Back to Home',
       'toolbar.open.tooltipDefault': 'Open Markdown file',
       'toolbar.save.label': 'Save',
@@ -462,6 +466,7 @@
   var appPreview = document.getElementById('appPreview');
   var appStyle = document.getElementById('appStyle');
   var appStyleMenu = document.getElementById('appStyleMenu');
+  var appWordCount = document.getElementById('appWordCount');
   var appFocus = document.getElementById('appFocus');
   var appFont = document.getElementById('appFont');
   var appFontMenu = document.getElementById('appFontMenu');
@@ -1456,9 +1461,43 @@
       + '<hr>' + appMenuButton('about', t('toolbar.more.about'), false);
   }
 
+  // Count rendered article language, not Markdown scaffolding: frontmatter,
+  // fenced/inline code, link destinations, and formatting punctuation don't
+  // inflate the writing total. Every English word counts as one; every other
+  // letter/number code point (including Chinese characters) counts as one.
+  function countArticleWords(source) {
+    var text = String(source || '').replace(/\r\n?/g, '\n')
+      .replace(/^(?:\uFEFF)?---\s*\n[\s\S]*?\n(?:---|\.\.\.)\s*(?=\n|$)/, '\n')
+      .replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/g, ' ')
+      .replace(/`[^`\n]*`/g, ' ')
+      .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/https?:\/\/\S+/g, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|[-+*]\s+|\d+[.)]\s+)/gm, '')
+      .replace(/[*_~]/g, ' ');
+    var englishWordRe = /[A-Za-z]+(?:['’][A-Za-z]+)*(?:-[A-Za-z]+(?:['’][A-Za-z]+)*)*/g;
+    var english = (text.match(englishWordRe) || []).length;
+    var nonEnglish = Array.from(text.replace(englishWordRe, ' ')).filter(function (char) {
+      return /[\p{L}\p{N}]/u.test(char);
+    }).length;
+    return { english: english, nonEnglish: nonEnglish, total: english + nonEnglish };
+  }
+
+  function updateWordCount() {
+    if (!appWordCount) return;
+    var count = countArticleWords(markdown);
+    var values = { total: count.total, nonEnglish: count.nonEnglish, english: count.english };
+    var tooltip = t('wordCount.tooltip', values);
+    appWordCount.textContent = t('wordCount.label', values);
+    appWordCount.setAttribute('data-tooltip', tooltip);
+    appWordCount.setAttribute('aria-label', tooltip);
+  }
+
   function syncAppToolbar() {
     if (!isAppView) return;
     var hasDoc = hasDocument();
+    updateWordCount();
     if (appSave) {
       appSave.disabled = !dirty;
       appSave.classList.toggle('dirty', dirty);
