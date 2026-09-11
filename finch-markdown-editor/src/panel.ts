@@ -93,8 +93,12 @@
       'confirm.message': '「{file}」还有未保存的改动，要保存后再返回首页吗？',
       'common.markdownDocDefault': 'Markdown 文档',
       'common.customStyleDefault': '自定义风格',
-      'wordCount.label': '{total} 字',
-      'wordCount.tooltip': '字数 {total}（非英文字符 {nonEnglish}，英文单词 {english}）',
+      'wordCount.label.character': '{total} 字符',
+      'wordCount.label.word': '{total} 词',
+      'wordCount.tooltip.character': '字符数 {total}（非英文字符 {nonEnglish}，英文字符 {english}）',
+      'wordCount.tooltip.word': '词组数 {total}（非英文字符 {nonEnglish}，英文词组 {english}）',
+      'wordCount.mode.character': '按字符（Character）',
+      'wordCount.mode.word': '按词组（Word）',
       'toolbar.home.tooltip': '返回首页',
       'toolbar.open.tooltipDefault': '打开 Markdown 文件',
       'toolbar.save.label': '保存',
@@ -264,8 +268,12 @@
       'confirm.message': '\u201c{file}\u201d has unsaved changes. Save before returning to Home?',
       'common.markdownDocDefault': 'Markdown document',
       'common.customStyleDefault': 'Custom style',
-      'wordCount.label': '{total} words',
-      'wordCount.tooltip': '{total} total · {nonEnglish} non-English characters · {english} English words',
+      'wordCount.label.character': '{total} characters',
+      'wordCount.label.word': '{total} words',
+      'wordCount.tooltip.character': '{total} characters · {nonEnglish} non-English characters · {english} English characters',
+      'wordCount.tooltip.word': '{total} words · {nonEnglish} non-English characters · {english} English words',
+      'wordCount.mode.character': 'Character',
+      'wordCount.mode.word': 'Word',
       'toolbar.home.tooltip': 'Back to Home',
       'toolbar.open.tooltipDefault': 'Open Markdown file',
       'toolbar.save.label': 'Save',
@@ -468,6 +476,9 @@
   var appStyleMenu = document.getElementById('appStyleMenu');
   var appWordCount = document.getElementById('appWordCount');
   var appWordCountValue = document.getElementById('appWordCountValue');
+  var appWordCountCharacterIcon = document.getElementById('appWordCountCharacterIcon');
+  var appWordCountWordIcon = document.getElementById('appWordCountWordIcon');
+  var appWordCountMenu = document.getElementById('appWordCountMenu');
   var appFocus = document.getElementById('appFocus');
   var appFont = document.getElementById('appFont');
   var appFontMenu = document.getElementById('appFontMenu');
@@ -542,6 +553,9 @@
   // Comfortable mode: roomier line spacing while composing. Default off
   // (compact mode keeps the tighter 2px/1.7rem layout).
   var comfortWriting = false;
+  // Character is the default: English letters each count individually.
+  // Word keeps the previous behavior, grouping each English word as one.
+  var wordCountMode = 'character';
   // Focus mode ("专注"): dims every line except the cursor's own line.
   var focusMode = false;
   try {
@@ -553,6 +567,7 @@
     if (EDITOR_FONTS[savedEditorFont]) editorFont = savedEditorFont;
     else if (savedEditorFont) localStorage.removeItem('md-editor-font-family');
     comfortWriting = localStorage.getItem('md-editor-comfort-writing') === '1';
+    if (localStorage.getItem('md-editor-word-count-mode') === 'word') wordCountMode = 'word';
     focusMode = localStorage.getItem('md-editor-focus-mode') === '1';
     var savedLibraryGroups = JSON.parse(localStorage.getItem(LIBRARY_GROUP_STATE_KEY) || '{}');
     if (Array.isArray(savedLibraryGroups.order)) libraryGroupOrder = savedLibraryGroups.order.filter(function (id) { return typeof id === 'string'; });
@@ -1352,8 +1367,7 @@
       saveTooltip = t('toolbar.save.tooltipSaved');
     }
     var hasDoc = hasDocument();
-    var wordCount = countArticleWords(markdown);
-    var wordCountValues = { total: wordCount.total, nonEnglish: wordCount.nonEnglish, english: wordCount.english };
+    var wordCountPresentation = getWordCountPresentation(markdown);
     return [
       {
         // Always available — a one-click way back to the recent-documents
@@ -1384,10 +1398,14 @@
       },
       { type: 'spacer' },
       {
-        // `hash` is Finch's built-in Lucide Hash icon. The host toolbar is
-        // recreated whenever text changes, so this stays live in AppPanel.
-        id: 'wordCount', icon: 'hash', label: t('wordCount.label', wordCountValues),
-        tooltip: t('wordCount.tooltip', wordCountValues), disabled: !hasDoc,
+        // Character uses the built-in Lucide Hash; Word uses this mini tool's
+        // text-lines icon, so the active counting method is visible at a glance.
+        type: 'menu', id: 'wordCount', icon: wordCountPresentation.icon,
+        label: wordCountPresentation.label, tooltip: wordCountPresentation.tooltip, disabled: !hasDoc,
+        items: [
+          { id: 'word-count:character', label: t('wordCount.mode.character'), icon: 'hash', checked: wordCountMode === 'character' },
+          { id: 'word-count:word', label: t('wordCount.mode.word'), icon: 'ext:markdown-editor-icons/text-lines', checked: wordCountMode === 'word' },
+        ],
       },
       // NOTE: copy/export/AI-layout deliberately do NOT live here. A host
       // toolbar click reaches this page as a postMessage, which carries no
@@ -1457,6 +1475,8 @@
       }
       appStyleMenu.innerHTML = markup;
     }
+    if (appWordCountMenu) appWordCountMenu.innerHTML = appMenuButton('word-count:character', t('wordCount.mode.character'), wordCountMode === 'character')
+      + appMenuButton('word-count:word', t('wordCount.mode.word'), wordCountMode === 'word');
     if (appFontMenu) appFontMenu.innerHTML = appMenuButton('comfort:read', t('toolbar.comfort.read'), !comfortWriting)
       + appMenuButton('comfort:write', t('toolbar.comfort.write'), comfortWriting) + '<hr>'
       + appMenuButton('font-size:14', t('toolbar.fontSize.small'), editorFontSize === 14)
@@ -1472,8 +1492,9 @@
 
   // Count rendered article language, not Markdown scaffolding: frontmatter,
   // fenced/inline code, link destinations, and formatting punctuation don't
-  // inflate the writing total. Every English word counts as one; every other
-  // letter/number code point (including Chinese characters) counts as one.
+  // inflate the writing total. Character mode counts English letters one by
+  // one; Word mode groups each English word while keeping other letters and
+  // numbers (including Chinese characters) as individual units.
   function countArticleWords(source) {
     var text = String(source || '').replace(/\r\n?/g, '\n')
       .replace(/^(?:\uFEFF)?---\s*\n[\s\S]*?\n(?:---|\.\.\.)\s*(?=\n|$)/, '\n')
@@ -1486,21 +1507,34 @@
       .replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|[-+*]\s+|\d+[.)]\s+)/gm, '')
       .replace(/[*_~]/g, ' ');
     var englishWordRe = /[A-Za-z]+(?:['’][A-Za-z]+)*(?:-[A-Za-z]+(?:['’][A-Za-z]+)*)*/g;
-    var english = (text.match(englishWordRe) || []).length;
+    var englishWords = (text.match(englishWordRe) || []).length;
+    var englishCharacters = Array.from(text).filter(function (char) { return /[A-Za-z]/.test(char); }).length;
     var nonEnglish = Array.from(text.replace(englishWordRe, ' ')).filter(function (char) {
       return /[\p{L}\p{N}]/u.test(char);
     }).length;
-    return { english: english, nonEnglish: nonEnglish, total: english + nonEnglish };
+    return { englishWords: englishWords, englishCharacters: englishCharacters, nonEnglish: nonEnglish };
+  }
+
+  function getWordCountPresentation(source) {
+    var count = countArticleWords(source);
+    var isCharacter = wordCountMode === 'character';
+    var english = isCharacter ? count.englishCharacters : count.englishWords;
+    var values = { total: count.nonEnglish + english, nonEnglish: count.nonEnglish, english: english };
+    return {
+      icon: isCharacter ? 'hash' : 'ext:markdown-editor-icons/text-lines',
+      label: t(isCharacter ? 'wordCount.label.character' : 'wordCount.label.word', values),
+      tooltip: t(isCharacter ? 'wordCount.tooltip.character' : 'wordCount.tooltip.word', values),
+    };
   }
 
   function updateWordCount() {
     if (!appWordCount) return;
-    var count = countArticleWords(markdown);
-    var values = { total: count.total, nonEnglish: count.nonEnglish, english: count.english };
-    var tooltip = t('wordCount.tooltip', values);
-    if (appWordCountValue) appWordCountValue.textContent = t('wordCount.label', values);
-    appWordCount.setAttribute('data-tooltip', tooltip);
-    appWordCount.setAttribute('aria-label', tooltip);
+    var presentation = getWordCountPresentation(markdown);
+    if (appWordCountValue) appWordCountValue.textContent = presentation.label;
+    if (appWordCountCharacterIcon) appWordCountCharacterIcon.hidden = wordCountMode !== 'character';
+    if (appWordCountWordIcon) appWordCountWordIcon.hidden = wordCountMode !== 'word';
+    appWordCount.setAttribute('data-tooltip', presentation.tooltip);
+    appWordCount.setAttribute('aria-label', presentation.tooltip);
   }
 
   function syncAppToolbar() {
@@ -3471,6 +3505,13 @@
     setStatus(comfortWriting ? t('status.comfortWrite') : t('status.comfortRead'));
   }
 
+  function setWordCountMode(next) {
+    if ((next !== 'character' && next !== 'word') || wordCountMode === next) return;
+    wordCountMode = next;
+    try { localStorage.setItem('md-editor-word-count-mode', wordCountMode); } catch (e) {}
+    syncToolbar();
+  }
+
   function toggleFocusMode() {
     focusMode = !focusMode;
     // Selection-triggered rewrite has no on/off toggle anymore (it's
@@ -3614,6 +3655,8 @@
     if (itemId && itemId.indexOf('font-family:') === 0) { setEditorFont(itemId.slice('font-family:'.length)); return; }
     if (itemId === 'comfort:read') { setComfortWriting(false); return; }
     if (itemId === 'comfort:write') { setComfortWriting(true); return; }
+    if (itemId === 'word-count:character') { setWordCountMode('character'); return; }
+    if (itemId === 'word-count:word') { setWordCountMode('word'); return; }
     if (itemId === 'focus') { toggleFocusMode(); return; }
     if (itemId === 'about') { showRendererAbout(); return; }
     // These two must be checked before the generic 'style:' fallback below,
@@ -3624,7 +3667,7 @@
   }
 
   function closeAppMenus() {
-    [appStyleMenu, appFontMenu, appMoreMenu].forEach(function (menu) { if (menu) menu.hidden = true; });
+    [appStyleMenu, appWordCountMenu, appFontMenu, appMoreMenu].forEach(function (menu) { if (menu) menu.hidden = true; });
   }
   function toggleAppMenu(menu) {
     if (!menu) return;
@@ -3654,6 +3697,7 @@
     if (previewVisible) requestAnimationFrame(function () { cm.layout(); render(); });
   });
   bindAppMenu(appStyle, appStyleMenu);
+  bindAppMenu(appWordCount, appWordCountMenu);
   bindAppMenu(appFont, appFontMenu);
   bindAppMenu(appMore, appMoreMenu);
   document.addEventListener('click', closeAppMenus);

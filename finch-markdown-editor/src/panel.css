@@ -206,7 +206,7 @@ body.app-view .app-toolbar{display:flex!important}
    align-items:center flex boxes. */
 .app-tool svg{display:block;width:17px;height:17px;stroke-width:1.8}.app-tool:hover:not(:disabled){background:var(--finch-bg-hover,var(--bg))}
 .app-tool:disabled{opacity:.4;cursor:default}.app-tool.checked{color:var(--text);background:var(--finch-bg-active,color-mix(in srgb,var(--text) 10%,transparent))}.app-tool.dirty{background:transparent}
-.app-tool-label{min-width:auto;padding:0 9px}.app-word-count{min-width:0;padding-inline:8px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;cursor:default}.app-word-count svg{width:14px;height:14px;flex:none}.app-word-count:hover{color:var(--text)}.ic-save,.ic-save-check{display:inline-flex;align-items:center}.ic-save[hidden],.ic-save-check[hidden]{display:none}.app-menu-wrap{position:relative}.app-menu{position:absolute;z-index:32;top:calc(100% + 7px);right:0;min-width:174px;padding:5px;border:1px solid var(--border);border-radius:9px;background:var(--card);box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.app-tool-label{min-width:auto;padding:0 9px}.app-word-count{min-width:0;padding-inline:8px;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums;cursor:pointer}.app-word-count svg{width:14px;height:14px;flex:none}.app-word-count svg[hidden]{display:none!important}.app-word-count:hover{color:var(--text)}.ic-save,.ic-save-check{display:inline-flex;align-items:center}.ic-save[hidden],.ic-save-check[hidden]{display:none}.app-menu-wrap{position:relative}.app-menu{position:absolute;z-index:32;top:calc(100% + 7px);right:0;min-width:174px;padding:5px;border:1px solid var(--border);border-radius:9px;background:var(--card);box-shadow:0 2px 8px rgba(0,0,0,.12)}
 .app-menu button{display:flex;width:100%;align-items:center;justify-content:space-between;gap:12px;padding:7px 9px;border:0;border-radius:6px;background:transparent;color:var(--text);font:12px var(--finch-font-body,system-ui);text-align:left;cursor:pointer}.app-menu button:hover{background:var(--finch-bg-hover,var(--bg))}.app-menu button.checked{color:var(--text);background:var(--finch-bg-active,color-mix(in srgb,var(--text) 10%,transparent));font-weight:600}.app-menu button:disabled{color:var(--muted);cursor:default;opacity:.5}.app-menu button:disabled:hover{background:transparent}.app-menu hr{margin:5px 3px;border:0;border-top:1px solid var(--border)}
 .app-document-meta{min-width:0;display:flex;flex-direction:column;gap:1px}.app-document-meta strong,.app-document-meta span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.app-document-meta strong{font-size:13px}.app-document-meta span{max-width:34vw;color:var(--muted);font-size:11px}
 /* Focus mode ("专注") in App View: instead of just dimming inactive editor
@@ -223,7 +223,7 @@ body.app-view.has-document.focus-mode .app-toolbar{
 }
 body.app-view.has-document.focus-mode .app-toolbar-group:not(.app-toolbar-end){display:none!important}
 body.app-view.has-document.focus-mode .app-toolbar-end{margin-left:0;flex-direction:column;align-items:flex-end;gap:6px}
-body.app-view.has-document.focus-mode .app-toolbar-end>*:not(#appFocus):not(#appWordCount){display:none!important}
+body.app-view.has-document.focus-mode .app-toolbar-end>*:not(#appFocus):not(#appWordCountWrap){display:none!important}
 body.app-view.has-document.focus-mode #appFocus{
   order:0;
   width:36px;height:36px;padding:0;border-color:var(--border);border-radius:999px;
@@ -233,8 +233,9 @@ body.app-view.has-document.focus-mode #appFocus{
 }
 body.app-view.has-document.focus-mode #appFocus:hover,
 body.app-view.has-document.focus-mode #appFocus:focus-visible{opacity:1}
+body.app-view.has-document.focus-mode #appWordCountWrap{order:1}
 body.app-view.has-document.focus-mode #appWordCount{
-  order:1;height:24px;min-width:0;padding:0 10px;border:1px solid var(--border);border-radius:999px;
+  height:24px;min-width:0;padding:0 10px;border:1px solid var(--border);border-radius:999px;
   background:var(--card);box-shadow:0 4px 12px rgba(0,0,0,.12);opacity:.78;
 }
 body.app-view.has-document.focus-mode #appWordCount:hover{opacity:1}
