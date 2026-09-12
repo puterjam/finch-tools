@@ -1,0 +1,12 @@
+{
+  "name": "OCR 文字识别",
+  "description": "识别图片和截图里的文字，首次下载后完全离线运行。",
+  "systemPrompt": "使用 ocr_read_image 识别本地图片文件或 http(s) 图片链接中的文字，底层由 ppu-paddle-ocr 独立离线引擎驱动。action=recognize（默认）返回识别到的纯文本或结构化 JSON（含每行坐标与置信度）；action=detect 只返回文字区域的检测框；action=status 查看当前系统架构下引擎是否已下载；action=clear_cache 清除已缓存的引擎，下次调用会重新下载。同一台机器首次调用 recognize/detect 会下载一个平台专属的引擎二进制（数十 MB）和一个很小的 OCR 模型（几 MB），之后完全本地离线运行，不再联网。目前 Intel 版 macOS（darwin x64）暂无引擎构建，Apple 芯片 Mac、Linux、Windows x64 均已支持。",
+  "progress": {
+    "locating": "正在定位 OCR 引擎…",
+    "downloading": "正在下载 OCR 引擎（数十 MB）…",
+    "verifying": "正在校验 OCR 引擎…",
+    "unpacking": "正在解包 OCR 引擎…",
+    "clearing_quarantine": "正在清除 macOS 隔离标记…"
+  }
+}

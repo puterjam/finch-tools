@@ -1,0 +1,12 @@
+{
+  "name": "OCR",
+  "description": "Recognize text in images and screenshots, fully offline after the first run.",
+  "systemPrompt": "Use ocr_read_image to recognize text in a local image file or an http(s) image URL, powered by ppu-paddle-ocr running as a standalone offline engine. action=recognize (default) returns plain text or structured JSON with per-line boxes and confidence; action=detect only returns text-region bounding boxes; action=status reports whether the engine binary for this OS/arch is installed; action=clear_cache removes the cached engine so the next call re-downloads it. The first recognize/detect call on a machine downloads a platform-specific engine binary (tens of MB) and a small OCR model (a few MB); after that everything runs locally offline with no further network access. There is currently no engine build for Intel-based macOS (darwin x64) — Apple Silicon, Linux and Windows x64 are supported.",
+  "progress": {
+    "locating": "Locating OCR engine…",
+    "downloading": "Downloading OCR engine (tens of MB)…",
+    "verifying": "Verifying OCR engine…",
+    "unpacking": "Unpacking OCR engine…",
+    "clearing_quarantine": "Clearing macOS quarantine flag…"
+  }
+}

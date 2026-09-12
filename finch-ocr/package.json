@@ -1,0 +1,70 @@
+{
+  "name": "finch-ocr",
+  "version": "0.1.0",
+  "description": "Read text out of images and screenshots with a local, offline OCR engine — no API key, no cloud upload.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-ocr"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-ocr#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "keywords": [
+    "finch",
+    "finch-minitool",
+    "ocr",
+    "paddleocr",
+    "image",
+    "text-recognition"
+  ],
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "id": "ocr",
+    "name": "OCR",
+    "description": "Recognize text in images and screenshots, fully offline after the first run.",
+    "systemPrompt": "Use ocr_read_image to recognize text in a local image file or an http(s) image URL, powered by ppu-paddle-ocr running as a standalone offline engine. action=recognize (default) returns plain text or structured JSON with per-line boxes and confidence; action=detect only returns text-region bounding boxes; action=status reports whether the engine binary for this OS/arch is installed; action=clear_cache removes the cached engine so the next call re-downloads it. The first recognize/detect call on a machine downloads a platform-specific engine binary (tens of MB) and a small OCR model (a few MB); after that everything runs locally offline with no further network access. There is currently no engine build for Intel-based macOS (darwin x64) — Apple Silicon, Linux and Windows x64 are supported.",
+    "main": "dist/index.js",
+    "activationEvents": [
+      "onStartup"
+    ],
+    "miniToolType": "local",
+    "categories": [
+      "productivity",
+      "developer"
+    ],
+    "contributes": {
+      "tools": true
+    },
+    "permissions": {
+      "filesystem": "readwrite",
+      "network": true,
+      "shell": true
+    }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.2.9",
+    "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "i18n/",
+    "icon.png",
+    "README.md"
+  ]
+}

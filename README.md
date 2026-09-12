@@ -5,6 +5,7 @@ Mini tools that extend [Finch](https://finchwork.app/) with focused, user-facing
 ## Packages
 
 - [`finch-anydoc`](./finch-anydoc/) — lets Finch read Word, Excel, PowerPoint, OpenDocument, RTF, EPUB, CSV and PDF files as clean Markdown, with outlines and paging for long documents.
+- [`finch-ocr`](./finch-ocr/) — recognizes text in images and screenshots with a local, fully offline OCR engine; no API key, no cloud upload.
 - [`finch-ego-lite`](./finch-ego-lite/) — lets Finch browse the web in isolated [Ego Lite](https://lite.ego.app/) task spaces while users follow, inspect, and take over its pages.
 - [`finch-helper`](./finch-helper/) — an assistant that answers questions about Finch usage, features and mini tool development from the official documentation knowledge base.
 - [`finch-delivery`](./finch-delivery/) — tracks and browses deliverables (Markdown, Word, PPT, PDF, Excel, web pages, images) produced by the AI across all sessions, with a card gallery Panel and Markdown text previews.
@@ -23,6 +24,7 @@ Mini tools that extend [Finch](https://finchwork.app/) with focused, user-facing
 ## 包
 
 - [`finch-anydoc`](./finch-anydoc/)：让 Finch 把 Word、Excel、PPT、OpenDocument、RTF、EPUB、CSV 和 PDF 读成干净的 Markdown，长文档支持大纲与分页。
+- [`finch-ocr`](./finch-ocr/)：用本地离线 OCR 引擎识别图片和截图里的文字，不需要 API Key，图片也不会上传云端。
 - [`finch-ego-lite`](./finch-ego-lite/)：让 Finch 在独立的 [Ego Lite](https://lite.ego.app/) 任务空间中浏览网页，用户可以查看、接管并关闭 Agent 的页面。
 - [`finch-helper`](./finch-helper/)：一个基于官方文档知识库回答 Finch 用法、功能与小程序开发问题的助手。
 - [`finch-delivery`](./finch-delivery/)：记录和浏览 AI 生成的交付物（Markdown、Word、PPT、PDF、Excel、网页、图片），以卡片画廊面板展示，支持 Markdown 文字预览和跨会话浏览。
