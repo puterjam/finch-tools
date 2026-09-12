@@ -337,7 +337,10 @@ const finchTheme = EditorView.theme({
     // the 14px tier render at ~12.6px.
   },
   '.cm-content': {
-    padding: '48px 0',
+    // Focus mode overrides this with a viewport-sized value (see
+    // computeFocusPadding) so the first/last line can still scroll all the
+    // way to the vertical center; '48px' is the normal, non-focus default.
+    padding: 'var(--md-focus-pad-y, 48px) 0',
     caretColor: 'var(--text)',
     minHeight: '100%',
     // Let the content flex down with a narrow panel instead of retaining the
@@ -3699,6 +3702,51 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     if (!focusModeEnabled || centerLineRaf || mouseSelecting) return;
     centerLineRaf = requestAnimationFrame(() => requestAnimationFrame(centerActiveLine));
   }
+  // `scrollIntoView({ block: 'center' })` can only center a line within the
+  // scroll room that actually exists — it never invents extra space. With
+  // the normal fixed 48px top/bottom padding, a caret on line 1 of a short
+  // document (or near the very end of any document) simply has nowhere left
+  // to scroll to, so it visibly sits above/below screen-center instead of on
+  // it. Fix: while focus mode is on, pad `.cm-content` top/bottom with
+  // exactly `(viewport height - one line's height) / 2`. That's the single
+  // number that makes a one-line document fill the viewport exactly (no
+  // pointless scrollbar) while still leaving the first/last line of any
+  // longer document precisely enough room to reach screen-center — the
+  // moment a second line exists, the document is one line taller than the
+  // viewport can hold without scrolling, which is exactly when a scrollbar
+  // (and the centering focus mode exists for) should show up.
+  //
+  // The line height must be the *actual* rendered box, not CodeMirror's own
+  // font-metric estimate (`view.defaultLineHeight`): that guess drifts from
+  // the real box by an amount that itself grows with font size/line-height
+  // (reported: fine at the smallest compact size, off by more at larger
+  // comfortable sizes). Measuring an actual `.cm-line` element's
+  // `getBoundingClientRect()` avoids that drift entirely.
+  function measureLineHeightPx(): number {
+    const line = (view.dom.querySelector('.cm-activeLine') || view.dom.querySelector('.cm-line')) as HTMLElement | null;
+    return line ? line.getBoundingClientRect().height : (view.defaultLineHeight || 0);
+  }
+  function applyFocusPadding() {
+    if (!focusModeEnabled) {
+      view.dom.style.removeProperty('--md-focus-pad-y');
+      view.requestMeasure();
+      return;
+    }
+    const viewportH = view.scrollDOM.clientHeight || 0;
+    const lineH = measureLineHeightPx();
+    // Deliberately not rounded: both sides share this one fractional value,
+    // so the two paddings stay in exact lockstep with each other and with
+    // the (also fractional) real line height — rounding either separately
+    // is what reintroduced a stray ~1px surplus/scrollbar before.
+    const pad = Math.max(0, (viewportH - lineH) / 2);
+    view.dom.style.setProperty('--md-focus-pad-y', `${pad}px`);
+    view.requestMeasure();
+  }
+  // Panel resizes (splitting the window, dragging the preview divider, DPI
+  // changes) change what "half the viewport" means, so keep the padding in
+  // sync while focus mode is active rather than only computing it once.
+  // Observer itself is created just below, once `view` exists.
+  let focusResizeObserver: ResizeObserver | null = null;
   // Attach on window so a drag that leaves the editor still ends cleanly.
   function onWindowMouseUp() {
     if (!mouseSelecting) return;
@@ -3861,6 +3909,17 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
   const onAiWorkingCancel = () => options.onAiWorkingCancel?.();
   view.dom.addEventListener('finch:aiWorkingCancel', onAiWorkingCancel);
 
+  // See applyFocusPadding above: keeps the focus-mode padding in sync with
+  // the panel's actual size (split-view resize, DPI change…).
+  if (typeof ResizeObserver !== 'undefined') {
+    focusResizeObserver = new ResizeObserver(() => {
+      if (!focusModeEnabled) return;
+      applyFocusPadding();
+      scheduleCenterActiveLine();
+    });
+    focusResizeObserver.observe(view.scrollDOM);
+  }
+
   // Height-map lookup for a line's top/bottom edge, expressed in the same
   // coordinate space as `scrollDOM.scrollTop`. `lineBlockAt` is used instead
   // of `coordsAtPos` because it answers for every line in the document, not
@@ -4007,8 +4066,10 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       // the rule inert when focus mode is off.
       focusModeEnabled = !!on;
       view.dom.style.setProperty('--md-focus-opacity', on ? '0.5' : '1');
+      // See applyFocusPadding: gives the first/last line real scroll room
+      // to reach screen-center, not just lines already surrounded by text.
+      applyFocusPadding();
       if (on) scheduleCenterActiveLine();
-      view.requestMeasure();
     },
     setAiWorkingLines(fromLine, toLine) {
       const active = fromLine > 0 && toLine >= fromLine;
@@ -4029,6 +4090,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
     destroy() {
       view.dom.removeEventListener('finch:aiWorkingCancel', onAiWorkingCancel);
       if (centerLineRaf) { cancelAnimationFrame(centerLineRaf); centerLineRaf = 0; }
+      if (focusResizeObserver) { focusResizeObserver.disconnect(); focusResizeObserver = null; }
       if (externalHighlightTimer) { clearTimeout(externalHighlightTimer); externalHighlightTimer = 0; }
       window.removeEventListener('mouseup', onWindowMouseUp);
       disposeStaticTableCellPreview();
