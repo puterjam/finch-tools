@@ -3747,13 +3747,24 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
   // sync while focus mode is active rather than only computing it once.
   // Observer itself is created just below, once `view` exists.
   let focusResizeObserver: ResizeObserver | null = null;
+  // A mouse click/drag places the caret deliberately — the user is looking
+  // right at that spot already, so snapping the view the instant the mouse
+  // comes up reads as a jarring yank instead of a smooth focus shift. Give
+  // it a beat (unlike typing/arrow-key moves, which center immediately) so
+  // it only kicks in once it's clear the user has settled there.
+  const MOUSE_CENTER_DELAY_MS = 300;
+  let mouseCenterDelayTimer = 0;
   // Attach on window so a drag that leaves the editor still ends cleanly.
   function onWindowMouseUp() {
     if (!mouseSelecting) return;
     mouseSelecting = false;
     tablePreviewMouseSelecting = false;
-    // The selection just settled — center once now.
-    scheduleCenterActiveLine();
+    // The selection just settled — center after the delay above.
+    if (mouseCenterDelayTimer) clearTimeout(mouseCenterDelayTimer);
+    mouseCenterDelayTimer = window.setTimeout(() => {
+      mouseCenterDelayTimer = 0;
+      scheduleCenterActiveLine();
+    }, MOUSE_CENTER_DELAY_MS);
     // A drag that crosses a table boundary is what empties the table widget,
     // so check for that damage once the drag is actually over (healing mid-
     // drag would dispatch a document change under the pointer).
@@ -4091,6 +4102,7 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       view.dom.removeEventListener('finch:aiWorkingCancel', onAiWorkingCancel);
       if (centerLineRaf) { cancelAnimationFrame(centerLineRaf); centerLineRaf = 0; }
       if (focusResizeObserver) { focusResizeObserver.disconnect(); focusResizeObserver = null; }
+      if (mouseCenterDelayTimer) { clearTimeout(mouseCenterDelayTimer); mouseCenterDelayTimer = 0; }
       if (externalHighlightTimer) { clearTimeout(externalHighlightTimer); externalHighlightTimer = 0; }
       window.removeEventListener('mouseup', onWindowMouseUp);
       disposeStaticTableCellPreview();
