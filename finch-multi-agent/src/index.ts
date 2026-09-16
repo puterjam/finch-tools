@@ -1861,8 +1861,11 @@ async function holdAndReport(
     }
   }
 
+  const cardWaiting = waiting.some((task) => Boolean(task.waitRequestId));
   if (heldOnly) {
     parts.push('', t('result.nextStart', { ids: waiting.map((task) => task.taskKey).join(', ') }));
+  } else if (cardWaiting && run.status === 'running') {
+    parts.push('', t('result.nextCard', { runId }));
   } else if (run.status === 'running') {
     parts.push('', t('result.nextWait', { runId }));
   } else {

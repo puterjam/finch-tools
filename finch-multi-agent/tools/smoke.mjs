@@ -473,6 +473,46 @@ const dropped = await toolDefinition.execute(
 check('drop stops a task without replacing it', /已停止 1 个/.test(dropped.content[0].text), dropped.content[0].text.split('\n')[0]);
 check('the dropped task is cancelled, not run', /s4/.test(dropped.content[0].text) && /⊘|已停止/.test(dropped.content[0].text));
 
+// ── a worker blocked on a card only a human can answer ─────────────────────
+
+// The tool cannot answer a permission card, so this has to come back to the
+// coordinator early — and it has to say that relaying it is not the end of the
+// turn, or the whole run sits there with nobody watching it.
+turnInfo.clear();
+handoffs.length = 0;
+let cardTurn = null;
+onSend = ({ sessionId, turnId }) => {
+  cardTurn = { sessionId, turnId };
+  setTimeout(() => {
+    for (const listener of eventListeners) {
+      listener({ type: 'turn.waiting', sessionId, turnId, reason: 'permission', requestId: 'card-1', sequence: ++seq, createdAt: nowIso() });
+    }
+  }, 60);
+};
+const cardRun = await toolDefinition.execute(
+  { action: 'dispatch', goal: 'worker 要权限的演示', waitSeconds: 60, tasks: [{ id: 'writer', title: '写作 · 需要写文件', prompt: '写一句话' }] },
+  exec,
+);
+const cardText = cardRun.content.map((block) => block.text ?? '').join('\n');
+check('a worker sitting on a card comes back to the coordinator', /等你决策/.test(cardText) && /writer/.test(cardText), JSON.stringify(cardText.slice(0, 300)));
+check('...and says to keep waiting in the same turn, not hand the turn back', /接着再调一次/.test(cardText), JSON.stringify(cardText.slice(-300)));
+
+// Answering the card lets the run finish on its own.
+for (const listener of eventListeners) {
+  listener({ type: 'turn.wait_resolved', sessionId: cardTurn.sessionId, turnId: cardTurn.turnId, requestId: 'card-1', resolvedBy: 'user', sequence: ++seq, createdAt: nowIso() });
+}
+const answeredTurn = turnInfo.get(cardTurn.turnId);
+answeredTurn.finished = true;
+answeredTurn.outputText = '产出 by 写作 · 需要写文件';
+for (const listener of eventListeners) {
+  listener({ type: 'turn.completed', sessionId: cardTurn.sessionId, turnId: cardTurn.turnId, outputText: answeredTurn.outputText, messageIds: [], sequence: ++seq, createdAt: nowIso() });
+}
+const cardSettledRun = await toolDefinition.execute(
+  { action: 'wait', runId: (cardText.match(/run-[a-z0-9-]+/) ?? [])[0], waitSeconds: 10 },
+  exec,
+);
+check('answering the card lets the run continue', /全员交卷|大部分交卷/.test(cardSettledRun.content[0].text), cardSettledRun.content[0].text.split('\n').slice(0, 4).join(' | '));
+
 // ── a worker asking a peer for its output ──────────────────────────────────
 
 turnInfo.clear();
