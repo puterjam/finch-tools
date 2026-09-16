@@ -23,7 +23,15 @@ export type TaskState =
   | 'blocked'
   | 'cancelled';
 
-export const TERMINAL_TASK_STATES: readonly TaskState[] = ['completed', 'failed', 'blocked', 'cancelled'];
+/**
+ * States a task never leaves on its own.
+ *
+ * `blocked` is deliberately *not* here: it means "parked, waiting for something
+ * the coordinator can still supply" — a peer's output that has not landed, or a
+ * dependency the coordinator may yet replace. Treating it as terminal would
+ * finalise a run as failed while it is still fixable.
+ */
+export const TERMINAL_TASK_STATES: readonly TaskState[] = ['completed', 'failed', 'cancelled'];
 
 export interface RunRecord {
   runId: string;
@@ -54,6 +62,12 @@ export interface TaskRecord {
   prompt: string;
   deliverable?: string;
   dependsOn: string[];
+  /**
+   * True when the task is declared but must not start on its own — the
+   * coordinator releases it later with `start`. Lets a team be defined up front
+   * and activated as work arrives.
+   */
+  hold?: boolean;
   modelKey?: string;
   reasoningEffort?: string;
   state: TaskState;
@@ -99,15 +113,19 @@ const TASK_COLUMNS = [
   'model_key', 'reasoning_effort', 'state', 'session_id', 'turn_id',
   'collaboration_task_id', 'task_version', 'artifact_id', 'artifact_hash',
   'effective_model', 'model_note', 'queued_ms', 'wait_request_id', 'wait_kind', 'error',
-  'started_at', 'finished_at', 'created_at', 'updated_at',
+  'started_at', 'finished_at', 'created_at', 'updated_at', 'hold',
 ] as const;
 
 /** Columns added after the first release; applied to an existing database. */
-const ADDED_TASK_COLUMNS: readonly [string, string][] = [['model_note', 'TEXT']];
+const ADDED_TASK_COLUMNS: readonly [string, string][] = [
+  ['model_note', 'TEXT'],
+  ['hold', 'INTEGER NOT NULL DEFAULT 0'],
+];
 
 /** Column mapping for the camelCase patch keys accepted by `updateTask`. */
 const TASK_PATCH_COLUMNS: Record<string, string> = {
   deliverable: 'deliverable',
+  dependsOn: 'depends_on',
   modelKey: 'model_key',
   reasoningEffort: 'reasoning_effort',
   state: 'state',
@@ -125,6 +143,7 @@ const TASK_PATCH_COLUMNS: Record<string, string> = {
   error: 'error',
   startedAt: 'started_at',
   finishedAt: 'finished_at',
+  hold: 'hold',
 };
 
 const RUN_PATCH_COLUMNS: Record<string, string> = {
@@ -198,6 +217,7 @@ function rowToTask(row: Row): TaskRecord {
     prompt: String(row.prompt),
     deliverable: str(row.deliverable),
     dependsOn,
+    hold: bool(row.hold),
     modelKey: str(row.model_key),
     reasoningEffort: str(row.reasoning_effort),
     state: String(row.state) as TaskState,
@@ -412,7 +432,7 @@ export class RunStore {
       task.effectiveModel ?? null, task.modelNote ?? null, task.queuedMs ?? null,
       task.waitRequestId ?? null, task.waitKind ?? null, task.error ?? null,
       task.startedAt ?? null, task.finishedAt ?? null,
-      task.createdAt, task.updatedAt,
+      task.createdAt, task.updatedAt, task.hold ? 1 : 0,
     );
   }
 
@@ -420,7 +440,11 @@ export class RunStore {
     const entries = Object.entries(patch).filter(([key]) => key in TASK_PATCH_COLUMNS);
     if (entries.length === 0) return;
     const assignments = entries.map(([key]) => `${TASK_PATCH_COLUMNS[key]} = ?`);
-    const values = entries.map(([, value]) => (value ?? null));
+    const values = entries.map(([key, value]) => {
+      if (typeof value === 'boolean') return value ? 1 : 0;
+      if (key === 'dependsOn') return JSON.stringify(value ?? []);
+      return value ?? null;
+    });
     this.db
       .prepare(`UPDATE tasks SET ${assignments.join(', ')}, updated_at = ? WHERE run_id = ? AND task_key = ?`)
       .run(...(values as never[]), Date.now(), runId, taskKey);

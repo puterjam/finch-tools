@@ -1,6 +1,6 @@
 {
   "name": "finch-multi-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Spin up a team of sub-agents from one natural-language goal: Fan out a plan into parallel worker Sessions that share immutable Artifacts, versioned Documents and structured Handoffs.",
   "author": {
     "name": "PuterJam",

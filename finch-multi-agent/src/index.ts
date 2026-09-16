@@ -288,6 +288,18 @@ function buildWorkerPrompt(run: RunRecord, task: TaskRecord, upstream: string[])
       '- Be self-contained: the coordinator and downstream workers only receive this text.',
       '- Do not ask for confirmation on reversible steps; state any assumption you had to make.',
       '- Finish with `## Open questions` only if something genuinely blocks the deliverable.',
+      '',
+      '## If you need another worker\'s output',
+      'You cannot talk to the other workers, and you should not guess what they will say.',
+      'If you cannot finish without someone else\'s result, end this turn with a single line and nothing else:',
+      '',
+      '```',
+      `NEED: ${'<task id>'}`,
+      '```',
+      '',
+      `Use the task id shown in "Upstream tasks" or the brief (for example \`${'NEED: architect'}\`).`,
+      'The run will hold your task, get that worker\'s result, and send it to you here so you can carry on',
+      'in the same conversation — do not write the deliverable again from scratch when that happens.',
     ].join('\n'),
   );
   return sections.join('\n\n');
@@ -367,6 +379,8 @@ function stateGlyph(state: TaskRecord['state']): string {
       return '·';
     case 'cancelled':
       return '⊘';
+    case 'blocked':
+      return '⏸';
     default:
       return '✗';
   }
@@ -395,6 +409,7 @@ function formatRun(run: RunRecord, tasks: TaskRecord[], verbose = false): string
     }
     if (task.waitRequestId) detail.push(`${t('result.labelWaiting')} ${task.waitKind ?? ''}`.trim());
     if (task.modelNote) detail.push(task.modelNote);
+    if (task.hold && task.state === 'queued') detail.push(t('result.labelHeld'));
     if (task.error) detail.push(`${t('result.labelError')} ${task.error}`);
     if (verbose && task.deliverable) detail.push(`${t('result.labelDeliverable')} ${task.deliverable}`);
     if (verbose && task.artifactHash) detail.push(task.artifactHash);
@@ -431,17 +446,42 @@ function waitForRun(runId: string, timeoutMs: number): Promise<boolean> {
 }
 
 /** How a hold ended. */
-type HoldOutcome = 'settled' | 'timeout' | 'aborted';
+type HoldOutcome = 'settled' | 'timeout' | 'aborted' | 'attention';
+
+/**
+ * Tasks that cannot make progress without the coordinator: blocked on a missing
+ * or failed dependency, or sitting on an unanswered card.
+ */
+function needsCoordinator(tasks: TaskRecord[]): TaskRecord[] {
+  return tasks.filter((task) => task.state === 'blocked' || Boolean(task.waitRequestId));
+}
+
+function attentionSignature(tasks: TaskRecord[]): string {
+  return needsCoordinator(tasks)
+    .map((task) => `${task.taskKey}:${task.state}:${task.waitRequestId ?? '-'}`)
+    .sort()
+    .join('|');
+}
+
+/**
+ * Attention already reported per run, so a coordinator that chooses to keep
+ * waiting is not handed the same news in a loop.
+ */
+const reportedAttention = new Map<string, string>();
 
 /**
  * Hold a tool call open until the run settles, reporting live progress the whole
- * time. This is the whole point of `dispatch` / `wait` / `revise`: the caller
- * gets one call that watches the worker Sessions, instead of sleeping between
- * turns and asking "done yet?".
+ * time. This is the whole point of the `wait`-family actions: the caller gets one
+ * call that watches the worker Sessions, instead of sleeping between turns and
+ * asking "done yet?".
  *
- * The user interrupting the turn aborts the call — that is not a failure, it is
- * how a direction change starts. The run keeps going in the background and the
- * caller decides on the next turn whether to wait again or redirect it.
+ * It ends early for three reasons that are not "the run finished":
+ *
+ *  - `aborted`   the user interrupted the turn — usually a direction change
+ *  - `attention` a worker is stuck on something only the coordinator can fix
+ *                (a missing dependency, a failed upstream, an unanswered card),
+ *                reported once per distinct problem so it cannot spin
+ *  - `timeout`   the budget ran out; the run keeps going in the background
  */
 async function holdForRun(
   runId: string,
@@ -470,49 +510,112 @@ async function holdForRun(
     });
     if (settled) return 'settled';
     if (shuttingDown || signal?.aborted) return 'aborted';
+
+    const signature = attentionSignature(tasks);
+    if (signature && reportedAttention.get(runId) !== signature) {
+      reportedAttention.set(runId, signature);
+      return 'attention';
+    }
+
     if (remaining <= 0) return 'timeout';
   }
 }
 
 /**
- * Create every worker Session up front, while we are still inside the tool call.
+ * Turn task specs into real work: worker Session, collaboration Task, and row.
  *
- * This cannot be lazy. A Session created from an Agent tool call records the
- * caller as its parent, which is what nests the whole batch under the calling
- * conversation in its subtask list. A Session created later from the background
- * scheduler has no caller context, so it lands as an unrelated top-level
- * conversation. Creating them all here also means the user sees the full team —
- * and every task → Session link — the moment they dispatch.
+ * Sessions are always created *here*, inside the tool call. A Session created
+ * from an Agent tool call records the caller as its parent, which is what nests
+ * the whole batch under the calling conversation in its subtask list — so every
+ * worker a run ever spawns, including ones added while the run is live, stays
+ * grouped under the originating Session.
  *
- * No model is set here: the model is chosen when the turn is actually sent, so a
- * dependent worker that waits for an upstream artifact still picks up the model
- * that is current at the moment it starts.
+ * Reusing an existing task key *replaces* that task: the in-flight turn is
+ * stopped first, so a redirect costs one call instead of leaking a worker that
+ * keeps burning tokens on work nobody wants.
  *
- * The Session is created empty; its first (and only) message is sent when the
- * task's dependencies are satisfied, so a dependent worker does not burn a turn
- * sitting in the queue.
+ * No model is set on the Session: the model is chosen when the turn is sent, so
+ * a worker that waits hours for an upstream artifact still picks up the model
+ * that is current at the moment it actually starts.
  */
-async function createWorkerSessions(run: RunRecord, tasks: TaskRecord[]): Promise<void> {
-  for (const task of tasks) {
-    if (task.state === 'failed') continue;
+async function materializeTasks(run: RunRecord, specs: NormalizedTask[]): Promise<TaskRecord[]> {
+  const created: TaskRecord[] = [];
+  for (let i = 0; i < specs.length; i += 1) {
+    const spec = specs[i];
+    const previous = store.getTask(run.runId, spec.taskKey);
+
+    if (previous && !isTerminal(previous.state)) {
+      if (previous.sessionId && previous.turnId) {
+        try {
+          await host.sessions.cancelTurn(previous.sessionId, previous.turnId);
+        } catch (error) {
+          host.logger.warn('cancelTurn failed while replacing a task:', errorMessage(error));
+        }
+      }
+      await failTask({ runId: run.runId, taskKey: spec.taskKey }, t('result.replaced'), 'cancelled');
+    }
+
+    let sessionId: string | undefined;
     try {
       const descriptor = await host.sessions.create({
-        title: task.title,
+        title: spec.title,
         topic: run.topic,
         ...(run.spaceId ? { space: { spaceId: run.spaceId } } : {}),
         activity: run.background ? 'background' : 'interactive',
         permissionMode: 'acceptCalls',
       });
-      store.indexSession(descriptor.sessionId, run.runId, task.taskKey);
-      store.updateTask(run.runId, task.taskKey, { sessionId: descriptor.sessionId });
+      sessionId = descriptor.sessionId;
     } catch (error) {
-      store.updateTask(run.runId, task.taskKey, {
-        state: 'failed',
-        error: `session create failed: ${errorMessage(error)}`,
-        finishedAt: Date.now(),
-      });
+      host.logger.warn('session create failed:', errorMessage(error));
     }
+
+    let collaborationTaskId: string | undefined;
+    let taskVersion: number | undefined;
+    try {
+      const collaborationTask = await host.collaboration.tasks.create({
+        scopeId: run.scopeId,
+        title: spec.title,
+        summary: spec.deliverable ?? spec.prompt.slice(0, 200),
+        refs: {
+          taskKey: spec.taskKey,
+          dependsOn: spec.dependsOn,
+          runId: run.runId,
+          hold: Boolean(spec.hold),
+          revision: previous ? true : false,
+        },
+        idempotencyKey: `task:${run.runId}:${spec.taskKey}:${sessionId ?? `n${i}`}`,
+      });
+      collaborationTaskId = collaborationTask.taskId;
+      taskVersion = collaborationTask.version;
+    } catch (error) {
+      host.logger.warn('collaboration task create failed:', errorMessage(error));
+    }
+
+    const now = Date.now() + i;
+    const record: TaskRecord = {
+      runId: run.runId,
+      taskKey: spec.taskKey,
+      title: spec.title,
+      prompt: spec.prompt,
+      deliverable: spec.deliverable,
+      dependsOn: spec.dependsOn,
+      hold: spec.hold,
+      modelKey: spec.modelKey ?? run.modelKey,
+      reasoningEffort: spec.reasoningEffort ?? run.reasoningEffort,
+      state: sessionId ? 'queued' : 'failed',
+      sessionId,
+      collaborationTaskId,
+      taskVersion,
+      error: sessionId ? undefined : t('result.sessionGone'),
+      finishedAt: sessionId ? undefined : now,
+      createdAt: previous?.createdAt ?? now,
+      updatedAt: now,
+    };
+    store.upsertTask(record);
+    if (sessionId) store.indexSession(sessionId, run.runId, spec.taskKey);
+    created.push(record);
   }
+  return created;
 }
 
 async function startTask(
@@ -577,7 +680,11 @@ async function startTask(
 
   const upstream = await collectUpstream(allTasks, task);
   const prompt = buildWorkerPrompt(run, task, upstream.inline);
-  const body = upstream.refs.length > 0 ? `${prompt}\n\n## Upstream artifact references\n${upstream.refs.join('\n')}` : prompt;
+  const refs = upstream.refs.length > 0 ? `\n\n## Upstream artifact references\n${upstream.refs.join('\n')}` : '';
+  // A task that already had a turn is *continuing* — it asked for a peer's
+  // output and got parked. Its Session still holds the original instructions,
+  // so send only the material and let it pick up where it stopped.
+  const body = task.turnId ? `${t('worker.continue', { title: task.title })}${refs}` : `${prompt}${refs}`;
 
   const deliverTurn = (): Promise<finch.SessionSendReceipt> =>
     host.sessions.send(
@@ -916,13 +1023,16 @@ async function advanceRun(runId: string): Promise<void> {
     tasks = store.listTasks(runId);
 
     // …and anything whose dependency became viable again is let back in. This
-    // is what makes `revise` work: re-tasking a task that others depend on has
-    // to revive them, not leave them stuck behind the interrupted attempt.
+    // is what makes dynamic re-planning work: re-tasking a task that others
+    // depend on has to revive them, not leave them stuck behind the
+    // interrupted attempt. A dependency that does not exist yet keeps the task
+    // blocked — that is a worker waiting for a peer the coordinator has not
+    // created.
     for (const task of tasks) {
       if (task.state !== 'blocked' || !task.sessionId) continue;
       const viable = task.dependsOn.every((key) => {
         const dep = tasks.find((candidate) => candidate.taskKey === key);
-        if (!dep) return true;
+        if (!dep) return false;
         return dep.state === 'completed' || dep.state === 'queued' || dep.state === 'running' || dep.state === 'starting';
       });
       if (viable) {
@@ -931,12 +1041,13 @@ async function advanceRun(runId: string): Promise<void> {
     }
     tasks = store.listTasks(runId);
 
-    // 2. Start everything that is ready, within the parallelism budget.
+    // 2. Start everything that is ready, within the parallelism budget. Held
+    //    tasks are declared work waiting for the coordinator to release them.
     let running = tasks.filter((task) => task.state === 'running' || task.state === 'starting').length;
     let models: finch.ModelSummary[] | undefined;
     for (const task of tasks) {
       if (running >= run.maxParallel) break;
-      if (task.state !== 'queued') continue;
+      if (task.state !== 'queued' || task.hold) continue;
       const ready = task.dependsOn.every((key) => tasks.find((candidate) => candidate.taskKey === key)?.state === 'completed');
       if (!ready) continue;
       running += 1;
@@ -948,11 +1059,185 @@ async function advanceRun(runId: string): Promise<void> {
   });
 }
 
+/**
+ * A worker asking a peer for its output, mid-run.
+ *
+ * Workers cannot talk to each other, and should not try: the coordinator owns
+ * the graph. So a worker that cannot finish without someone else's result ends
+ * its turn with a `NEED: <task id>` line instead of guessing. The orchestrator
+ * turns that into a dependency edge, waits for the peer, and resumes the same
+ * worker Session with the peer's artifact attached — the request travels as a
+ * recorded Handoff, not as a chat message between Sessions.
+ */
+const PEER_REQUEST_PATTERN = /(?:^|\n)[ \t>*-]*(?:NEED|需要|需要上游|REQUEST)[ \t]*[:：][ \t]*(.+)/i;
+
+/** Requests per task, so a worker that keeps asking cannot loop forever. */
+const MAX_PEER_REQUESTS = 4;
+const peerRequestCounts = new Map<string, number>();
+
+function parsePeerRequest(output: string): { key: string; note: string } | undefined {
+  const match = output.match(PEER_REQUEST_PATTERN);
+  if (!match) return undefined;
+  const rest = match[1].trim();
+  const token = rest.split(/[\s,，。:：;；—–-]+/)[0] ?? '';
+  const key = token.replace(/[`"'*[\]「」<>]/g, '').trim();
+  if (!key) return undefined;
+  return { key, note: rest };
+}
+
+/** Find the task a worker meant, by id first and by title second. */
+function findPeerTask(tasks: TaskRecord[], wanted: string): TaskRecord | undefined {
+  const needle = wanted.toLowerCase();
+  return (
+    tasks.find((task) => task.taskKey.toLowerCase() === needle) ??
+    tasks.find((task) => task.title.toLowerCase().includes(needle)) ??
+    tasks.find((task) => task.taskKey.toLowerCase().includes(needle))
+  );
+}
+
+/**
+ * Attach an upstream artifact to an already-running worker and let it continue.
+ * Used both for a peer request that can be answered now and for one that had to
+ * wait for the peer to finish.
+ */
+async function resumeTaskWithPeer(
+  run: RunRecord,
+  task: TaskRecord,
+  peer: TaskRecord,
+): Promise<boolean> {
+  const sessionId = task.sessionId;
+  if (!sessionId) {
+    await failTask({ runId: run.runId, taskKey: task.taskKey }, t('result.sessionGone'), 'failed');
+    return false;
+  }
+
+  const body = await artifactText(peer.artifactId ?? '');
+  const bounded = truncate(body, UPSTREAM_ATTACHMENT_MAX_CHARS);
+  const text = t('worker.resume', { peer: peer.taskKey, title: task.title });
+
+  let receipt: finch.SessionSendReceipt;
+  try {
+    receipt = await host.sessions.send(
+      sessionId,
+      {
+        text,
+        attachments: [
+          {
+            name: `upstream-${peer.taskKey}.md`,
+            mimeType: 'text/markdown',
+            kind: 'text',
+            data: Buffer.from(bounded, 'utf8').toString('base64'),
+          },
+        ],
+        // Same stable key as the original request, so a retry cannot double-send.
+        idempotencyKey: `resume:${run.runId}:${task.taskKey}:${peer.taskKey}`,
+      },
+      { delivery: 'queue' },
+    );
+  } catch (error) {
+    host.logger.warn('resume send failed:', errorMessage(error));
+    return false;
+  }
+
+  if (receipt.state === 'rejected') {
+    host.logger.warn('resume rejected: queue full');
+    return false;
+  }
+
+  store.updateTask(run.runId, task.taskKey, {
+    state: 'running',
+    turnId: receipt.turnId,
+    error: undefined,
+    finishedAt: undefined,
+  });
+
+  if (peer.sessionId) {
+    try {
+      const handoff = await host.collaboration.handoffs.create({
+        scopeId: run.scopeId,
+        from: { sessionId: peer.sessionId, turnId: peer.turnId },
+        to: { sessionId },
+        summary: t('handoff.peerRequest', { from: peer.taskKey, to: task.taskKey }),
+        artifactIds: peer.artifactId ? [peer.artifactId] : [],
+        data: { fromTask: peer.taskKey, toTask: task.taskKey, reason: 'requested' },
+        idempotencyKey: `handoff:${run.runId}:${peer.taskKey}:${task.taskKey}:requested`,
+      });
+      store.insertHandoff({
+        handoffId: handoff.handoffId,
+        runId: run.runId,
+        fromTask: peer.taskKey,
+        toTask: task.taskKey,
+        artifactId: peer.artifactId,
+        summary: handoff.summary,
+        state: handoff.state,
+        createdAt: Date.now(),
+      });
+    } catch (error) {
+      host.logger.warn('handoff create failed:', errorMessage(error));
+    }
+  }
+  return true;
+}
+
+/**
+ * A worker ended its turn asking for a peer's output. Either hand it over right
+ * away, or park the task until the peer produces it — keeping the task alive
+ * instead of failing a run just because someone asked a question.
+ */
+async function handlePeerRequest(
+  index: { runId: string; taskKey: string },
+  task: TaskRecord,
+  run: RunRecord,
+  request: { key: string; note: string },
+  turnId: string,
+): Promise<void> {
+  const counterKey = `${run.runId}:${task.taskKey}`;
+  const count = (peerRequestCounts.get(counterKey) ?? 0) + 1;
+  peerRequestCounts.set(counterKey, count);
+
+  if (count > MAX_PEER_REQUESTS) {
+    await failTask(
+      index,
+      t('result.tooManyRequests', { max: MAX_PEER_REQUESTS, peer: request.key }),
+      'failed',
+    );
+    return;
+  }
+
+  const tasks = store.listTasks(run.runId);
+  const peer = findPeerTask(tasks, request.key);
+  const dependsOn = peer && !task.dependsOn.includes(peer.taskKey)
+    ? [...task.dependsOn, peer.taskKey]
+    : peer
+      ? task.dependsOn
+      : [...task.dependsOn, request.key];
+
+  store.updateTask(run.runId, task.taskKey, { turnId, dependsOn });
+
+  if (peer?.state === 'completed' && peer.artifactId) {
+    // Already available — close the loop in this turn.
+    const resumed = await resumeTaskWithPeer(run, { ...task, dependsOn }, peer);
+    if (resumed) return;
+  }
+
+  store.updateTask(run.runId, task.taskKey, {
+    state: 'blocked',
+    error: t('result.awaitingPeer', { peer: peer ? peer.taskKey : request.key }),
+    finishedAt: Date.now(),
+  });
+}
+
 async function completeTask(index: { runId: string; taskKey: string }, outputText: string, turnId: string): Promise<void> {
   const task = store.getTask(index.runId, index.taskKey);
   if (!task || isTerminal(task.state)) return;
   const run = store.getRun(index.runId);
   if (!run) return;
+
+  const request = parsePeerRequest(outputText);
+  if (request) {
+    await handlePeerRequest(index, task, run, request, turnId);
+    return;
+  }
 
   const deliverable = truncate(outputText.trim() || t('result.emptyOutput'), 200_000);
   let artifactId: string | undefined;
@@ -1181,6 +1466,7 @@ interface RawTaskInput {
   dependsOn?: unknown;
   model?: unknown;
   reasoningEffort?: unknown;
+  hold?: unknown;
 }
 
 interface NormalizedTask {
@@ -1191,6 +1477,8 @@ interface NormalizedTask {
   dependsOn: string[];
   modelKey?: string;
   reasoningEffort?: string;
+  /** Declared but not started until the coordinator says so. */
+  hold?: boolean;
 }
 
 function normalizeTasks(raw: unknown, knownKeys?: Set<string>): { tasks: NormalizedTask[]; error?: string } {
@@ -1221,6 +1509,7 @@ function normalizeTasks(raw: unknown, knownKeys?: Set<string>): { tasks: Normali
       dependsOn,
       modelKey: entry.model ? String(entry.model) : undefined,
       reasoningEffort: entry.reasoningEffort ? String(entry.reasoningEffort) : undefined,
+      hold: entry.hold === true ? true : undefined,
     });
   }
 
@@ -1329,39 +1618,6 @@ async function actionDispatch(
     return textResult(t('result.scopeFailed', { error: errorMessage(error) }), true);
   }
 
-  const createdTasks: TaskRecord[] = [];
-  const base = Date.now();
-  for (let i = 0; i < parsed.tasks.length; i += 1) {
-    const spec = parsed.tasks[i];
-    const record: TaskRecord = {
-      runId,
-      taskKey: spec.taskKey,
-      title: spec.title,
-      prompt: spec.prompt,
-      deliverable: spec.deliverable,
-      dependsOn: spec.dependsOn,
-      modelKey: spec.modelKey ?? runModel?.modelKey,
-      reasoningEffort: spec.reasoningEffort ?? runModel?.reasoningEffort,
-      state: 'queued',
-      createdAt: base + i,
-      updatedAt: base + i,
-    };
-    try {
-      const collaborationTask = await host.collaboration.tasks.create({
-        scopeId: scope.scopeId,
-        title: spec.title,
-        summary: spec.deliverable ?? spec.prompt.slice(0, 200),
-        refs: { taskKey: spec.taskKey, dependsOn: spec.dependsOn, runId },
-        idempotencyKey: `task:${runId}:${spec.taskKey}`,
-      });
-      record.collaborationTaskId = collaborationTask.taskId;
-      record.taskVersion = collaborationTask.version;
-    } catch (error) {
-      host.logger.warn('collaboration task create failed:', errorMessage(error));
-    }
-    createdTasks.push(record);
-  }
-
   const run: RunRecord = {
     runId,
     goal,
@@ -1375,17 +1631,16 @@ async function actionDispatch(
     reasoningEffort: runModel?.reasoningEffort,
     maxParallel,
     background,
-    createdAt: base,
-    updatedAt: base,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
   };
   store.insertRun(run);
-  for (const task of createdTasks) store.upsertTask(task);
   store.pruneRuns();
 
   // Every worker Session is created here, inside the tool call, so the whole
   // batch nests under this conversation instead of scattering across the
   // session list.
-  await createWorkerSessions(run, createdTasks);
+  const createdTasks = await materializeTasks(run, parsed.tasks);
 
   await host.artifacts
     .publish({
@@ -1404,8 +1659,9 @@ async function actionDispatch(
             title: task.title,
             deliverable: task.deliverable ?? null,
             dependsOn: task.dependsOn,
+            hold: Boolean(task.hold),
             modelKey: task.modelKey ?? null,
-            sessionId: store.getTask(runId, task.taskKey)?.sessionId ?? null,
+            sessionId: task.sessionId ?? null,
           })),
         }),
       },
@@ -1420,29 +1676,10 @@ async function actionDispatch(
   // The whole wait lives here, in one tool call: the mini tool watches its own
   // worker Sessions and reports progress, so the caller never has to sleep and
   // poll. Long fan-outs keep running in the background and are picked up by
-  // action=status / action=wait / action=collect.
-  const startedAt = Date.now();
-  const outcome = await holdForRun(runId, waitSeconds, exec.progress, exec.signal);
-
-  const finalRun = store.getRun(runId) as RunRecord;
-  const tasks = store.listTasks(runId);
-
-  const header =
-    outcome === 'aborted'
-      ? t('result.waitAborted', { runId: runId })
-      : t(`result.dispatched.${finalRun.status}`, {
-          runId: runId,
-          seconds: Math.round((Date.now() - startedAt) / 1000),
-        });
-  const bodyParts = [header, '', formatRun(finalRun, tasks)];
-  if (finalRun.status === 'running') {
-    // Do not hand the batch back to the user: tell the caller to keep waiting.
-    bodyParts.push('', t('result.nextWait', { runId }));
-  } else {
-    bodyParts.push('', t('result.nextCollect', { runId }));
-  }
-  if (!runModel) bodyParts.push('', t('result.usingDefaultModel'));
-  return textResult(bodyParts.join('\n'));
+  // action=wait / status / collect.
+  return holdAndReport(runId, waitSeconds, exec, {
+    trail: runModel ? [] : [t('result.usingDefaultModel')],
+  });
 }
 
 function resolveRun(input: Record<string, unknown>, exec: finch.ToolExecutionContext): RunRecord | undefined {
@@ -1451,154 +1688,6 @@ function resolveRun(input: Record<string, unknown>, exec: finch.ToolExecutionCon
   return store.listRuns(5, exec.sessionId)[0] ?? store.listRuns(1)[0];
 }
 
-/**
- * Change course mid-run, without starting over.
- *
- * The user's mental model is two steps — ask, then get the answer. When they
- * interrupt with a new direction, the middle has to bend: stop the subtasks that
- * are now wrong and put the replacement work into the *same* run, so the
- * untouched workers keep going and anything waiting on the redirected task picks
- * up the new result instead of being stuck behind a cancelled one.
- */
-async function actionRevise(input: Record<string, unknown>, exec: finch.ToolExecutionContext): Promise<finch.ToolResult> {
-  const guard = requireCapabilities();
-  if (guard) return textResult(guard, true);
-
-  const run = resolveRun(input, exec);
-  if (!run) return textResult(t('result.noRun'), true);
-  if (run.status !== 'running') {
-    return textResult(t('result.reviseNotRunning', { runId: run.runId }), true);
-  }
-
-  const cancels = Array.isArray(input.cancel) ? input.cancel.map((key) => String(key)) : [];
-  const existing = store.listTasks(run.runId);
-  const knownKeys = new Set(existing.map((task) => task.taskKey));
-  const parsed = input.tasks === undefined ? { tasks: [] } : normalizeTasks(input.tasks, knownKeys);
-  if (parsed.error) return textResult(parsed.error, true);
-  if (cancels.length === 0 && parsed.tasks.length === 0) {
-    return textResult(t('result.reviseNoop'), true);
-  }
-
-  exec.progress.report({ stage: 'revising', message: rotatingProgress('progress.revise') });
-
-  // 1. Stop the subtasks the user redirected away from.
-  let cancelled = 0;
-  for (const taskKey of cancels) {
-    const task = store.getTask(run.runId, taskKey);
-    if (!task || isTerminal(task.state)) continue;
-    if (task.sessionId && task.turnId) {
-      try {
-        await host.sessions.cancelTurn(task.sessionId, task.turnId);
-      } catch (error) {
-        host.logger.warn('cancelTurn failed:', errorMessage(error));
-      }
-    }
-    await withRunLock(run.runId, () => failTask({ runId: run.runId, taskKey }, t('result.revised'), 'cancelled'));
-    cancelled += 1;
-  }
-
-  // 2. Put the replacement work into the same run and scope. A new task key
-  //    appends; an existing key overwrites in place, so dependents keep working.
-  const models = await loadModels();
-  const existingTaskCount = store.listTasks(run.runId).length;
-  let added = 0;
-  for (let i = 0; i < parsed.tasks.length; i += 1) {
-    const spec = parsed.tasks[i];
-    if (cancels.includes(spec.taskKey)) {
-      // Re-tasking the same key: whatever the cancel pass left behind is about
-      // to be replaced by a fresh row and a fresh worker Session.
-      store.updateTask(run.runId, spec.taskKey, { state: 'cancelled', error: undefined, finishedAt: undefined });
-    }
-
-    let sessionId: string | undefined;
-    try {
-      // Created here, inside the tool call, so Finch still records the caller as
-      // its parent — exactly like the first wave.
-      const descriptor = await host.sessions.create({
-        title: spec.title,
-        topic: run.topic,
-        ...(run.spaceId ? { space: { spaceId: run.spaceId } } : {}),
-        activity: run.background ? 'background' : 'interactive',
-        permissionMode: 'acceptCalls',
-      });
-      sessionId = descriptor.sessionId;
-    } catch (error) {
-      host.logger.warn('session create failed for a revised task:', errorMessage(error));
-    }
-
-    let collaborationTaskId: string | undefined;
-    let taskVersion: number | undefined;
-    try {
-      const collaborationTask = await host.collaboration.tasks.create({
-        scopeId: run.scopeId,
-        title: spec.title,
-        summary: spec.deliverable ?? spec.prompt.slice(0, 200),
-        refs: { taskKey: spec.taskKey, dependsOn: spec.dependsOn, runId: run.runId, revision: true },
-        idempotencyKey: `task:${run.runId}:${spec.taskKey}:${sessionId ?? existingTaskCount + i}`,
-      });
-      collaborationTaskId = collaborationTask.taskId;
-      taskVersion = collaborationTask.version;
-    } catch (error) {
-      host.logger.warn('collaboration task create failed:', errorMessage(error));
-    }
-
-    const now = Date.now() + i;
-    store.upsertTask({
-      runId: run.runId,
-      taskKey: spec.taskKey,
-      title: spec.title,
-      prompt: spec.prompt,
-      deliverable: spec.deliverable,
-      dependsOn: spec.dependsOn,
-      modelKey: spec.modelKey ?? run.modelKey,
-      reasoningEffort: spec.reasoningEffort ?? run.reasoningEffort,
-      state: sessionId ? 'queued' : 'failed',
-      sessionId,
-      collaborationTaskId,
-      taskVersion,
-      error: sessionId ? undefined : t('result.sessionGone'),
-      finishedAt: sessionId ? undefined : now,
-      createdAt: store.getTask(run.runId, spec.taskKey)?.createdAt ?? now,
-      updatedAt: now,
-    });
-    if (sessionId) store.indexSession(sessionId, run.runId, spec.taskKey);
-    added += 1;
-  }
-
-  exec.progress.report({
-    stage: 'revising',
-    message: t('result.reviseApplied', { cancelled, added }),
-  });
-
-  scheduleAdvance(run.runId);
-
-  const waitSeconds = clampWaitSeconds(input.waitSeconds);
-  const startedAt = Date.now();
-  const outcome = await holdForRun(run.runId, waitSeconds, exec.progress, exec.signal);
-  const fresh = store.getRun(run.runId) as RunRecord;
-  const tasks = store.listTasks(run.runId);
-
-  const header =
-    outcome === 'aborted'
-      ? t('result.waitAborted', { runId: run.runId })
-      : outcome === 'settled'
-        ? t(`result.dispatched.${fresh.status}`, { runId: run.runId, seconds: Math.round((Date.now() - startedAt) / 1000) })
-        : t('result.waitStillRunning', { runId: run.runId, seconds: waitSeconds });
-
-  const parts = [
-    t('result.reviseDone', { cancelled, added }),
-    '',
-    header,
-    '',
-    formatRun(fresh, tasks),
-  ];
-  if (fresh.status === 'running') {
-    parts.push('', t('result.nextWait', { runId: run.runId }));
-  } else {
-    parts.push('', t('result.nextCollect', { runId: run.runId }));
-  }
-  return textResult(parts.join('\n'));
-}
 
 /**
  * List the models this user actually has enabled.
@@ -1642,6 +1731,134 @@ async function actionModels(): Promise<finch.ToolResult> {
 }
 
 /**
+ * Run the hold and render the result block every waiting action shares:
+ * anything the caller needs to know up front, how the wait ended, the board,
+ * anything stuck on the coordinator, and the suggested next move.
+ */
+async function holdAndReport(
+  runId: string,
+  waitSeconds: number,
+  exec: finch.ToolExecutionContext,
+  { lead = [], trail = [] }: { lead?: string[]; trail?: string[] } = {},
+): Promise<finch.ToolResult> {
+  const startedAt = Date.now();
+  const outcome = await holdForRun(runId, waitSeconds, exec.progress, exec.signal);
+  const run = store.getRun(runId) as RunRecord;
+  const tasks = store.listTasks(runId);
+
+  const header =
+    outcome === 'aborted'
+      ? t('result.waitAborted', { runId })
+      : outcome === 'attention'
+        ? t('result.needsAttention', { runId })
+        : outcome === 'settled'
+          ? t(`result.dispatched.${run.status}`, { runId, seconds: Math.round((Date.now() - startedAt) / 1000) })
+          : t('result.waitStillRunning', { runId, seconds: waitSeconds });
+
+  const parts = [...lead, ...(lead.length > 0 ? [''] : []), header, '', formatRun(run, tasks), ...trail];
+
+  const stuck = needsCoordinator(tasks);
+  if (stuck.length > 0) {
+    parts.push('', t('result.attentionDetail'));
+    for (const task of stuck) {
+      const why = task.error ?? `${t('result.labelWaiting')} ${task.waitKind ?? ''}`.trim();
+      parts.push(`- ${task.taskKey} ${task.title} — ${why}`);
+    }
+  }
+
+  parts.push('', run.status === 'running' ? t('result.nextWait', { runId }) : t('result.nextCollect', { runId }));
+  return textResult(parts.join('\n'));
+}
+
+/**
+ * Add work to a live run — the "keep planning while it runs" move.
+ *
+ * A run does not have to be fully planned up front. When the first batch lands
+ * and the next step only becomes clear then, this appends it. Reusing an
+ * existing task id replaces that task in place, which is also how a redirect
+ * works: dependents keep their edges and simply consume the new result.
+ */
+async function actionAdd(input: Record<string, unknown>, exec: finch.ToolExecutionContext): Promise<finch.ToolResult> {
+  const guard = requireCapabilities();
+  if (guard) return textResult(guard, true);
+
+  const run = resolveRun(input, exec);
+  if (!run) return textResult(t('result.noRun'), true);
+  if (run.status !== 'running') return textResult(t('result.runNotLive', { runId: run.runId }), true);
+
+  const knownKeys = new Set(store.listTasks(run.runId).map((task) => task.taskKey));
+  const parsed = normalizeTasks(input.tasks, knownKeys);
+  if (parsed.error) return textResult(parsed.error, true);
+
+  exec.progress.report({ stage: 'adding', message: rotatingProgress('progress.add') });
+  const created = await materializeTasks(run, parsed.tasks);
+  scheduleAdvance(run.runId);
+
+  return holdAndReport(run.runId, clampWaitSeconds(input.waitSeconds), exec, {
+    lead: [t('result.addedTasks', { count: created.length })],
+  });
+}
+
+/** Stop subtasks without replacing them. */
+async function actionDrop(input: Record<string, unknown>, exec: finch.ToolExecutionContext): Promise<finch.ToolResult> {
+  const guard = requireCapabilities();
+  if (guard) return textResult(guard, true);
+
+  const run = resolveRun(input, exec);
+  if (!run) return textResult(t('result.noRun'), true);
+  if (run.status !== 'running') return textResult(t('result.runNotLive', { runId: run.runId }), true);
+
+  const taskKeys = Array.isArray(input.taskIds) ? input.taskIds.map((key) => String(key)) : [];
+  if (taskKeys.length === 0) return textResult(t('result.dropNoop'), true);
+
+  let dropped = 0;
+  for (const taskKey of taskKeys) {
+    const task = store.getTask(run.runId, taskKey);
+    if (!task || isTerminal(task.state)) continue;
+    if (task.sessionId && task.turnId) {
+      try {
+        await host.sessions.cancelTurn(task.sessionId, task.turnId);
+      } catch (error) {
+        host.logger.warn('cancelTurn failed:', errorMessage(error));
+      }
+    }
+    await withRunLock(run.runId, () => failTask({ runId: run.runId, taskKey }, t('result.dropped'), 'cancelled'));
+    dropped += 1;
+  }
+
+  scheduleAdvance(run.runId);
+  return holdAndReport(run.runId, clampWaitSeconds(input.waitSeconds), exec, {
+    lead: [t('result.droppedTasks', { count: dropped })],
+  });
+}
+
+/** Release held tasks so they start. */
+async function actionStart(input: Record<string, unknown>, exec: finch.ToolExecutionContext): Promise<finch.ToolResult> {
+  const guard = requireCapabilities();
+  if (guard) return textResult(guard, true);
+
+  const run = resolveRun(input, exec);
+  if (!run) return textResult(t('result.noRun'), true);
+  if (run.status !== 'running') return textResult(t('result.runNotLive', { runId: run.runId }), true);
+
+  const taskKeys = Array.isArray(input.taskIds) ? input.taskIds.map((key) => String(key)) : [];
+  if (taskKeys.length === 0) return textResult(t('result.startNoop'), true);
+
+  let started = 0;
+  for (const taskKey of taskKeys) {
+    const task = store.getTask(run.runId, taskKey);
+    if (!task || isTerminal(task.state) || !task.hold) continue;
+    store.updateTask(run.runId, taskKey, { hold: false });
+    started += 1;
+  }
+
+  scheduleAdvance(run.runId);
+  return holdAndReport(run.runId, clampWaitSeconds(input.waitSeconds), exec, {
+    lead: [t('result.startedTasks', { count: started })],
+  });
+}
+
+/**
  * Hold the line on an existing run. This is what a caller uses when a batch
  * outlives a single `dispatch` call: it keeps the tool card alive and streaming
  * progress instead of making the user come back and ask again.
@@ -1657,19 +1874,7 @@ async function actionWait(input: Record<string, unknown>, exec: finch.ToolExecut
     );
   }
 
-  const outcome = await holdForRun(run.runId, waitSeconds, exec.progress, exec.signal);
-  const fresh = store.getRun(run.runId) as RunRecord;
-  const tasks = store.listTasks(run.runId);
-  const header =
-    outcome === 'aborted'
-      ? t('result.waitAborted', { runId: run.runId })
-      : outcome === 'settled'
-        ? t(`result.dispatched.${fresh.status}`, { runId: run.runId, seconds: Math.round(waitSeconds) })
-        : t('result.waitStillRunning', { runId: run.runId, seconds: waitSeconds });
-
-  const parts = [header, '', formatRun(fresh, tasks)];
-  parts.push('', fresh.status === 'running' ? t('result.nextWait', { runId: run.runId }) : t('result.nextCollect', { runId: run.runId }));
-  return textResult(parts.join('\n'));
+  return holdAndReport(run.runId, waitSeconds, exec);
 }
 
 async function actionStatus(input: Record<string, unknown>, exec: finch.ToolExecutionContext): Promise<finch.ToolResult> {
@@ -1795,7 +2000,7 @@ export function activate(ctx: finch.MiniToolContext): void {
         properties: {
           action: {
             type: 'string',
-            enum: ['dispatch', 'wait', 'revise', 'status', 'collect', 'cancel', 'list', 'models'],
+            enum: ['dispatch', 'wait', 'add', 'drop', 'start', 'status', 'collect', 'cancel', 'list', 'models'],
             description: 'Operation to perform.',
           },
           goal: { type: 'string', description: 'dispatch: the overall objective shared by every worker.' },
@@ -1821,6 +2026,11 @@ export function activate(ctx: finch.MiniToolContext): void {
                 dependsOn: { type: 'array', items: { type: 'string' }, description: 'Task ids this task consumes (DAG only).' },
                 model: { type: 'string', description: `Per-task model. Pass a \`provider:model\` key from action=models when the user asked for a specific one. Omit for the run/app default.` },
                 reasoningEffort: { type: 'string', enum: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
+                hold: {
+                  type: 'boolean',
+                  description:
+                    'Create this task (and its Session) but do not start it until action=start. Use it for roles that wait to be activated.',
+                },
               },
               required: ['title', 'prompt'],
             },
@@ -1835,13 +2045,13 @@ export function activate(ctx: finch.MiniToolContext): void {
               'false (default): worker Sessions are normal visible Sessions. true: keep them quiet — hidden from the session list, no notifications, only surfaced while waiting for approval.',
           },
           space: { type: 'string', description: 'Space id or name for the worker Sessions. Defaults to the calling Space.' },
-          runId: { type: 'string', description: 'wait / revise / status / collect / cancel: target run. Defaults to the newest run of this session.' },
+          runId: { type: 'string', description: 'wait / add / drop / start / status / collect / cancel: target run. Defaults to the newest run of this session.' },
           taskId: { type: 'string', description: 'collect / cancel: restrict to one task id.' },
-          cancel: {
+          taskIds: {
             type: 'array',
             items: { type: 'string' },
             description:
-              'revise: task ids to stop (their worker turns are cancelled). Pair with a replacement task of the same id, or just drop the work.',
+              'drop / start: the task ids to act on. drop stops them; start releases tasks that were created with hold.',
           },
           limit: { type: 'number', description: 'list: how many recent runs to show (default 10).' },
         },
@@ -1854,8 +2064,12 @@ export function activate(ctx: finch.MiniToolContext): void {
             return actionDispatch(args, exec);
           case 'wait':
             return actionWait(args, exec);
-          case 'revise':
-            return actionRevise(args, exec);
+          case 'add':
+            return actionAdd(args, exec);
+          case 'drop':
+            return actionDrop(args, exec);
+          case 'start':
+            return actionStart(args, exec);
           case 'status':
             return actionStatus(args, exec);
           case 'collect':

@@ -259,6 +259,7 @@ check('the tool registers', toolDefinition?.name === 'multi_agent_run', `got ${t
 onSend = ({ sessionId, turnId }) => {
   setTimeout(() => {
     const record = turnInfo.get(turnId);
+    if (!record) return; // a stale timer from an earlier scenario
     record.finished = true;
     record.outputText = `产出 by ${sessionId}`;
     for (const listener of eventListeners) {
@@ -344,6 +345,7 @@ onSend = ({ sessionId, turnId }) => {
   if (process.env.MA_DEBUG) console.log(`    [send] ${sessionId} slow=${isSlow} title=${title}`);
   setTimeout(() => {
     const record = turnInfo.get(turnId);
+    if (!record) return; // a stale timer from an earlier scenario
     record.finished = true;
     record.outputText = `产出 by ${sessionId}`;
     for (const listener of eventListeners) {
@@ -374,17 +376,17 @@ if (process.env.MA_DEBUG) {
 
 const redirected = await toolDefinition.execute(
   {
-    action: 'revise',
+    action: 'add',
     runId: slowRunId,
-    cancel: ['r1'],
     waitSeconds: 1,
+    // Reusing the id replaces r1: the old turn is stopped, dependents keep the edge.
     tasks: [{ id: 'r1', title: '调研 · 改后的方向', prompt: '换个方向写一句话', deliverable: '一句话' }],
   },
   exec,
 );
 const redirectText = redirected.content.map((block) => block.text ?? '').join('\n');
-check('revise reports what it stopped and queued', /中断 1 个/.test(redirectText) && /新排入 1 个/.test(redirectText), JSON.stringify(redirectText.slice(0, 400)));
-check('revise created a fresh worker session', sessions.length === sessionsBefore + 3, `${sessions.length - sessionsBefore} new sessions`);
+check('add reports what it queued', /已排入 1 个/.test(redirectText), JSON.stringify(redirectText.slice(0, 400)));
+check('replacing a task creates a fresh worker session', sessions.length === sessionsBefore + 3, `${sessions.length - sessionsBefore} new sessions`);
 check('the replacement keeps the caller as parent', sessions.at(-1).descriptor.parentSessionId === callerSessionId);
 
 const revisionTurn = [...turnInfo.entries()].map(([, record]) => record).find((record) => record.message.text.includes('换个方向'));
@@ -393,6 +395,145 @@ check('the replacement worker got the new direction', Boolean(revisionTurn));
 const r2Turn = [...turnInfo.entries()].map(([, record]) => record).find((record) => record.message.text.includes('合并上游材料'));
 check('the dependent task was revived, not left blocked', Boolean(r2Turn));
 check('the dependent picked up the replacement artifact', r2Turn?.message.attachments?.length === 1 && r2Turn.message.attachments[0].name === 'upstream-r1.md', JSON.stringify(r2Turn?.message.attachments?.map((a) => a.name)));
+
+// ── progressive planning: add after the first batch, and held roles ─────────
+
+turnInfo.clear();
+onSend = ({ turnId }) => {
+  setTimeout(() => {
+    const record = turnInfo.get(turnId);
+    if (!record) return; // a stale timer from an earlier scenario
+    record.finished = true;
+    record.outputText = 'ok';
+    for (const listener of eventListeners) {
+      listener({ type: 'turn.completed', sessionId: record.sessionId, turnId, outputText: record.outputText, messageIds: [], sequence: ++seq, createdAt: nowIso() });
+    }
+  }, 50);
+};
+
+const stepOne = await toolDefinition.execute(
+  {
+    action: 'dispatch',
+    goal: '先做第一步，再看要不要第二步',
+    waitSeconds: 5,
+    tasks: [
+      { id: 's1', title: '调研 · 第一步', prompt: '写一句话' },
+      { id: 's2', title: '验收 · 待命', prompt: '等指令', hold: true },
+      { id: 's4', title: '复盘 · 待命', prompt: '等指令', hold: true },
+    ],
+  },
+  exec,
+);
+const stepOneText = stepOne.content[0].text;
+check('a held task is created but not run', /待启动/.test(stepOneText), stepOneText.split('\n').slice(0, 10).join(' | '));
+check('the held worker was never sent a turn', ![...turnInfo.values()].some((record) => record.message.text.includes('等指令')));
+
+const stepTwo = await toolDefinition.execute(
+  {
+    action: 'add',
+    runId: (stepOneText.match(/run-[a-z0-9-]+/) ?? [])[0],
+    waitSeconds: 5,
+    tasks: [{ id: 's3', title: '统稿 · 第二步', prompt: '写一句话', dependsOn: ['s1'] }],
+  },
+  exec,
+);
+check('add queues work into the same run', /已排入 1 个/.test(stepTwo.content[0].text) && stepTwo.content[0].text.includes('s3'));
+check('the newly added task actually ran', [...turnInfo.values()].some((record) => record.message.text.includes('## Your subtask (s3)')));
+
+const released = await toolDefinition.execute(
+  { action: 'start', runId: (stepOneText.match(/run-[a-z0-9-]+/) ?? [])[0], taskIds: ['s2'], waitSeconds: 5 },
+  exec,
+);
+check('start releases a held task', /已启动 1 个/.test(released.content[0].text));
+check('the released task ran', [...turnInfo.values()].some((record) => record.message.text.includes('## Your subtask (s2)')));
+
+const dropped = await toolDefinition.execute(
+  { action: 'drop', runId: (stepOneText.match(/run-[a-z0-9-]+/) ?? [])[0], taskIds: ['s4'], waitSeconds: 2 },
+  exec,
+);
+check('drop stops a task without replacing it', /已停止 1 个/.test(dropped.content[0].text), dropped.content[0].text.split('\n')[0]);
+check('the dropped task is cancelled, not run', /s4/.test(dropped.content[0].text) && /⊘|已停止/.test(dropped.content[0].text));
+
+// ── a worker asking a peer for its output ──────────────────────────────────
+
+turnInfo.clear();
+handoffs.length = 0;
+// The architect is quick, so the QA worker's request can be answered straight away.
+onSend = ({ sessionId, turnId, message }) => {
+  const title = sessions.find((entry) => entry.descriptor.sessionId === sessionId)?.options.title ?? '';
+  const firstTurn = !message.text.includes('的产出见附件');
+  const asking = title.includes('测试') && firstTurn;
+  if (process.env.MA_DEBUG) console.log(`    [send] ${title} first=${firstTurn} asking=${asking}`);
+  setTimeout(() => {
+    const record = turnInfo.get(turnId);
+    if (!record) return; // a stale timer from an earlier scenario
+    record.finished = true;
+    // QA asks for the architect's output instead of guessing it.
+    record.outputText = asking ? '我需要接口定义才能验收。\n\nNEED: architect' : `产出 by ${title}`;
+    for (const listener of eventListeners) {
+      listener({ type: 'turn.completed', sessionId, turnId, outputText: record.outputText, messageIds: [], sequence: ++seq, createdAt: nowIso() });
+    }
+  }, 150);
+};
+
+const teamRun = await toolDefinition.execute(
+  {
+    action: 'dispatch',
+    goal: '架构 / 测试 的分工',
+    maxParallel: 3,
+    waitSeconds: 5,
+    tasks: [
+      { id: 'architect', title: '架构师 · 定接口', prompt: '给出接口定义' },
+      { id: 'qa', title: '测试 · 验收接口', prompt: '验收接口' },
+    ],
+  },
+  exec,
+);
+const teamText = teamRun.content.map((block) => block.text ?? '').join('\n');
+check('the run finishes after the peer request is served', /全员交卷|大部分交卷/.test(teamText), teamText.split('\n').slice(0, 4).join(' | '));
+const resumeTurn = [...turnInfo.values()].find((record) => record.message.text.includes('的产出见附件'));
+check('the asking worker was resumed with the peer artifact', Boolean(resumeTurn) && resumeTurn.message.attachments?.[0]?.name === 'upstream-architect.md', JSON.stringify(resumeTurn?.message.attachments?.map((a) => a.name)));
+check('the request was recorded as a handoff, not a chat message', handoffs.some((entry) => entry.summary?.includes('architect') && entry.summary?.includes('qa')), JSON.stringify(handoffs.map((h) => h.summary)));
+
+// A request for a task nobody created has to reach the coordinator, not hang.
+turnInfo.clear();
+handoffs.length = 0;
+onSend = ({ sessionId, turnId, message }) => {
+  const title = sessions.find((entry) => entry.descriptor.sessionId === sessionId)?.options.title ?? '';
+  // Only the frontend worker waits on the designer; the designer itself just works.
+  const asking = title.includes('前端') && !message.text.includes('上游材料已经补上');
+  setTimeout(() => {
+    const record = turnInfo.get(turnId);
+    if (!record) return; // a stale timer from an earlier scenario
+    record.finished = true;
+    record.outputText = asking ? '需要设计稿。\n\nNEED: designer' : `产出 by ${sessionId}`;
+    for (const listener of eventListeners) {
+      listener({ type: 'turn.completed', sessionId, turnId, outputText: record.outputText, messageIds: [], sequence: ++seq, createdAt: nowIso() });
+    }
+  }, 100);
+};
+const stuckRun = await toolDefinition.execute(
+  { action: 'dispatch', goal: '索要一个还没创建的角色', waitSeconds: 5, tasks: [{ id: 'fe', title: '前端 · 依设计稿实现', prompt: '写一句话' }] },
+  exec,
+);
+const stuckText = stuckRun.content.map((block) => block.text ?? '').join('\n');
+check('an unresolvable request is surfaced instead of hanging', /卡住/.test(stuckText) && /designer/.test(stuckText), stuckText.split('\n').slice(0, 6).join(' | '));
+check('...and it says what to do about it', /action=wait/.test(stuckText));
+
+// Solving it: create the missing role and the parked task resumes by itself.
+const rescued = await toolDefinition.execute(
+  {
+    action: 'add',
+    runId: (stuckText.match(/run-[a-z0-9-]+/) ?? [])[0],
+    waitSeconds: 5,
+    tasks: [{ id: 'designer', title: '设计 · 出设计稿', prompt: '写一句话' }],
+  },
+  exec,
+);
+const rescuedText = rescued.content.map((block) => block.text ?? '').join('\n');
+check('adding the missing role lets the parked task finish', /全员交卷/.test(rescuedText), JSON.stringify(rescuedText.slice(0, 900)));
+const revivedTurn = [...turnInfo.values()].find((record) => record.message.text.includes('上游材料已经补上'));
+check('the parked worker resumed with the new peer artifact', Boolean(revivedTurn) && revivedTurn.message.attachments?.[0]?.name === 'upstream-designer.md', JSON.stringify(revivedTurn?.message.attachments?.map((a) => a.name)));
 
 // 5. The aborted-hold path: an interrupted wait must not be treated as failure.
 const abortController = new AbortController();
@@ -413,6 +554,7 @@ artifacts.clear();
 onSend = ({ turnId }) => {
   setTimeout(() => {
     const record = turnInfo.get(turnId);
+    if (!record) return; // a stale timer from an earlier scenario
     record.finished = true;
     record.outputText = 'ok';
     for (const listener of eventListeners) {
