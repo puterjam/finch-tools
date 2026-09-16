@@ -449,11 +449,29 @@ function waitForRun(runId: string, timeoutMs: number): Promise<boolean> {
 type HoldOutcome = 'settled' | 'timeout' | 'aborted' | 'attention';
 
 /**
- * Tasks that cannot make progress without the coordinator: blocked on a missing
- * or failed dependency, or sitting on an unanswered card.
+ * Work the coordinator has to weigh in on, in the order that matters:
+ *
+ *  1. tasks that are parked — blocked, or sitting on an unanswered card;
+ *  2. a run whose *only* remaining work is held. Nothing can progress until
+ *     someone releases it (or drops it), so waiting out the budget would just
+ *     hang the call for minutes.
  */
 function needsCoordinator(tasks: TaskRecord[]): TaskRecord[] {
-  return tasks.filter((task) => task.state === 'blocked' || Boolean(task.waitRequestId));
+  const stuck = tasks.filter((task) => task.state === 'blocked' || Boolean(task.waitRequestId));
+  if (stuck.length > 0) return stuck;
+
+  const active = tasks.filter(
+    (task) =>
+      (task.state === 'queued' && !task.hold) || task.state === 'running' || task.state === 'starting',
+  );
+  if (active.length > 0) return [];
+  return tasks.filter((task) => task.state === 'queued' && task.hold);
+}
+
+/** True when the only thing left is work waiting to be released. */
+function onlyHeldLeft(tasks: TaskRecord[]): boolean {
+  const waiting = needsCoordinator(tasks);
+  return waiting.length > 0 && waiting.every((task) => task.state === 'queued' && task.hold);
 }
 
 function attentionSignature(tasks: TaskRecord[]): string {
@@ -1750,23 +1768,35 @@ async function holdAndReport(
     outcome === 'aborted'
       ? t('result.waitAborted', { runId })
       : outcome === 'attention'
-        ? t('result.needsAttention', { runId })
+        ? t(onlyHeldLeft(tasks) ? 'result.heldTasks' : 'result.needsAttention', { runId })
         : outcome === 'settled'
           ? t(`result.dispatched.${run.status}`, { runId, seconds: Math.round((Date.now() - startedAt) / 1000) })
           : t('result.waitStillRunning', { runId, seconds: waitSeconds });
 
   const parts = [...lead, ...(lead.length > 0 ? [''] : []), header, '', formatRun(run, tasks), ...trail];
 
-  const stuck = needsCoordinator(tasks);
-  if (stuck.length > 0) {
-    parts.push('', t('result.attentionDetail'));
-    for (const task of stuck) {
-      const why = task.error ?? `${t('result.labelWaiting')} ${task.waitKind ?? ''}`.trim();
+  const waiting = needsCoordinator(tasks);
+  const heldOnly = onlyHeldLeft(tasks);
+  if (waiting.length > 0) {
+    parts.push('', t(heldOnly ? 'result.heldDetail' : 'result.attentionDetail'));
+    for (const task of waiting) {
+      const why =
+        task.state === 'blocked'
+          ? (task.error ?? t('result.labelWaiting'))
+          : task.waitRequestId
+            ? `${t('result.labelWaiting')} ${task.waitKind ?? ''}`.trim()
+            : t('result.labelHeld');
       parts.push(`- ${task.taskKey} ${task.title} — ${why}`);
     }
   }
 
-  parts.push('', run.status === 'running' ? t('result.nextWait', { runId }) : t('result.nextCollect', { runId }));
+  if (heldOnly) {
+    parts.push('', t('result.nextStart', { ids: waiting.map((task) => task.taskKey).join(', ') }));
+  } else if (run.status === 'running') {
+    parts.push('', t('result.nextWait', { runId }));
+  } else {
+    parts.push('', t('result.nextCollect', { runId }));
+  }
   return textResult(parts.join('\n'));
 }
 

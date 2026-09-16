@@ -411,11 +411,12 @@ onSend = ({ turnId }) => {
   }, 50);
 };
 
+const heldStart = Date.now();
 const stepOne = await toolDefinition.execute(
   {
     action: 'dispatch',
     goal: '先做第一步，再看要不要第二步',
-    waitSeconds: 5,
+    waitSeconds: 60,
     tasks: [
       { id: 's1', title: '调研 · 第一步', prompt: '写一句话' },
       { id: 's2', title: '验收 · 待命', prompt: '等指令', hold: true },
@@ -424,9 +425,14 @@ const stepOne = await toolDefinition.execute(
   },
   exec,
 );
+const heldElapsed = Date.now() - heldStart;
 const stepOneText = stepOne.content[0].text;
 check('a held task is created but not run', /待启动/.test(stepOneText), stepOneText.split('\n').slice(0, 10).join(' | '));
 check('the held worker was never sent a turn', ![...turnInfo.values()].some((record) => record.message.text.includes('等指令')));
+// The runnable work finished, so the only thing left is held work: the call must
+// come back and say so, not sit on its 60s budget.
+check('a run with only held work left returns immediately', heldElapsed < 8_000, `returned after ${heldElapsed}ms`);
+check('...and the closing hint is to start them', /taskIds=\[s2/.test(stepOneText), JSON.stringify(stepOneText.slice(-240)));
 
 const stepTwo = await toolDefinition.execute(
   {
