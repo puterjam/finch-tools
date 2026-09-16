@@ -474,11 +474,25 @@ function onlyHeldLeft(tasks: TaskRecord[]): boolean {
   return waiting.length > 0 && waiting.every((task) => task.state === 'queued' && task.hold);
 }
 
+/**
+ * What the coordinator is being told, and how far the run has got.
+ *
+ * The stuck set alone is not enough to tell "the same news" from "the same
+ * problem, but the run has moved on since". Without the settled count, the first
+ * report silences every later one: dispatch says "qa is waiting to be started",
+ * the coordinator adds the draft, the draft finishes — and the run then sits
+ * there until the user asks why nothing happened. Including the shape means an
+ * unchanged run stays quiet while one that advances asks again.
+ */
 function attentionSignature(tasks: TaskRecord[]): string {
-  return needsCoordinator(tasks)
+  const stuck = needsCoordinator(tasks);
+  if (stuck.length === 0) return '';
+  const settled = tasks.filter((task) => isTerminal(task.state)).length;
+  const keys = stuck
     .map((task) => `${task.taskKey}:${task.state}:${task.waitRequestId ?? '-'}`)
     .sort()
     .join('|');
+  return `${settled}/${tasks.length}#${keys}`;
 }
 
 /**

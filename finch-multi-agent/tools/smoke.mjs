@@ -447,17 +447,26 @@ check('the held worker was never sent a turn', ![...turnInfo.values()].some((rec
 check('a run with only held work left returns immediately', heldElapsed < 8_000, `returned after ${heldElapsed}ms`);
 check('...and the closing hint is to start them', /taskIds=\[s2/.test(stepOneText), JSON.stringify(stepOneText.slice(-240)));
 
+const stepTwoStart = Date.now();
 const stepTwo = await toolDefinition.execute(
   {
     action: 'add',
     runId: (stepOneText.match(/run-[a-z0-9-]+/) ?? [])[0],
-    waitSeconds: 5,
+    waitSeconds: 60,
     tasks: [{ id: 's3', title: '统稿 · 第二步', prompt: '写一句话', dependsOn: ['s1'] }],
   },
   exec,
 );
-check('add queues work into the same run', /已排入 1 个/.test(stepTwo.content[0].text) && stepTwo.content[0].text.includes('s3'));
+const stepTwoElapsed = Date.now() - stepTwoStart;
+const stepTwoText = stepTwo.content[0].text;
+check('add queues work into the same run', /已排入 1 个/.test(stepTwoText) && stepTwoText.includes('s3'));
 check('the newly added task actually ran', [...turnInfo.values()].some((record) => record.message.text.includes('## Your subtask (s3)')));
+// The held role is the same one dispatches already reported. It has to be
+// reported again now that the added work has drained — a dedupe keyed only on
+// the stuck set silenced this second report and the call sat on its budget
+// until the user asked what was going on.
+check('a held role is reported again once the run has moved on', stepTwoElapsed < 10_000, `returned after ${stepTwoElapsed}ms`);
+check('...and that report still says to start it', /taskIds=\[s2/.test(stepTwoText), JSON.stringify(stepTwoText.slice(-240)));
 
 const released = await toolDefinition.execute(
   { action: 'start', runId: (stepOneText.match(/run-[a-z0-9-]+/) ?? [])[0], taskIds: ['s2'], waitSeconds: 5 },
