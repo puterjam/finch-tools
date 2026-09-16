@@ -46,6 +46,8 @@ const collabScopes = new Map();
 const collabTasks = new Map();
 const collabDocs = new Map();
 const turnInfo = new Map();
+/** sessionId\0idempotencyKey → the turn that key was first used for. */
+const seenKeys = new Map();
 const progressMessages = [];
 let seq = 0;
 let n = 0;
@@ -209,7 +211,18 @@ const ctx = {
     },
     async list() { return sessions.map((entry) => entry.descriptor); },
     async send(sessionId, message, options) {
+      // The real host treats a repeated idempotency key as a retry of the
+      // original message: it replays that receipt and dispatches nothing. This
+      // has to be modelled — reusing a key across attempts silently swallows
+      // the second send, which is exactly the bug this harness now guards.
+      const key = message.idempotencyKey ? `${sessionId}\u0000${message.idempotencyKey}` : null;
+      if (key && seenKeys.has(key)) {
+        const replayTurnId = seenKeys.get(key);
+        if (process.env.MA_DEBUG) console.log(`    [send] DUPLICATE ${message.idempotencyKey} → replay ${replayTurnId}`);
+        return { sessionId, turnId: replayTurnId, clientMessageId: 'c-replay', state: 'duplicate', queued: false, pendingCount: 1, queuePosition: 0 };
+      }
       const turnId = `turn-${++n}`;
+      if (key) seenKeys.set(key, turnId);
       turnInfo.set(turnId, { sessionId, message, options });
       if (onSend) onSend({ sessionId, turnId, message, options });
       return { sessionId, turnId, clientMessageId: `c-${n}`, state: 'accepted', queued: false, pendingCount: 1, queuePosition: 0 };
@@ -464,12 +477,15 @@ check('the dropped task is cancelled, not run', /s4/.test(dropped.content[0].tex
 
 turnInfo.clear();
 handoffs.length = 0;
-// The architect is quick, so the QA worker's request can be answered straight away.
+// The architect is slow on purpose: QA's request lands while the peer is still
+// working, so QA has to be *parked* and then re-started once the peer delivers.
+// That re-start is the path that silently reused an idempotency key and never
+// dispatched anything.
 onSend = ({ sessionId, turnId, message }) => {
   const title = sessions.find((entry) => entry.descriptor.sessionId === sessionId)?.options.title ?? '';
-  const firstTurn = !message.text.includes('的产出见附件');
-  const asking = title.includes('测试') && firstTurn;
-  if (process.env.MA_DEBUG) console.log(`    [send] ${title} first=${firstTurn} asking=${asking}`);
+  const continued = /的产出见附件|上游材料已经补上/.test(message.text);
+  const asking = title.includes('测试') && !continued;
+  if (process.env.MA_DEBUG) console.log(`    [send] ${title} continued=${continued} asking=${asking}`);
   setTimeout(() => {
     const record = turnInfo.get(turnId);
     if (!record) return; // a stale timer from an earlier scenario
@@ -479,7 +495,7 @@ onSend = ({ sessionId, turnId, message }) => {
     for (const listener of eventListeners) {
       listener({ type: 'turn.completed', sessionId, turnId, outputText: record.outputText, messageIds: [], sequence: ++seq, createdAt: nowIso() });
     }
-  }, 150);
+  }, asking ? 100 : 400);
 };
 
 const teamRun = await toolDefinition.execute(
@@ -497,9 +513,12 @@ const teamRun = await toolDefinition.execute(
 );
 const teamText = teamRun.content.map((block) => block.text ?? '').join('\n');
 check('the run finishes after the peer request is served', /全员交卷|大部分交卷/.test(teamText), teamText.split('\n').slice(0, 4).join(' | '));
-const resumeTurn = [...turnInfo.values()].find((record) => record.message.text.includes('的产出见附件'));
+const resumeTurn = [...turnInfo.values()].find((record) => record.message.text.includes('的产出见附件') || record.message.text.includes('上游材料已经补上'));
 check('the asking worker was resumed with the peer artifact', Boolean(resumeTurn) && resumeTurn.message.attachments?.[0]?.name === 'upstream-architect.md', JSON.stringify(resumeTurn?.message.attachments?.map((a) => a.name)));
-check('the request was recorded as a handoff, not a chat message', handoffs.some((entry) => entry.summary?.includes('architect') && entry.summary?.includes('qa')), JSON.stringify(handoffs.map((h) => h.summary)));
+const qaSessionIds = new Set(sessions.filter((entry) => entry.options.title.includes('测试')).map((entry) => entry.descriptor.sessionId));
+const qaTurns = [...turnInfo.values()].filter((record) => qaSessionIds.has(record.sessionId));
+check('a parked worker really gets a second turn dispatched', qaTurns.length === 2, `turn count ${qaTurns.length}`);
+check('the request was recorded as a handoff, not a chat message', handoffs.some((entry) => entry.data?.fromTask === 'architect' && entry.data?.toTask === 'qa'), JSON.stringify(handoffs.map((h) => h.data)));
 
 // A request for a task nobody created has to reach the coordinator, not hang.
 turnInfo.clear();
@@ -551,6 +570,32 @@ const abortRun = await toolDefinition.execute(
 );
 check('an aborted hold is not an error', abortRun.isError !== true);
 check('...and it says the run continues', /打断|wait/.test(abortRun.content[0].text), abortRun.content[0].text.split('\n')[0]);
+
+// ── a completion that never arrives ─────────────────────────────────────────
+
+// Turns can end without their event reaching us (a reload, a crash, a swallowed
+// send). Nothing will ever wake a hold in that state, so asking for the state
+// must settle it instead of burning the whole budget.
+turnInfo.clear();
+handoffs.length = 0;
+onSend = ({ turnId }) => {
+  setTimeout(() => {
+    const record = turnInfo.get(turnId);
+    if (!record) return;
+    record.finished = true;
+    record.outputText = '交付：一段没人收到通知的产出';
+    // Deliberately no turn.completed event.
+  }, 80);
+};
+const silentRun = await toolDefinition.execute(
+  { action: 'dispatch', goal: '没人回报的一轮', waitSeconds: 60, tasks: [{ id: 'ghost', title: '调研 · 报不回来的活', prompt: '写一句话' }] },
+  exec,
+);
+const silentText = silentRun.content.map((block) => block.text ?? '').join('\n');
+check('a lost completion is picked up instead of waiting out the budget', /全员交卷/.test(silentText), JSON.stringify(silentText.slice(0, 400)));
+const silentRunId = (silentText.match(/run-[a-z0-9-]+/) ?? [])[0];
+const silentCollected = await toolDefinition.execute({ action: 'collect', runId: silentRunId }, exec);
+check('...and its output was still recorded', silentCollected.content[0].text.includes('没人收到通知的产出'), silentCollected.content[0].text.split('\n').slice(-3).join(' | '));
 
 // ── model selection ─────────────────────────────────────────────────────────
 

@@ -63,6 +63,7 @@
   "result.emptyOutput": "(this worker handed in a blank page)",
   "result.sessionGone": "the worker Session is no longer available",
   "result.sendFailed": "the task never reached its worker",
+  "result.noNewTurn": "this task never actually restarted: the session received no new turn (the send came back as a duplicate of an earlier one). Check action=status, then re-task it with action=add and the same task id",
   "result.waitStillRunning": "Waited another {seconds}s — some workers are still out ({runId}).",
   "result.waitAlreadyDone": "That run already finished ({runId}) — nothing left to wait for.",
   "result.waitAborted": "The user interrupted the wait ({runId}) — the run keeps going in the background. Call action=wait to keep waiting, or action=add / drop to adjust this run (reusing a task id replaces it).",

@@ -508,8 +508,18 @@ async function holdForRun(
   signal?: AbortSignal,
 ): Promise<HoldOutcome> {
   const startedAt = Date.now();
+  // Before holding, ask whether any "running" task is actually already over.
+  // A turn whose completion never reached us has no event left to wake this
+  // wait, so without this the budget would just run out on a dead run.
+  let lastSweep = Date.now();
+  await settleStaleTurns(runId, 1);
   for (;;) {
     if (shuttingDown || signal?.aborted) return 'aborted';
+
+    if (Date.now() - lastSweep > 30_000) {
+      lastSweep = Date.now();
+      await settleStaleTurns(runId, 1);
+    }
 
     const remaining = waitSeconds * 1_000 - (Date.now() - startedAt);
     const settled = await waitForRun(runId, Math.min(4_000, Math.max(500, remaining)));
@@ -704,13 +714,17 @@ async function startTask(
   // so send only the material and let it pick up where it stopped.
   const body = task.turnId ? `${t('worker.continue', { title: task.title })}${refs}` : `${prompt}${refs}`;
 
+  // Fresh key for this attempt; the inner retries reuse it so a retried send
+  // cannot be dispatched twice.
+  let dispatchKey = nextAttemptKey('dispatch', run.runId, task.taskKey);
+
   const deliverTurn = (): Promise<finch.SessionSendReceipt> =>
     host.sessions.send(
       sessionId,
       {
         text: body,
         ...(upstream.attachments.length > 0 ? { attachments: upstream.attachments } : {}),
-        idempotencyKey: `dispatch:${run.runId}:${task.taskKey}`,
+        idempotencyKey: dispatchKey,
       },
       {
         delivery: 'queue',
@@ -777,6 +791,22 @@ async function startTask(
       finishedAt: Date.now(),
     });
     return;
+  }
+
+  if (receipt.state === 'duplicate') {
+    // The host replayed an earlier receipt for this key, so nothing was
+    // dispatched. Resend under a fresh key; if that is a duplicate too, say so
+    // instead of recording a turn that will never report back.
+    dispatchKey = nextAttemptKey('dispatch', run.runId, task.taskKey);
+    receipt = await sendTurn();
+    if (!receipt || receipt.state !== 'accepted') {
+      store.updateTask(run.runId, task.taskKey, {
+        state: 'failed',
+        error: t('result.noNewTurn'),
+        finishedAt: Date.now(),
+      });
+      return;
+    }
   }
 
   store.updateTask(run.runId, task.taskKey, {
@@ -1093,6 +1123,20 @@ const PEER_REQUEST_PATTERN = /(?:^|\n)[ \t>*-]*(?:NEED|需要|需要上游|REQUE
 const MAX_PEER_REQUESTS = 4;
 const peerRequestCounts = new Map<string, number>();
 
+/**
+ * Idempotency keys are per *attempt*, never per task.
+ *
+ * The host treats a repeated key as a retry of the original message: it answers
+ * `state: 'duplicate'` with the ORIGINAL turn id and dispatches nothing. A task
+ * that is restarted — released from `hold`, or re-started after being parked on
+ * a peer request — is a new attempt, so it must carry a new key. Reusing one
+ * bit us in testing: the second send was silently deduped, we recorded the dead
+ * first turn as `running`, and the run hung forever with no live turn at all.
+ */
+let attemptSeq = 0;
+const nextAttemptKey = (kind: string, runId: string, taskKey: string): string =>
+  `${kind}:${runId}:${taskKey}:${++attemptSeq}`;
+
 function parsePeerRequest(output: string): { key: string; note: string } | undefined {
   const match = output.match(PEER_REQUEST_PATTERN);
   if (!match) return undefined;
@@ -1132,10 +1176,14 @@ async function resumeTaskWithPeer(
   const body = await artifactText(peer.artifactId ?? '');
   const bounded = truncate(body, UPSTREAM_ATTACHMENT_MAX_CHARS);
   const text = t('worker.resume', { peer: peer.taskKey, title: task.title });
+  // Same reason as startTask: hand one attempt one key, so the host cannot
+  // mistake a genuine re-request for a retry of an older message. Two separate
+  // requests for the same peer key are different attempts, so the peer key goes
+  // in the prefix rather than being the whole key.
+  let resumeKey = `${nextAttemptKey('resume', run.runId, task.taskKey)}:${peer.taskKey}`;
 
-  let receipt: finch.SessionSendReceipt;
-  try {
-    receipt = await host.sessions.send(
+  const deliverResume = (): Promise<finch.SessionSendReceipt> =>
+    host.sessions.send(
       sessionId,
       {
         text,
@@ -1147,18 +1195,25 @@ async function resumeTaskWithPeer(
             data: Buffer.from(bounded, 'utf8').toString('base64'),
           },
         ],
-        // Same stable key as the original request, so a retry cannot double-send.
-        idempotencyKey: `resume:${run.runId}:${task.taskKey}:${peer.taskKey}`,
+        idempotencyKey: resumeKey,
       },
       { delivery: 'queue' },
     );
+
+  let receipt: finch.SessionSendReceipt;
+  try {
+    receipt = await deliverResume();
+    if (receipt.state === 'duplicate') {
+      resumeKey = `${nextAttemptKey('resume', run.runId, task.taskKey)}:${peer.taskKey}`;
+      receipt = await deliverResume();
+    }
   } catch (error) {
     host.logger.warn('resume send failed:', errorMessage(error));
     return false;
   }
 
-  if (receipt.state === 'rejected') {
-    host.logger.warn('resume rejected: queue full');
+  if (receipt.state !== 'accepted') {
+    host.logger.warn(`resume not dispatched (${receipt.state})`);
     return false;
   }
 
@@ -1421,55 +1476,71 @@ async function handleSessionEvent(event: finch.SessionBridgeEvent): Promise<void
 }
 
 /**
- * After a reload (or a crash) a run can be left `running` while its turns
- * actually finished. Ask each live turn for its terminal state — this returns
- * immediately when the turn already settled — and settle anything missed.
+ * Settle tasks whose turn already finished but whose completion never reached
+ * us — after a reload or a crash, or when a send was swallowed host-side.
+ *
+ * `waitForTurn` answers immediately for a turn that already settled, so a small
+ * probe budget makes this cheap enough to run before every hold: a task stuck
+ * `running` with a dead turn is the one state that can hang a run forever, and
+ * nothing else will ever wake it.
  */
-async function reconcileRuns(): Promise<void> {
-  for (const run of store.listActiveRuns()) {
-    for (const task of store.listTasks(run.runId)) {
-      if (task.state !== 'running') continue;
+async function settleStaleTurns(runId: string, probeMs: number): Promise<void> {
+  const run = store.getRun(runId);
+  if (!run || run.status !== 'running') return;
 
-      if (!task.sessionId || !task.turnId) {
+  for (const task of store.listTasks(runId)) {
+    if (task.state !== 'running') continue;
+
+    if (!task.sessionId || !task.turnId) {
+      // No turn to wait on: the record is inconsistent and no event can fix it.
+      await withRunLock(run.runId, async () => {
+        await failTask({ runId: run.runId, taskKey: task.taskKey }, t('result.sessionGone'), 'failed');
+        await finalizeRun(run.runId);
+      });
+      continue;
+    }
+
+    try {
+      const result = await host.sessions.waitForTurn(task.sessionId, task.turnId, { timeoutMs: probeMs });
+      if (result.state === 'completed') {
+        await withRunLock(run.runId, async () => {
+          await completeTask({ runId: run.runId, taskKey: task.taskKey }, result.outputText ?? '', task.turnId as string);
+          await finalizeRun(run.runId);
+        });
+      } else if (result.state === 'failed') {
+        await withRunLock(run.runId, async () => {
+          await failTask(
+            { runId: run.runId, taskKey: task.taskKey },
+            `turn failed: ${result.code}`,
+            'failed',
+          );
+          await finalizeRun(run.runId);
+        });
+      }
+    } catch (error) {
+      // The turn state is unrecoverable. If the worker Session is gone too
+      // (for example the mini tool was reinstalled mid-run), the task can
+      // never finish — settle it instead of leaving the run "running" forever.
+      const descriptor = await host.sessions.get(task.sessionId).catch(() => undefined);
+      if (!descriptor) {
         await withRunLock(run.runId, async () => {
           await failTask({ runId: run.runId, taskKey: task.taskKey }, t('result.sessionGone'), 'failed');
           await finalizeRun(run.runId);
         });
-        continue;
-      }
-
-      try {
-        const result = await host.sessions.waitForTurn(task.sessionId, task.turnId, { timeoutMs: 1_500 });
-        if (result.state === 'completed') {
-          await withRunLock(run.runId, async () => {
-            await completeTask({ runId: run.runId, taskKey: task.taskKey }, result.outputText ?? '', task.turnId as string);
-            await finalizeRun(run.runId);
-          });
-        } else if (result.state === 'failed') {
-          await withRunLock(run.runId, async () => {
-            await failTask(
-              { runId: run.runId, taskKey: task.taskKey },
-              `turn failed: ${result.code}`,
-              'failed',
-            );
-            await finalizeRun(run.runId);
-          });
-        }
-      } catch (error) {
-        // The turn state is unrecoverable. If the worker Session is gone too
-        // (for example the mini tool was reinstalled mid-run), the task can
-        // never finish — settle it instead of leaving the run "running" forever.
-        const descriptor = await host.sessions.get(task.sessionId).catch(() => undefined);
-        if (!descriptor) {
-          await withRunLock(run.runId, async () => {
-            await failTask({ runId: run.runId, taskKey: task.taskKey }, t('result.sessionGone'), 'failed');
-            await finalizeRun(run.runId);
-          });
-        } else {
-          host.logger.warn('reconcile failed:', errorMessage(error));
-        }
+      } else {
+        host.logger.warn('reconcile failed:', errorMessage(error));
       }
     }
+  }
+}
+
+/**
+ * After a reload (or a crash) a run can be left `running` while its turns
+ * actually finished. Give the sweep a real budget and re-plan afterwards.
+ */
+async function reconcileRuns(): Promise<void> {
+  for (const run of store.listActiveRuns()) {
+    await settleStaleTurns(run.runId, 1_500);
     scheduleAdvance(run.runId);
   }
 }
@@ -1910,6 +1981,9 @@ async function actionWait(input: Record<string, unknown>, exec: finch.ToolExecut
 async function actionStatus(input: Record<string, unknown>, exec: finch.ToolExecutionContext): Promise<finch.ToolResult> {
   const run = resolveRun(input, exec);
   if (!run) return textResult(t('result.noRun'), true);
+  // Status is the "is anything wrong?" call, so it also repairs the one state
+  // that cannot repair itself: a running task whose turn is already over.
+  await settleStaleTurns(run.runId, 1);
   const tasks = store.listTasks(run.runId);
   const parts = [formatRun(run, tasks, true)];
   const handoffs = store.listHandoffs(run.runId);

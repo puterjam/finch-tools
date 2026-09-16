@@ -63,6 +63,7 @@
   "result.emptyOutput": "（这位选手交了个白卷）",
   "result.sessionGone": "worker 会话已不存在",
   "result.sendFailed": "任务下发失败，worker 没有跑起来",
+  "result.noNewTurn": "这一轮没能真正重新启动：会话没有收到新回合（幂等键被当成重复请求）。请用 action=status 看一眼，再用 action=add 复用同一个任务 id 重新分派",
   "result.waitStillRunning": "又等了 {seconds}s，还有 worker 没交卷（{runId}）。",
   "result.waitAlreadyDone": "这轮已经结束了（{runId}），不用再等。",
   "result.waitAborted": "等待被用户打断了（{runId}）—— 任务还在后台跑。要接着等用 action=wait；用户要改方向就用 action=add（复用同一个任务 id 即为替换）或 drop。",
