@@ -1,0 +1,10 @@
+profiles:
+  m5stack-cores3:
+    fqbn: m5stack:esp32:m5stack_cores3
+    platforms:
+      - platform: m5stack:esp32 (3.3.9)
+    libraries:
+      - M5Unified (0.2.20)
+      - ArduinoWebsockets (0.5.4)
+      - ArduinoJson (7.0.4)
+      - M5StackChan (1.0.1)

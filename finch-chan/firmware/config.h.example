@@ -1,0 +1,51 @@
+#pragma once
+
+// Copy this file to config.h. config.h is intentionally ignored by Git.
+// Never commit real Wi-Fi credentials or shared secrets.
+// 这两项只是「首次开机的种子」：设备把凭证存进 NVS，之后不再看它们。
+// 留空则完全走配网流程（开机热点 + 手机配网页）。
+// Never commit real Wi-Fi credentials.
+#define FINCHCHAN_WIFI_SSID ""
+#define FINCHCHAN_WIFI_PASSWORD ""
+
+// 配网热点（captive portal）。8 位以上会加密，留空则是开放热点。
+#define FINCHCHAN_AP_PASSWORD ""
+
+// 桥接主机发现的 UDP 端口（小程序桥接监听同一端口）。
+#define FINCHCHAN_DISCOVERY_PORT 8266
+
+// 兜底地址：只在 UDP 发现不到桥接时使用，可以留空（留空就一直接着找）。
+#define FINCHCHAN_WS_HOST ""
+#define FINCHCHAN_WS_PORT 8267
+#define FINCHCHAN_WS_PATH "/"
+
+// Identity shown to the relay. Keep this stable per physical pet.
+// Device id. Leave empty to derive `finchchan-XXXX` from the chip MAC (recommended);
+// only fill it in for debugging when a fixed id is needed.
+#define FINCHCHAN_DEVICE_ID ""
+#define FINCHCHAN_FIRMWARE_VERSION "0.2.1"
+
+// Enter the short-lived code returned by finchchan_control(action="pair") on first flash.
+// The firmware stores the resulting device token in NVS; clear this value after pairing.
+#define FINCHCHAN_PAIR_CODE ""
+
+// FinchChan controls the StackChan body's 12 RGB LEDs through StackChan-BSP.
+#define FINCHCHAN_RGB_COUNT 12
+// 1 = animate the ring from the current state, 0 = keep the ring dark.
+#define FINCHCHAN_LED_EFFECTS 1
+// Peak ring brightness, 0-255. Breathing effects scale below this peak.
+#define FINCHCHAN_LED_BRIGHTNESS 90
+// 1 = 头部跟着视线与状态动作，0 = 头部保持不动。
+#define FINCHCHAN_MOTION_EFFECTS 1
+
+// Conservative limits that protect the animation loop and speaker.
+#define FINCHCHAN_RECONNECT_MIN_MS 1500UL
+#define FINCHCHAN_RECONNECT_MAX_MS 30000UL
+#define FINCHCHAN_SAY_MAX_CHARS 96
+// 空闲计时：多久开始打瞌睡 / 关屏（毫秒）。
+#define FINCHCHAN_NAP_AFTER_MS 300000UL         // 5 分钟
+#define FINCHCHAN_DEEP_SLEEP_AFTER_MS 600000UL  // 10 分钟
+// 屏幕亮度（0-255）。启动时显式设一次，唤醒时也用它恢复。
+#define FINCHCHAN_BRIGHTNESS 128
+// 拍头检测：IMU 加速度突变超过这个值（单位 g）算一次“被拍”。
+#define FINCHCHAN_PAT_THRESHOLD_G 0.30f

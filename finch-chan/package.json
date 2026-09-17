@@ -1,0 +1,47 @@
+{
+  "name": "finch-chan",
+  "version": "0.1.16",
+  "description": "Send privacy-safe Finch activity states to a paired StackChan pet on your local network.",
+  "author": { "name": "PuterJam", "url": "https://github.com/puterjam" },
+  "repository": { "type": "git", "url": "git+https://github.com/puterjam/finch-tools.git", "directory": "finch-chan" },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-chan#readme",
+  "bugs": { "url": "https://github.com/puterjam/finch-tools/issues" },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "keywords": ["finch", "finch-minitool", "m5stack", "stackchan", "websocket", "pet"],
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "node tools/smoke.mjs",
+    "doctor": "npx @finchtoys/minitools doctor .",
+    "prepublishOnly": "npm run typecheck && npm run build && npm run test && npm run doctor"
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "minVersion": "1.6.1",
+    "id": "finch-chan",
+    "name": "FinchChan",
+    "description": "Send privacy-safe Finch activity states to a paired StackChan pet on your local network.",
+    "systemPrompt": "Use finchchan_control only when the user asks to pair, inspect, speak through, set the visible state of, or unpair their FinchChan StackChan pet. action=status reports the bridge and paired devices; pair creates a short-lived pairing code for a specific device id; say sends a short visible message; state sets one finite pet state; unpair revokes a device token. Never use this tool to transmit prompts, conversation text, or tool parameters.",
+    "main": "dist/index.js",
+    "activationEvents": ["onStartup"],
+    "miniToolType": "local",
+    "categories": ["productivity", "developer-tools"],
+    "contributes": {
+      "tools": true,
+      "settingsMenu": { "icon": "settings", "tooltip": "FinchChan settings" },
+      "iconPacks": [{ "id": "finchchan", "label": "FinchChan Icons" }]
+    },
+    "permissions": { "filesystem": "none", "network": true, "shell": false, "secrets": ["finchchan.tokens"], "sessions": true, "sessionWaits": "all", "sessionInteractions": "all", "destructiveInteractions": true }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.3.14",
+    "@types/node": "^26.1.0",
+    "@types/ws": "^8.5.14",
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3",
+    "ws": "^8.18.3"
+  },
+  "files": ["dist/", "i18n/", "icon.png", "README.md"]
+}

@@ -1,0 +1,7 @@
+{
+  "states": [
+    { "state": "idle", "row": 0, "startCol": 0, "frames": 4, "fps": 6 },
+    { "state": "thinking", "row": 1, "startCol": 0, "frames": 6, "fps": 8 },
+    { "state": "working", "row": 2, "startCol": 0, "frames": 8, "fps": 10 }
+  ]
+}
