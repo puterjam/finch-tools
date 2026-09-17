@@ -23,7 +23,7 @@
 // Device id. Leave empty to derive `finchchan-XXXX` from the chip MAC (recommended);
 // only fill it in for debugging when a fixed id is needed.
 #define FINCHCHAN_DEVICE_ID ""
-#define FINCHCHAN_FIRMWARE_VERSION "0.4.6"
+#define FINCHCHAN_FIRMWARE_VERSION "0.4.7"
 
 // Enter the short-lived code returned by finchchan_control(action="pair") on first flash.
 // The firmware stores the resulting device token in NVS; clear this value after pairing.

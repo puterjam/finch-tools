@@ -78,14 +78,17 @@ bash tools/flash-all.sh [串口]
 
 ### 表情的垂直位置
 
-眼睛中心 = `kEyeY`(98) + 气泡下推（`inset/2`）+ `kBubbleOnlyDrop`(只有气泡时 +10) − 卡片抬升（`kPromptEyeLift` 26）。
+眼睛中心 = `kEyeY`(98) + 气泡下推（`inset/2`）+ `kBubbleOnlyDrop`(只有气泡时 +10) − 卡片抬升（`kPromptEyeLift` 26）− 未读抬升（`kUnreadEyeRaise` 16）。
 
 | 状态 | 眼睛中心 | 说明 |
 |---|---|---|
 | idle（无气泡） | 98 | 基线 |
 | thinking / working（1 行气泡） | 134 | 气泡推下来 + 补偿 10 |
-| **未读**（气泡 + 「查看」按钮） | **134** | **不抬表情**：只有按钮自己滑入 |
+| **未读**（气泡 + 「查看」按钮） | **118** | 在 134 的基础上净抬 16px（`kUnreadEyeRaise`） |
 | 等待卡片（1 行标题） | 98 | 抬 26 抵消气泡的下推，和基线齐平 |
+
+> 未读那次抬升是**净抬**：它不进 `bubbleDrop` 的淡出公式，所以「抬高 16px」就是肉眼看到的 16px；
+> 卡片那次则是"抵消气泡下推"，让表情回到基线。两者目的不同，所以是两套独立的量。
 
 小程序订阅 Finch 的全局等待（`ctx.events.onInteractionWait`），把卡片投影成一小段可显示内容下发：
 
