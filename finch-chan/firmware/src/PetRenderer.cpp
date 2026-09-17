@@ -399,7 +399,10 @@ void PetRenderer::update(uint32_t now) {
 
   // 兜底：醒着的状态下屏幕不该是黑的。若被外部因素（PMIC / IO 扩展器抖动）关掉，
   // 这里自己亮回来——否则用户会看到“点一下屏幕反而息屏”。
-  if (M5.Display.getBrightness() == 0) {
+  // 限频：wakeup() 会重发 SLPOUT/DISPON，短时间内反复触发本身就会闪黑一帧。
+  if (M5.Display.getBrightness() == 0 && now - lastRelightAt_ > 1000) {
+    lastRelightAt_ = now;
+    Serial.println("[power] panel relight (brightness was 0)");
     M5.Display.wakeup();
     M5.Display.setBrightness(brightness_);
   }
@@ -537,6 +540,30 @@ void PetRenderer::update(uint32_t now) {
   // 有未读：底部给一个灰色「查看」按钮（和卡片一样盖在频谱上面）。
   if (unreadShowing) drawUnreadButton(canvas_);
   canvas_.pushSprite(0, 0);
+  // 等这一帧的 DMA 真正发完，再开始画下一帧：否则下一帧的 fillScreen 会追着
+  // 还在读缓冲的 DMA 改内容，偶发一帧花屏/整帧黑（正是"眨眼时闪一下空帧"的样子）。
+  M5.Display.waitDisplay();
+  checkBlankFrame(now);
+}
+
+/**
+ * 空帧自检：稀疏采样画布，若整帧全黑说明推了一帧"什么都没有"的画面
+ * （正常帧至少有两颗白眼睛）。只在真的出现时打日志并限频，
+ * 用来确认/排除渲染层的空帧问题，而不是靠肉眼猜。
+ */
+void PetRenderer::checkBlankFrame(uint32_t now) {
+  frameCount_ += 1;
+  if ((frameCount_ & 3) != 0) return;   // 每 4 帧抽一次，开销可忽略
+  for (int16_t y = 6; y < 240; y += 12) {
+    for (int16_t x = 6; x < 320; x += 24) {
+      if (canvas_.readPixelValue(x, y) != 0) return;   // 有内容 = 正常
+    }
+  }
+  if (now - blankLogAt_ < 3000) return;
+  blankLogAt_ = now;
+  Serial.printf("[frame] blank! #%lu state=%s face=%s sleep=%d prompt=%d\n",
+                static_cast<unsigned long>(frameCount_), petStateName(state_), faceName(expression_),
+                static_cast<int>(sleepLevel_), promptActive_ ? 1 : 0);
 }
 
 /**

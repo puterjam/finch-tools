@@ -172,7 +172,9 @@ void EmotionFace::drawEye(LovyanGFX& g, int16_t x, int16_t y, uint8_t size, EyeS
       g.fillEllipse(x, y, radius, radius / 3, kEye);
       break;
     case EyeShape::Close:
-      g.fillRect(x - radius, y - 3, radius * 2, 6, kEye);
+      // 眨眼：一条「合上的眼睫」弧，和睡着时同一套弧线，只是更快。
+      // 之前是一条 6px 细横线：在 2 寸屏上太细，容易被看成"这一帧没画眼睛"。
+      g.fillArc(x, y - radius / 3, radius * 62 / 100, radius * 92 / 100, 20.0f, 160.0f, kEye);
       break;
     case EyeShape::Laughing:
       // 实心圆下沉后用更大的背景圆掏出下半部分，留下向下的弧（∩）

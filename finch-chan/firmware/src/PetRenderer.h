@@ -23,6 +23,8 @@ class PetRenderer {
   void begin();
   void setState(PetState state, const char* speech = nullptr, const char* bubble = nullptr);
   void update(uint32_t now);
+  /** 空帧自检（稀疏采样画布，全黑则打日志）。 */
+  void checkBlankFrame(uint32_t now);
 
   /** 收到 Finch 的等待请求：在屏幕上显示成可选择的问题卡片。 */
   void setPrompt(const char* requestId, const char* kind, const char* title,
@@ -108,6 +110,11 @@ class PetRenderer {
   String bubble_;
   uint32_t stateChangedAt_ = 0;
   uint32_t lastFrameAt_ = 0;
+  /** 空帧自检：日志限频 + 帧计数（排查"偶尔闪一帧全黑"用）。 */
+  uint32_t blankLogAt_ = 0;
+  uint32_t frameCount_ = 0;
+  /** 补亮屏幕的限频时间戳。 */
+  uint32_t lastRelightAt_ = 0;
 
   bool promptActive_ = false;
   char promptId_[40] = {};
