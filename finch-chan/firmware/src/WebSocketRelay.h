@@ -46,6 +46,12 @@ class WebSocketRelay {
   void notifyTap(const char* requestId = nullptr);
   /** 把用户在屏幕上的选择回传给 Finch，由小程序代为应答该等待。 */
   void sendAnswer(const char* requestId, const char* optionId);
+  /**
+   * 记录并上报功能设置（律动模式 / 收音灵敏度 / 随节奏舞动）。
+   * 设备是这些设置的唯一真源：小程序改、按 PWR 键都会走这里，
+   * 上报后设置菜单右侧的状态文字就能跟着变。
+   */
+  void reportSettings(bool music, uint8_t gain, bool beat);
 
  private:
   websockets::WebsocketsClient client_;
@@ -81,5 +87,12 @@ class WebSocketRelay {
   void sendAuth();
   void sendAck(const PetCommand& command);
   void sendStatus();
+  /** 上报当前功能设置（连接建立时 + 每次变化，含 PWR 键切的律动模式）。 */
+  void sendSettings();
   void sendJson(JsonDocument& doc);
+
+  /* 设备当前的功能设置：变化时由 main 调 reportSettings()，重连后再自动上报一次。 */
+  bool settingMusic_ = false;
+  uint8_t settingGain_ = 1;   // 0 低 / 1 中 / 2 高
+  bool settingBeat_ = true;
 };

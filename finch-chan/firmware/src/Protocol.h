@@ -23,13 +23,17 @@ struct PetPrompt {
 };
 
 struct PetCommand {
-  enum class Type : uint8_t { State, Say, Ping, Prompt, PromptClear, WifiReset } type;
+  enum class Type : uint8_t { State, Say, Ping, Prompt, PromptClear, WifiReset, Settings } type;
   PetState state = PetState::Idle;
   char text[97] = {};
   char bubble[65] = {};
   char id[40] = {};
   uint32_t sequence = 0;
   PetPrompt prompt = {};
+  /* 功能设置命令：-1 表示这一项不改。 */
+  int8_t settingMusic = -1;   // 0/1 律动模式
+  int8_t settingGain = -1;    // 0/1/2 收音灵敏度（低/中/高）
+  int8_t settingBeat = -1;    // 0/1 随节奏舞动
 };
 
 PetState parsePetState(const char* value);

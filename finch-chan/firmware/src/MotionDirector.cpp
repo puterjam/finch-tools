@@ -1,5 +1,7 @@
 #include "MotionDirector.h"
 
+#include "Log.h"
+
 #include <M5StackChan.h>
 
 namespace {
@@ -90,12 +92,12 @@ void MotionDirector::setDozing(bool dozing) {
     dozingSince_ = millis();
     dozingStartYaw_ = lastYaw_;
     dozingStartPitch_ = lastPitchAngle_;
-    Serial.printf("[motion] dozing on (from yaw=%.2f pitch=%d)\n", dozingStartYaw_, dozingStartPitch_);
+    FC_LOG(1, "[motion] dozing on (from yaw=%.2f pitch=%d)\n", dozingStartYaw_, dozingStartPitch_);
   } else {
     // 不在这里立即 home()：惊醒应该慢慢抬头，交给 WakeShake 的第一帧。
     current_ = Action::None;
     frames_ = nullptr;
-    Serial.println("[motion] dozing off");
+    FC_LOGLN(1, "[motion] dozing off");
   }
 }
 
@@ -130,7 +132,7 @@ void MotionDirector::command(float yaw, int pitchAngle, int speed, const char* r
   // 逐帧舵机日志：默认关掉（每拍三行会把串口刷满）。
   const bool moved = fabsf(yaw - lastYaw_) > 0.05f || abs(clampedPitch - lastPitchAngle_) > 10;
   if (moved) {
-    Serial.printf("[motion] yaw=%.2f pitch=%d speed=%d %s%s\n", yaw, clampedPitch, speed, reason,
+    FC_LOG(2, "[motion] yaw=%.2f pitch=%d speed=%d %s%s\n", yaw, clampedPitch, speed, reason,
                   dozing_ ? " (dozing)" : "");
   }
 #endif
@@ -166,7 +168,7 @@ void MotionDirector::play(Action action) {
 
   // 跟拍点头不在这里打 motion= ：下一行 [beat] 已经说明了一拍。
   if (action != Action::BeatNod && action != Action::BeatNodStrong && action != Action::BeatNodFast) {
-    Serial.printf("motion=%s\n", actionName(action));
+    FC_LOG(2, "motion=%s\n", actionName(action));
   }
   switch (action) {
     case Action::Center: home(); current_ = Action::None; break;

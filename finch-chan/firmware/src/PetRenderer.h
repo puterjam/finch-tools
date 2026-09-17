@@ -48,6 +48,15 @@ class PetRenderer {
   /** PWR 短按：切换麦克风音频动效（收听模式）。 */
   void toggleAudioVisualizer();
   bool audioVisible() const { return audio_.visible(); }
+  /** 律动模式开关（PWR 键与小程序设置菜单共用）。 */
+  void setMusicMode(bool on);
+  bool musicMode() const { return audio_.visible(); }
+  /** 收音灵敏度：0=低 / 1=中 / 2=高（麦克风增益 1.8 / 2.4 / 3.0）。 */
+  void setMicGainLevel(uint8_t level) { audio_.setGainLevel(level); }
+  uint8_t micGainLevel() const { return audio_.gainLevel(); }
+  /** 随节奏舞动：关掉后频谱照旧，只是不再跟拍点头。 */
+  void setBeatDance(bool on) { beatDance_ = on; }
+  bool beatDance() const { return beatDance_; }
   /** 供 WebSocketRelay 接收小程序推过来的提示音（同一份 audio_）。 */
   AudioVisualizer& audioBank() { return audio_; }
   /** 被拍了一下头：笑脸或爱心（随机）+ 慢慢摇头。 */
@@ -115,6 +124,11 @@ class PetRenderer {
   uint32_t frameCount_ = 0;
   /** 补亮屏幕的限频时间戳。 */
   uint32_t lastRelightAt_ = 0;
+  /** 电量（-1 = 读不到）与上次轮询时间。 */
+  int32_t batteryLevel_ = -1;
+  uint32_t batteryPolledAt_ = 0;
+  /** 随节奏舞动（小程序设置菜单可关）。 */
+  bool beatDance_ = true;
 
   bool promptActive_ = false;
   char promptId_[40] = {};
@@ -144,6 +158,12 @@ class PetRenderer {
   void drawPromptButtons(LovyanGFX& g);
   /** 有未读时底部的灰色「查看」按钮（点击行为与“任意点击”一致）。 */
   void drawUnreadButton(LovyanGFX& g);
+  /** 右上角状态条：`♪ 100%`（电量常显，♪ 只在音乐模式）。 */
+  void drawStatusBadge(LovyanGFX& g);
+  /** thinking 静止 / working 摆动的那支笔（帧见 pen_frames.h）。 */
+  void drawPen(LovyanGFX& g, uint32_t now);
+  /** 轮询并缓存电量（I2C 读 PMIC，别每帧读）。 */
+  void pollBattery(uint32_t now);
   void drawSpeech(LovyanGFX& g);
   void cue(PetState state);
 };

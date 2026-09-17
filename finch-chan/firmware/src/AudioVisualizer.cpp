@@ -4,6 +4,7 @@
 #include <esp_heap_caps.h>
 
 #include "config.h"
+#include "Log.h"
 
 namespace {
 
@@ -15,11 +16,11 @@ constexpr uint16_t kNoteColor = 0xFE4F;   // 音符：暖琥珀
 constexpr uint32_t kSampleIntervalMs = 40;   // 与渲染帧率一致
 constexpr int16_t kSampleCount = kAudioFftSize;
 /* 灵敏度（比较敏感时都往小里改）：
- *   kMicGain  : 进 FFT 前的线性增益，小 → 小声不显示
+ *   kGainLevelGains : 进 FFT 前的线性增益，低/中/高 = 1.8 / 2.4 / 3.0（在头文件里，
+ *                     因为小程序设置菜单要能运行时切；见 setGainLevel）
  *   kDbFloor  : 显示下限，抬高 → 安静内容扁下去
  *   kSignalThreshold : 峰值振幅低于它就当成静音，条直接归零
  */
-constexpr float kMicGain = 2.2f;
 
 /* ── 以下数值沿用 muspi spectrum 的默认配置（可按听感微调） ──────────── */
 constexpr float kMinFrequency = 40.0f;    // 最低频率
@@ -31,6 +32,8 @@ constexpr float kDecaySmoothing = 0.65f;  // 回落平滑
 constexpr float kPeakDecay = 0.02f;       // 峰值回落
 constexpr float kSignalThreshold = 0.025f; // 峰值振幅低于它算静音（0.01 太敏感）
 constexpr uint32_t kSilenceHoldMs = 400;  // 静音持续多久后把条归零
+/** 「还算在响」的保持时间：比 kSilenceHoldMs 长，避免阈值上下的逐帧抖动。 */
+constexpr uint32_t kLoudHoldMs = 1200;
 /** 音乐模式判“有声音”的门槛：平均条高超过它就不睡。 */
 constexpr float kLoudLevel = 0.05f;
 /** 音乐模式下连续收音多久才换成笑脸。 */
@@ -73,7 +76,7 @@ constexpr uint32_t kNoteMaxGapMs = 2200;
 
 void AudioVisualizer::begin() {
   if (!M5.Mic.isEnabled()) {
-    Serial.println("[audio] mic NOT available: spectrum will stay flat");
+    FC_LOGLN(1, "[audio] mic NOT available: spectrum will stay flat");
     return;
   }
   // 频段边界：40Hz → Nyquist 等比划分，映射到 FFT bin（和 muspi 的 geomspace 一致）。
@@ -99,8 +102,15 @@ void AudioVisualizer::begin() {
     twiddleRe_[index] = cosf(angle);
     twiddleIm_[index] = sinf(angle);
   }
-  Serial.printf("[audio] spectrum ready: %u bars, %u-pt FFT @ %uHz\n", kAudioBarCount, kAudioFftSize,
+  FC_LOG(1, "[audio] spectrum ready: %u bars, %u-pt FFT @ %uHz\n", kAudioBarCount, kAudioFftSize,
                 static_cast<unsigned>(sampleRate_));
+}
+
+void AudioVisualizer::setGainLevel(uint8_t level) {
+  if (level > 2) level = 2;
+  if (level == gainLevel_) return;
+  gainLevel_ = level;
+  FC_LOG(1, "[audio] mic gain = %s (%.1f)\n", level == 0 ? "low" : level == 1 ? "mid" : "high", micGain());
 }
 
 void AudioVisualizer::setVisible(bool visible) {
@@ -112,24 +122,30 @@ void AudioVisualizer::setVisible(bool visible) {
     if (M5.Mic.isEnabled() && !micOn_) {
       M5.Mic.begin();
       micOn_ = true;
+      speakerDirty_ = true;   // 麦克风抢走了共用 I2S：播提示音前要把扬声器装回去
     }
     haveSpectrum_ = false;
     loudSince_ = 0;
     outOfBandCount_ = 0;
-    Serial.println("[audio] visualizer ON (PWR to toggle)");
+    FC_LOGLN(1, "[audio] visualizer ON (PWR to toggle)");
   } else {
     if (micOn_) {
       M5.Mic.end();
       micOn_ = false;
+      // end() 会把共用端口连同驱动一起卸掉，扬声器这时是"哑"的，
+      // 必须重新初始化一次才能再出声（否则切回非音乐模式后提示音全没了）。
+      speakerDirty_ = true;
     }
     loudSince_ = 0;
-    Serial.println("[audio] visualizer OFF");
+    FC_LOGLN(1, "[audio] visualizer OFF");
   }
 }
 
 bool AudioVisualizer::isLoud() const {
-  // 刚响过（还没到静音超时）或者平均条高够高，都算“有声音”。
-  return avgLevel_ > kLoudLevel || (micOn_ && millis() - lastSilenceAt_ < kSilenceHoldMs);
+  // 有声音：平均条高够高，或者还在“刚响过”的保持窗口里。
+  // 加保持窗口是因为电平常常正好在阈值上下晃：只看瞬时值会逐帧在
+  // 收听/安静之间跳（日志刷屏，idle 下表情也跟着来回切）。
+  return avgLevel_ > kLoudLevel || millis() < loudHoldUntil_;
 }
 
 uint32_t AudioVisualizer::loudDurationMs(uint32_t now) const {
@@ -153,14 +169,14 @@ bool AudioVisualizer::acceptSound(uint8_t slot, uint32_t sampleRate, uint32_t sa
     // 提示音放 PSRAM：内部 RAM 留给栈与网络缓冲。
     soundData_[slot] = static_cast<int16_t*>(heap_caps_malloc(kSoundCapacity * sizeof(int16_t), MALLOC_CAP_SPIRAM));
     if (!soundData_[slot]) {
-      Serial.println("[sound] PSRAM alloc failed");
+      FC_LOGLN(1, "[sound] PSRAM alloc failed");
       return false;
     }
   }
   memcpy(soundData_[slot], samples, sampleCount * sizeof(int16_t));
   soundSamples_[slot] = sampleCount;
   soundRate_[slot] = sampleRate ? sampleRate : 16000;
-  Serial.printf("[sound] slot %u <- %u samples @ %uHz (%ums)\n", slot, sampleCount, soundRate_[slot],
+  FC_LOG(1, "[sound] slot %u <- %u samples @ %uHz (%ums)\n", slot, sampleCount, soundRate_[slot],
                 soundSamples_[slot] * 1000UL / soundRate_[slot]);
   return true;
 }
@@ -170,10 +186,40 @@ bool AudioVisualizer::hasSound(uint8_t slot) const {
 }
 
 bool AudioVisualizer::playSound(uint8_t slot) {
-  if (!hasSound(slot) || !M5.Speaker.isEnabled()) return false;
+  if (!hasSound(slot)) return false;
+  if (!beginPlayback()) return false;
   // 与内置提示音一样：播放期间门控麦克风，播完重开（两者共用 I2S）。
   muteFor(soundSamples_[slot] * 1000UL / soundRate_[slot] + 250);
   return M5.Speaker.playRaw(soundData_[slot], soundSamples_[slot], soundRate_[slot], false, 1, -1, true);
+}
+
+/**
+ * 播放前的音频端口交接（StackChan 麦克风与扬声器共用 I2S_NUM_1）。
+ *
+ * 两种坏情况都在这里挡掉：
+ *   1) 麦克风在跑：端口配成 16kHz 输入，扬声器往里写就是爆音；
+ *   2) 麦克风刚 end()：端口连同驱动被卸掉，而扬声器以为自己在跑（_begun 还是 true），
+ *      不重新初始化就永远不会再有声音——这就是"切回非音乐模式后提示音再也播不出来"。
+ * 所以：麦克风先放手 → 需要时把扬声器整块重装（end + begin）。
+ */
+bool AudioVisualizer::beginPlayback() {
+  if (!M5.Speaker.isEnabled()) return false;   // 板子没接扬声器
+  if (micOn_) {
+    M5.Mic.end();
+    micOn_ = false;
+    needMicRestart_ = true;   // 播完 update() 会把麦克风开回来
+    speakerDirty_ = true;
+  }
+  if (speakerDirty_) {
+    M5.Speaker.end();
+    if (!M5.Speaker.begin()) {
+      FC_LOGLN(1, "[audio] speaker re-init failed");
+      return false;
+    }
+    speakerDirty_ = false;
+    FC_LOGLN(1, "[audio] speaker re-init (I2S shared with mic)");
+  }
+  return true;
 }
 
 void AudioVisualizer::muteFor(uint32_t durationMs) {
@@ -211,7 +257,7 @@ void AudioVisualizer::sample(uint32_t now) {
   for (int16_t index = 0; index < kSampleCount; ++index) {
     const float value = fabsf(static_cast<float>(buffer[index]) / 32768.0f);
     if (value > peak) peak = value;
-    re_[index] = static_cast<float>(buffer[index]) / 32768.0f * kMicGain * window_[index];
+    re_[index] = static_cast<float>(buffer[index]) / 32768.0f * micGain() * window_[index];
     im_[index] = 0.0f;
   }
   if (peak > kSignalThreshold) lastSilenceAt_ = now;
@@ -294,7 +340,7 @@ void AudioVisualizer::computeSpectrum() {
             outOfBandCount_ = 0;
             for (uint8_t index = 0; index < kIntervalCount; ++index) intervals_[index] = interval;
             beatIntervalMs_ = interval;
-            Serial.printf("[beat] tempo resync -> %u bpm\n", 60000UL / interval);
+            FC_LOG(2, "[beat] tempo resync -> %u bpm\n", 60000UL / interval);
           }
         }
       }
@@ -323,7 +369,7 @@ void AudioVisualizer::computeSpectrum() {
   } else if (visible_ && now - lastProbeAt_ >= kBeatProbeIntervalMs) {
     // 没触发也报一行（也算鼓点日志），能看出是“没音乐”还是“阀值不合理”。
     lastProbeAt_ = now;
-    Serial.printf("[beat] probe flux=%.2f thr=%.2f low=%.2f level=%.2f bpm=%u beats=%u\n", flux, threshold,
+    FC_LOG(2, "[beat] probe flux=%.2f thr=%.2f low=%.2f level=%.2f bpm=%u beats=%u\n", flux, threshold,
                   lowMax, avgLevel_, beatIntervalMs_ ? 60000 / beatIntervalMs_ : 0, beatCount_);
   }
 }
@@ -364,13 +410,17 @@ void AudioVisualizer::fft() {
 
 void AudioVisualizer::update(uint32_t now) {
   // 提示音播完、静音窗口也过了：重开麦克风，把 I2S 配置拉回采样需要的状态。
+  // 注意条件是 visible_ 而不是 micOn_：播放前的交接已经主动把麦克风 end() 了，
+  // 这里要负责把它开回来；音乐模式关着的时候就让它保持关闭。
   if (needMicRestart_ && now >= mutedUntil_ && !(M5.Speaker.isEnabled() && M5.Speaker.isPlaying())) {
     needMicRestart_ = false;
-    if (micOn_) {
-      M5.Mic.end();
+    if (visible_ && M5.Mic.isEnabled()) {
+      if (micOn_) M5.Mic.end();
       M5.Mic.begin();
+      micOn_ = true;
+      speakerDirty_ = true;   // 麦克风又把共用端口拿走了，下次播放再装回扬声器
       flushFrames_ = 2;
-      Serial.println("[audio] mic restarted after cue tone");
+      FC_LOGLN(1, "[audio] mic restarted after cue tone");
     }
   }
 
@@ -381,11 +431,18 @@ void AudioVisualizer::update(uint32_t now) {
 
   sample(now);
 
+  // 每次判定到“有声音”就把保持窗口往后推（电平够高，或刚采到有效信号）。
+  // 窗口用 kLoudHoldMs 而不是 kSilenceHoldMs：静音保持得更久一些，才不会
+  // 在阈值附近逐帧抖动。真的停下来还是会（在窗口过后）干净地回到 idle。
+  if (avgLevel_ > kLoudLevel || (micOn_ && now - lastSilenceAt_ < kSilenceHoldMs)) {
+    loudHoldUntil_ = now + kLoudHoldMs;
+  }
+
   // 连续收音计时：安静就清零（表情随之退回 idle）。
   if (visible_ && micOn_ && isLoud()) {
     if (!loudSince_) {
       loudSince_ = now;
-      Serial.println("[audio] music mode: listening...");
+      FC_LOGLN(1, "[audio] music mode: listening...");
     }
   } else if (loudSince_) {
     loudSince_ = 0;
@@ -393,7 +450,7 @@ void AudioVisualizer::update(uint32_t now) {
     outOfBandCount_ = 0;   // 下一首歌重新累积
     // 音乐停了：音符也一起收掉（“安静了就不该还有音符冒出来”）。
     for (uint8_t index = 0; index < kNotes; ++index) notes_[index].alive = false;
-    Serial.println("[audio] music mode: quiet, back to idle face");
+    FC_LOGLN(1, "[audio] music mode: quiet, back to idle face");
   }
 
   // 关掉之后（以及提示音期间）条要收干净：采样停了，靠这里的衰减。

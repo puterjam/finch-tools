@@ -1,5 +1,20 @@
 # FinchChan firmware · M5CoreS3 / StackChan
 
+> **给使用者的烧录指南在 [`../firmware.md`](../firmware.md)**（环境准备、编译、刷机、配网、排错）。
+> 本文是给改代码的人看的：模块划分、参数含义、诊断日志。
+
+编译并归档产物（输出到 `firmware/release/finchchan-<版本>.bin`，加 `--no-full` 省磁盘、`--elf` 留调试符号）：
+
+```sh
+bash tools/build.sh
+```
+
+编译 + 上传一步完成（先退出串口监视器）：
+
+```sh
+bash tools/flash-all.sh [串口]
+```
+
 把 StackChan 变成 Finch 的桌面分身：眼睛表情、气泡文案、RGB 灯效，以及**在设备上直接处理等待中的权限卡与提问卡**。
 固件不再打包任何位图资源——表情全部是矢量绘制，没有 LittleFS、没有素材分区。
 
@@ -19,6 +34,12 @@
 - 原设计的关键特征是**脸上只有眼睛**，用 12 种眼型加遮罩雕刻情绪；
 - 完整保留了随机眨眼（2–8 秒）、空闲时东张西望与皱眉抽动、以及 shake / shocked / breathe 三种附加动画；
 - 屏幕从 80×32 单色 OLED 换成 320×240 彩屏：整脸放大，眼型带上颜色（暖白 / 苔绿 / 琥珀 / 玫瑰 / 雾灰）。
+- **眼睛有抗锯齿**：屏幕是 16 位色、没有 alpha，矢量填充（`fillEllipse` / `fillArc` / 斜切三角形）
+  画出来都是硬边，60px 的圆边上台阶很明显。所以 `drawEye()` 先在 **2 倍大的离屏画布**
+  （`kEyeBufferSize` 160×160，PSRAM）上画形状，再用 `pushRotateZoomWithAA()` 按 0.5 缩放贴回：
+  LovyanGFX 缩放时会按透明色算覆盖度做混合，于是**所有形状**（椭圆、弧、斜切三角、爱心）
+  一次性都平滑，不用把每个形状都换成"平滑图元"。形状代码（`drawEyeShape()`）保持纯矢量不变；
+  离屏画布建不起来时自动退回硬边绘制。
 
 | 状态 | 表情 | 眼睛 |
 |---|---|---|
@@ -30,6 +51,28 @@
 | 刚完成 | Delighted | 大笑 + 抖动 |
 | error | Sad | 皱眉下垂 |
 | speaking | Listening | 睁眼 + 眨眼型，呼吸 |
+
+### working 的「动笔」动画
+
+`working` 状态时右下角有一支铅笔（`drawPen()`）；**`thinking` 不画**（看着怪）：
+
+- 图标是 Lucide 的 `pencil`，离线栅格化成点阵、**以笔尖为轴**旋转预渲染 9 帧
+  （`firmware/src/pen_frames.h`，生成脚本 `tools/pen-frames.py`）——固件只做选帧 + blit，
+  不需要 SVG 解析，也没有逐帧浮点旋转的开销。
+- **抗锯齿**：帧是 **2 位/像素（4 档灰）**，固件用 `blitMaskN()` 把它映射到 `kPenGrayLut`（固定 16 档灰表）。
+  纯 1 位阈值化在斜线上是一格一格的硬台阶；灰阶过渡把最扎眼的台阶磨掉，又不会像 16 档那样发糊。
+  生成器里改 `BITS` 就能调（1 位最硬、2 位是当前值、4/8 位更柔但更占 Flash），固件不用动。
+- **笔尖钉在屏幕坐标上**（`kPenTipScreenX/Y`，默认 `(253, 187)`），笔身绕它来回摆。
+  调位置是调这个笔尖坐标，不是调整帧。
+- **节奏**：摆 `kPenSwingsPerRound`（3）下，每下 `kPenSwingPeriodMs`（1400ms），
+  然后停 `kPenRestMs`（3000ms）再继续；停顿期间停在正中那帧（= 初始化位置）。
+- 摆幅用 `kPenSwingFrames` 缩放：取中心附近几帧来用，**9 = 满摆（预渲染的 ±6°）**、
+  5 ≈ ±2.5°、3 ≈ ±1.4°、1 = 完全静止。想微调摆角就改这一个数，不用重新生成帧表。
+- 颜色 `kPenColor`（默认白色，和眼睛一致）；有等待卡片时不画（让位给卡片）。
+- 帧是 56×56 的方框，旋转余量留够，所以**任何角度下笔尾都不会被裁到**。
+
+> 为什么不是 ±1°：这支笔 38px 长，±1° 时笔端只移动 0.66px，是亚像素级——
+> 9 帧里有 4 帧和原位逐像素完全相同，肉眼看不见。±6° 时笔端约 4px，才有"在动"的感觉。
 
 ## 等待卡片与代答
 
@@ -77,6 +120,12 @@
 
 `thinking` / `working` / `waiting` / 未读 四种状态会在眼睛上方显示气泡，文案来自小程序的
 `i18n/*.json`（`bubble.*`），改词不需要重烧固件。设备端用 M5GFX 的 `efontCN_16` 渲染，最多两行自动折行。
+
+`thinking` / `working` 各有 **5 句**（`bubble.thinking1..5` / `bubble.working1..5`），
+**同一状态停留超过 5 秒（`BUBBLE_ROTATE_MS`）就换下一句**：小程序重发一次同状态命令，
+只换气泡文本——设备端 `setState()` 即使状态没变也会更新气泡，而提示音按「状态是否变化」抑制，
+所以换文案不会重复响。相邻两次不会挑到同一句（`nextBubbleIndex()`）。
+轮换由一条独立的 1 秒定时器驱动（`bridge.rotateBubble()`），间隔就是 `BUBBLE_ROTATE_MS`。
 
 ## 配网（新用户从这里开始）
 
@@ -177,12 +226,16 @@ StackChan 上有三个独立输入源，固件分开处理：
 
 | 输入源 | API | 用途 |
 |---|---|---|
-| **屏幕触控面板** | `M5.Touch.getDetail()`（M5Unified，CoreS3 显示触摸） | 卡片按钮按**坐标**命中，和手机一样点 |
+| **屏幕触控面板** | `M5.Touch.getDetail()`（M5Unified，CoreS3 显示触摸） | 卡片按钮按**坐标**命中；点表情/空白处 = 跳去对应会话 |
 | **顶部电容区** | `M5StackChan.TouchSensor`（Si12T，三个区 + 前后滑动） | 没屏幕时也能作答：Front = 选项一，Back = 选项二，Middle = 去 Finch |
 | **拍头** | IMU 加速度尖峰 | 任意时候 = 亲密反应（睡着也会醒） |
 
 卡片按钮的命中完全走屏幕坐标（`hitTestPrompt`）；顶部三个区只是把区位翻译成同一个选项 id，
 两者走同一套分发逻辑，行为一致。
+
+**点表情/空白处**（有卡片但没点中按钮）走 `openPromptSession()`：等价于卡片上的「去回复」，
+`relay.notifyTap(promptId)` → 小程序打开这张卡片所属的会话。卡片**故意留着**（用户可能只是去看一眼，
+不一定作答），只有真的结算了才收起。设备本地的配对确认卡没有对应会话，点表情不做事。
 
 ### 诊断日志
 
@@ -226,7 +279,33 @@ screen touch while sleeping -> wake (friendly)   # 睡着时点一下只是唤�
 
 行为：
 
-- **PWR 短按**切换（`M5.BtnPWR.wasClicked()`）。
+- **PWR 短按**切换（`M5.BtnPWR.wasClicked()`）；小程序设置菜单里的「律动模式」是**同一个开关**
+  （`PetRenderer::setMusicMode()`），切完立刻 `relay.reportSettings()` 上报，所以两边状态永远一致。
+- 小程序下发的功能设置走同一个命令通道：`{"type":"command","action":"settings","music":?,"gain":?,"beat":?}`
+  —— 三个字段都可选，只改传了的；设备应用后回一份 `{"type":"settings",…}` 完整状态
+  （连接建立时也会主动上报一次，设置菜单一打开就是当前值）。
+  - **收音灵敏度**：`gain` 0/1/2 → 麦克风线性增益 1.8 / 2.4 / 3.0（`kGainLevelGains`，原先是编译期常量）。
+  - **随节奏舞动**：`beat` 关掉后频谱照旧，只是不再跟拍点头（`beatDance_`）。
+- 右上角常驻一条状态信息 **`♪ 🌕`**（`drawStatusBadge()`）：
+  - **电量用一个字形表示，不显示数字**：用 QuinqueFive 的月相字符，填充量随电量递减
+    （实测填充像素 189/162/135/108）：`74~100%` 实心（U+1F311）、`47~73%` 细缝（U+1F313）、
+    `21~46%` 宽缝（U+1F314）、`<=20%` 空心（U+1F315）。
+    判定写成 `(level - 20) * 3` 与 80 / 160 比较，即把 20~100 这 80 个点三等分（各约 26.7），
+    不用浮点也不会在边界差一；想改最低档阈值就改 `kBadgeRedPercent`。
+  - **颜色按红绿灯走**：音符与实心/细缝是薄荷绿（`kBadgeGreenColor`，和频谱条同色）、
+    宽缝转黄（`kBadgeWarnColor`）、空心转红（`kBadgeLowColor`）。
+  - 电量 10 秒轮询一次（`M5.Power.getBatteryLevel()`，I2C 读 AXP2101，别每帧读），
+    读数变化时串口打 `[power] battery=NN%`；读不到（-1）就不显示电量。
+  - **`♪` 只在音乐模式开着时出现，放在月相左边**，表示“现在是收听状态”。
+  - **固定在右上角，气泡出现也不动**：状态栏在最后绘制（画在气泡/频谱/按钮之上）；
+    气泡顶边也整体下移到 `kBubbleTopY`（= 状态栏高度 + 1，默认 14），
+    所以哪怕气泡拉得很宽也不会和状态栏叠在一起。
+  - 打瞌睡/惊醒动画期间不画。
+  - 字形来自 muspi 的状态字体 `assets/fonts/QuinqueFive.ttf`，直接用它的**原生 5px**
+    点阵（muspi 自己的状态栏就是这个字号，`screen/base.py` 里 `font_status = FONTS.size_5`），
+    离线导出后内嵌成 `kMusicNote[]` / `kMoon*[]`：每行 1 字节、MSB 在左。
+    和表情一样不需要运行时字体文件。想换尺寸就按整数倍重新导出点阵
+    （`kBadgeGlyph` / `kBadgeRows` / `kBadgeStride` 跟着改）。
 - 显示时**不上移表情**：频谱只占底部一行，不挡脸；只有等待卡片出现时才把表情顶上去（同一个 26px）。
 - 频谱里没有多余的横向元素：既没有 muspi 那条底线，也没有底部按增益伸缩的电平长条，就一条条跳动的竖条。
 - **笑脸只在 idle，而且是“听够了才笑”**（`idle` 的两个子状态）：
@@ -287,17 +366,24 @@ screen touch while sleeping -> wake (friendly)   # 睡着时点一下只是唤�
 ### 提示音与麦克风的冲突（已处理）
 
 StackChan 上**麦克风与扬声器共用 `I2S_NUM_1`**（M5Unified 的 `board_M5StackChan` 两边都填了同一个
-`i2s_port`，只是数据引脚不同），而且麦克风 16kHz、扬声器 48kHz。这带来两个坑：
+`i2s_port`，只是数据引脚不同），而且麦克风 16kHz、扬声器 48kHz。这带来几个坑：
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | 提示音“啪”一声（爆音） | `Speaker.tone()` 波形头尾突变 | 自绘正弦 + 10ms 淡入 / 30ms 淡出，走 `Speaker.playRaw` |
+| **开过音乐模式后提示音变成爆音** | 麦克风正占着共用端口（16kHz 输入），扬声器往里写只能出噪声 | 播放前 `AudioVisualizer::beginPlayback()`：先 `Mic.end()` 让出端口，再把扬声器 `end()+begin()` 装回自己的配置 |
+| **关掉音乐模式后提示音再也不出声** | `Mic.end()` 会把整个 I2S 驱动卸掉，而扬声器 `_begun` 仍是 true、不会重新初始化，于是永远是哑的 | 同上：只要麦克风动过端口（`speakerDirty_`），每次播放前都把扬声器重装一次 |
 | 提示音后频谱“突然全满” | ① 提示音被自己的麦克风收进去；② 播放把 I2S 采样率改掉，麦风数据被按错误速率解释 | 播放期间门控麦克风（读掉丢弃）；播完自动 `Mic.end()+begin()` 重开一次，并再丢两帧残留 |
 
-日志里能看到每次提示音后的自恢复：
+原则：**麦克风与扬声器谁都不长期占有端口**——麦克风只在音乐模式显示期间开着，
+扬声器只在真的要出声前重装一次；两条播放路径（小程序推送的提示音、内置合成音）
+都走同一个 `beginPlayback()`，不会再出现某一侧被另一侧搞哑的情况。
+
+日志里能看到端口交接与麦克风自恢复：
 
 ```
-[audio] mic restarted after cue tone
+[audio] speaker re-init (I2S shared with mic)   # 播放前把扬声器装回去
+[audio] mic restarted after cue tone            # 提示音之后自恢复麦克风
 ```
 
 串口日志：
@@ -429,6 +515,8 @@ bash tools/flash-all.sh /dev/cu.usbmodem13201
 - `src/EmotionFace.*` — muspi 移植的表情系统（矢量，无资源文件）
 - `src/LedRing.*` — 状态到灯效的映射表与动效
 - `src/PetRenderer.*` — 气泡、等待卡片、触摸命中测试、离屏画布
+- `src/pen_frames.h` — working 状态「动笔」动画的预渲染帧（由 `tools/pen-frames.py` 生成）
+- `src/Log.h` — 串口日志分档（`FINCHCHAN_LOG_LEVEL`）+ 串口阻塞保护
 - `src/WifiProvisioning.*` — NVS 凭证 + 首次开机热点配网页（captive portal）
 - `src/HostDiscovery.*` — UDP 广播找桥接主机，免填 IP
 - `src/WebSocketRelay.*` — 协议、NVS token、重连与应答回传

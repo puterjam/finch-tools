@@ -1,4 +1,6 @@
 #include "WebSocketRelay.h"
+
+#include "Log.h"
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <WiFi.h>
@@ -6,6 +8,30 @@
 #include "DeviceIdentity.h"
 
 using namespace websockets;
+
+namespace {
+/**
+ * ack 里回报的状态名要翻译成**协议词汇**。
+ *
+ * `petStateName()` 用的是设备内部的名字（success / sleeping / speaking），
+ * 而小程序只认 idle|thinking|working|waiting|happy|error；名字对不上时整条 ack
+ * 会被判成 bad_message（串口里就能看到 `[relay] server error: bad_message`）。
+ * 所以：
+ *   Success  → happy（协议里"有未读/完成"叫 happy）
+ *   Sleeping / Speaking → 不带（设备本地的子状态，小程序没有对应概念；state 是可选字段）
+ */
+const char* ackStateName(PetState state) {
+  switch (state) {
+    case PetState::Idle: return "idle";
+    case PetState::Thinking: return "thinking";
+    case PetState::Working: return "working";
+    case PetState::Waiting: return "waiting";
+    case PetState::Success: return "happy";
+    case PetState::Error: return "error";
+    default: return nullptr;
+  }
+}
+}  // namespace
 
 void WebSocketRelay::begin() {
   loadToken();
@@ -35,7 +61,7 @@ void WebSocketRelay::setEndpoint(const char* host, uint16_t port) {
   if (!strcmp(host, host_) && port == port_) return;
   strlcpy(host_, host, sizeof(host_));
   port_ = port;
-  Serial.printf("[relay] endpoint -> ws://%s:%u\n", host_, static_cast<unsigned>(port_));
+  FC_LOG(1, "[relay] endpoint -> ws://%s:%u\n", host_, static_cast<unsigned>(port_));
   // 已经在连旧地址：断掉立刻重连新地址。
   if (connected_) client_.close();
   connected_ = false;
@@ -83,7 +109,7 @@ void WebSocketRelay::onMessage(WebsocketsMessage message) {
     // 服务器告诉我们「Finch 侧已经开了配对窗口」：这时才该弹确认卡片。
     if (doc["pairing"] | false) {
       pairOffered_ = true;
-      Serial.println("[relay] Finch has an open pairing window for this device");
+      FC_LOGLN(1, "[relay] Finch has an open pairing window for this device");
     }
     if (serverKnowsUs && token_[0]) {
       sendAuth();
@@ -92,11 +118,11 @@ void WebSocketRelay::onMessage(WebsocketsMessage message) {
       if (pairCode_[0]) {
         sendPair();
       } else {
-        Serial.println("[relay] not paired: run finchchan_control action=\"pair\", then send \"pair <code>\" over serial");
+        FC_LOGLN(1, "[relay] not paired: run finchchan_control action=\"pair\", then send \"pair <code>\" over serial");
       }
     } else {
       // 服务端认为已配对，但本机没有 token（刷了 NVS / 换过机）。
-      Serial.println("[relay] server expects a token but none is stored: unpair the device in Finch, then pair again");
+      FC_LOGLN(1, "[relay] server expects a token but none is stored: unpair the device in Finch, then pair again");
     }
     return;
   }
@@ -106,28 +132,30 @@ void WebSocketRelay::onMessage(WebsocketsMessage message) {
       persistToken(token);
       paired_ = true;
       clearPairCode();   // 配对码是一次性的，用过就清
-      Serial.println("[relay] paired, token stored in NVS");
+      FC_LOGLN(1, "[relay] paired, token stored in NVS");
+      sendSettings();    // 让小程序设置菜单立刻拿到当前状态
     }
     return;
   }
   if (!strcmp(type, "auth")) {
     paired_ = true;
+    sendSettings();
     return;
   }
   if (!strcmp(type, "pair_offer")) {
     pairOffered_ = true;
-    Serial.println("[relay] pairing offered by Finch");
+    FC_LOGLN(1, "[relay] pairing offered by Finch");
     return;
   }
   if (!strcmp(type, "error")) {
     const char* code = doc["code"] | "";
-    Serial.printf("[relay] server error: %s\n", code);
+    FC_LOG(1, "[relay] server error: %s\n", code);
     if (!strcmp(code, "pairing_not_started") || !strcmp(code, "pairing_denied")) pairError_ = true;
     if (!strcmp(code, "unauthorized")) {
       // 服务端不认识我们的 token（多半是用户刚取消配对）：清掉，回到未配对。
       clearToken();
       paired_ = false;
-      Serial.println("[relay] token rejected: cleared, waiting for a new pairing offer");
+      FC_LOGLN(1, "[relay] token rejected: cleared, waiting for a new pairing offer");
     }
     return;
   }
@@ -162,7 +190,7 @@ void WebSocketRelay::onMessage(WebsocketsMessage message) {
         ++command.prompt.optionCount;
       }
       if (!command.prompt.optionCount) return;  // 没有选项就不显示卡片
-      Serial.printf("prompt %s kind=%s options=%u title=%s\n", command.prompt.id, command.prompt.kind,
+      FC_LOG(1, "prompt %s kind=%s options=%u title=%s\n", command.prompt.id, command.prompt.kind,
                     command.prompt.optionCount, command.prompt.title);
     } else if (!strcmp(action, "prompt_clear")) {
       command.type = PetCommand::Type::PromptClear;
@@ -170,6 +198,16 @@ void WebSocketRelay::onMessage(WebsocketsMessage message) {
     } else if (!strcmp(action, "wifi-reset")) {
       // 重新配网：设备清掉 NVS 里的 WiFi 凭证并重启进配网模式。
       command.type = PetCommand::Type::WifiReset;
+    } else if (!strcmp(action, "settings")) {
+      // 功能设置：三个字段都可选，只改传了的那些（越界值在这里夹住）。
+      command.type = PetCommand::Type::Settings;
+      if (doc.containsKey("music")) command.settingMusic = doc["music"].as<bool>() ? 1 : 0;
+      if (doc.containsKey("gain")) {
+        const int gain = doc["gain"].as<int>();
+        command.settingGain = static_cast<int8_t>(gain < 0 ? 0 : gain > 2 ? 2 : gain);
+      }
+      if (doc.containsKey("beat")) command.settingBeat = doc["beat"].as<bool>() ? 1 : 0;
+      if (command.settingMusic < 0 && command.settingGain < 0 && command.settingBeat < 0) return;   // 三个都没给就忽略
     } else return;
   } else if (!strcmp(type, "ping")) {
     command.type = PetCommand::Type::Ping;
@@ -267,7 +305,7 @@ void WebSocketRelay::sendHello() {
 /** 设备屏幕上按了「确认」：不带配对码直接请求配对（Finch 侧必须已开配对窗口）。 */
 void WebSocketRelay::submitPairConfirm() {
   if (!connected_) {
-    Serial.println("[relay] cannot pair: bridge is not connected");
+    FC_LOGLN(1, "[relay] cannot pair: bridge is not connected");
     return;
   }
   StaticJsonDocument<192> doc;
@@ -276,7 +314,7 @@ void WebSocketRelay::submitPairConfirm() {
   String payload;
   serializeJson(doc, payload);
   client_.send(payload);
-  Serial.println("[relay] pairing confirmed on device, request sent");
+  FC_LOGLN(1, "[relay] pairing confirmed on device, request sent");
 }
 
 void WebSocketRelay::sendPair() {
@@ -307,17 +345,17 @@ void WebSocketRelay::submitPairCode(const char* code) {
     }
   }
   if (!normalized[0]) {
-    Serial.println("[relay] usage: pair <code>   (code from finchchan_control action=\"pair\")");
+    FC_LOGLN(1, "[relay] usage: pair <code>   (code from finchchan_control action=\"pair\")");
     return;
   }
   strlcpy(pairCode_, normalized, sizeof(pairCode_));
   savePairCode();
-  Serial.printf("[relay] pairing code stored: %s\n", pairCode_);
+  FC_LOG(1, "[relay] pairing code stored: %s\n", pairCode_);
   if (connected_) {
     sendPair();
-    Serial.println("[relay] pairing request sent");
+    FC_LOGLN(1, "[relay] pairing request sent");
   } else {
-    Serial.println("[relay] not connected yet: the code will be sent as soon as the bridge is reachable");
+    FC_LOGLN(1, "[relay] not connected yet: the code will be sent as soon as the bridge is reachable");
   }
 }
 
@@ -340,7 +378,7 @@ void WebSocketRelay::loadPairCode() {
     strlcpy(pairCode_, FINCHCHAN_PAIR_CODE, sizeof(pairCode_));
     savePairCode();
   }
-  if (pairCode_[0]) Serial.printf("[relay] pending pairing code: %s\n", pairCode_);
+  if (pairCode_[0]) FC_LOG(1, "[relay] pending pairing code: %s\n", pairCode_);
 }
 
 void WebSocketRelay::savePairCode() {
@@ -373,7 +411,9 @@ void WebSocketRelay::sendAck(const PetCommand& command) {
   StaticJsonDocument<128> doc;
   doc["type"] = "ack";
   if (command.id[0]) doc["id"] = command.id;
-  doc["state"] = petStateName(command.state);
+  // 状态名要说小程序那边的词汇：固件的 Success 在协议里叫 happy。
+  // sleeping / speaking 是设备本地的子状态，小程序不认识，就不带（state 本来就是可选字段）。
+  if (const char* name = ackStateName(command.state)) doc["state"] = name;
   String payload;
   serializeJson(doc, payload);
   client_.send(payload);
@@ -388,6 +428,30 @@ void WebSocketRelay::sendStatus() {
   doc["wifi"] = WiFi.RSSI();
   doc["uptimeMs"] = millis();
   doc["freeHeap"] = ESP.getFreeHeap();
+  String payload;
+  serializeJson(doc, payload);
+  client_.send(payload);
+}
+
+/**
+ * 记录并上报功能设置。设备是唯一真源：小程序改、按 PWR 键都走这里；
+ * 重连后（auth / paired）会再自动上报一次，所以设置菜单一打开就是当前状态。
+ */
+void WebSocketRelay::reportSettings(bool music, uint8_t gain, bool beat) {
+  settingMusic_ = music;
+  settingGain_ = gain > 2 ? 2 : gain;
+  settingBeat_ = beat;
+  if (connected_) sendSettings();
+}
+
+void WebSocketRelay::sendSettings() {
+  if (!connected_) return;
+  StaticJsonDocument<192> doc;
+  doc["type"] = "settings";
+  doc["deviceId"] = finchchanDeviceId();
+  doc["music"] = settingMusic_;
+  doc["gain"] = settingGain_;
+  doc["beat"] = settingBeat_;
   String payload;
   serializeJson(doc, payload);
   client_.send(payload);

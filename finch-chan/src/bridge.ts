@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import type * as finch from 'finch';
 import { DISCOVERY_PORT, startDiscovery, type DiscoveryHandle } from './discovery.js';
 import { soundFrames } from './audio.js';
-import { PROTOCOL_VERSION, type ClientMessage, type DeviceRecord, type PairedToken, type PendingPair, type PetState, type PromptKind, type PromptOption, type ServerMessage, isPetState, parseClientMessage, sanitizeBubble, sanitizeText } from './protocol.js';
+import { PROTOCOL_VERSION, type ClientMessage, type DeviceRecord, type GainLevel, type PairedToken, type PendingPair, type PetState, type PromptKind, type PromptOption, type ServerMessage, isPetState, parseClientMessage, sanitizeBubble, sanitizeText } from './protocol.js';
 
 const TOKEN_KEY = 'finchchan.tokens';
 const DEVICES_KEY = 'finchchan.devices';
@@ -13,6 +13,13 @@ const PAIR_TTL_MS = 10 * 60_000;
 const BUSY_WINDOW_MS = 5000;
 /** 出错是短暂提示，过了就回到常规状态。 */
 const ERROR_WINDOW_MS = 6000;
+/**
+ * thinking / working 各有几句气泡文案（i18n 里的 `bubble.thinking1..N`）。
+ * 停在同一个状态超过 BUBBLE_ROTATE_MS 就重发一次状态，只换文案
+ * （设备端 setState 即使状态没变也会更新气泡，且不会重复响提示音）。
+ */
+const BUBBLE_TEXTS = 5;
+const BUBBLE_ROTATE_MS = 5_000;
 /**
  * 乐观未读的有效期。
  * background-done 先把它置上（任务一完成就立刻变笑脸），但这时 Finch 的 status
@@ -25,6 +32,15 @@ export const SYNC_INTERVAL_MS = 2000;
 
 interface Connection { socket: WebSocket; deviceId?: string; authenticated: boolean; chip?: string }
 interface BridgeSnapshot { port: number; discoveryPort: number; state: PetState; devices: DeviceRecord[]; started: boolean }
+
+/** 设备端的功能设置（旋律模式 / 收音灵敏度 / 随节奏舞动）。 */
+interface DeviceSettings { music: boolean; gain: GainLevel; beat: boolean }
+
+/**
+ * 设置菜单要显示的状态。多台设备时取第一台在线设备的值，
+ * `mixed=true` 表示它们当前不一致（菜单里会提示）。
+ */
+export interface SettingsSnapshot { connected: number; mixed: boolean; music?: boolean; gain?: GainLevel; beat?: boolean }
 
 /** 设备端正在显示的一张卡片，记录作答时需要的映射关系。 */
 interface PendingPrompt {
@@ -45,6 +61,8 @@ export class FinchChanBridge {
   private server?: WebSocketServer;
   private discovery?: DiscoveryHandle;
   private readonly connections = new Map<WebSocket, Connection>();
+  /** 每台设备最近一次上报的功能设置（设备是唯一真源，PWR 键也能改）。 */
+  private readonly settings = new Map<string, DeviceSettings>();
   private readonly pending = new Map<string, PendingPair>();
   private readonly pendingPrompts = new Map<string, PendingPrompt>();
   /** 最近有活动的会话，用作点按的回退目标。 */
@@ -53,6 +71,9 @@ export class FinchChanBridge {
   private assistantName = 'Finch';
   private state: PetState = 'idle';
   private lastSentAt = 0;
+  /** 每组气泡文案上一次用的索引（避免连着重复）＋ 上次换文案的时间。 */
+  private readonly bubbleCursor = new Map<string, number>();
+  private bubbleRotatedAt = 0;
   /** 状态仲裁用的事实：在忙 / 未读 / 有等待 / 出错（短暂）。 */
   private busyState?: PetState;
   private busyUntil = 0;
@@ -151,6 +172,54 @@ export class FinchChanBridge {
     return this.broadcast({ type: 'command', id: crypto.randomUUID(), action: 'wifi-reset' });
   }
 
+  /**
+   * 长时间停在 thinking / working（agent 干活时没有新事件）就换一句气泡文案：
+   * 用 force 重发一次同状态，绕过去重，只换文本，不重复响提示音、不闪表情。
+   * 由 index.ts 的定时器每秒调一次，所以实际间隔就是 BUBBLE_ROTATE_MS。
+   * （挂在那条 2 秒的状态对账上的话，实际会变成 ~6 秒一次。）
+   */
+  async rotateBubble(): Promise<void> {
+    if (this.state !== 'thinking' && this.state !== 'working') return;
+    if (Date.now() - this.bubbleRotatedAt < BUBBLE_ROTATE_MS) return;
+    await this.publishState(this.state, true);
+  }
+
+  /**
+   * 设置菜单要显示的功能设置状态。
+   * 以**在线且已认证**的设备为准；多台取第一台，`mixed` 标出它们不一致。
+   */
+  settingsSnapshot(): SettingsSnapshot {
+    const online = [...this.connections.values()].filter((connection) => connection.authenticated && connection.deviceId);
+    if (!online.length) return { connected: 0, mixed: false };
+    const values = online
+      .map((connection) => this.settings.get(connection.deviceId!))
+      .filter((value): value is DeviceSettings => !!value);
+    if (!values.length) return { connected: online.length, mixed: false };   // 设备还没上报过
+    const first = values[0];
+    const mixed = values.some((value) => value.music !== first.music || value.gain !== first.gain || value.beat !== first.beat);
+    return { connected: online.length, mixed, ...first };
+  }
+
+  /**
+   * 下发功能设置，只改传了的字段。设备应用后会回报一份完整设置（并刷新这里缓存），
+   * 这里也先本地乐观更新一次，避免菜单立刻重开时还是旧值。
+   */
+  sendSettings(patch: { music?: boolean; gain?: GainLevel; beat?: boolean }): number {
+    if (patch.music === undefined && patch.gain === undefined && patch.beat === undefined) return 0;
+    const message: ServerMessage = { type: 'command', id: crypto.randomUUID(), action: 'settings', ...patch };
+    const sent = this.broadcast(message);
+    if (sent) {
+      for (const connection of this.connections.values()) {
+        if (!connection.authenticated || !connection.deviceId) continue;
+        const current = this.settings.get(connection.deviceId);
+        if (!current) continue;
+        this.settings.set(connection.deviceId, { ...current, ...patch });
+      }
+      this.onChange();
+    }
+    return sent;
+  }
+
   private broadcast(message: ServerMessage): number {
     let count = 0;
     for (const connection of this.connections.values()) {
@@ -165,6 +234,7 @@ export class FinchChanBridge {
     if (!force && next === this.state) return;
     if (!force && next === 'idle' && now - this.lastSentAt < 2_000) return;
     this.state = next; this.lastSentAt = now;
+    this.bubbleRotatedAt = now;
     await this.command('state', next, this.bubbleFor(next));
     this.onChange();
   }
@@ -207,7 +277,20 @@ export class FinchChanBridge {
 
   /** 来自 Finch status 的权威事实（未读 / 运行中）。 */
   async noteStatus(status: finch.FinchStatusSnapshot): Promise<void> {
-    const now = Date.now();
+    this.applyStatus(status, Date.now());
+    await this.recompute();
+  }
+
+  /**
+   * 把一份 Finch status 落到仲裁用的那几个事实上。
+   *
+   * 注意「在忙」的两个字段要一起处理：`status.onDidChange` 只在状态**变化**时触发，
+   * 而 agent 干活时 status 会一直停在 running 不变；如果只在那里续期，
+   * 每 2 秒跑一次的 syncState 又只负责"不在 running 就清掉"，
+   * 那么 busyUntil 5 秒后就过期，画面会被打回 idle —— 而它其实还在 running。
+   * 所以两个入口共用这一份逻辑，running 每次都要把窗口往后推。
+   */
+  private applyStatus(status: finch.FinchStatusSnapshot, now: number): void {
     this.unreadActive = status.status === 'unread';
     // status 是权威的：它说没未读就立刻作废乐观值（否则读完要等乐观窗口过期）。
     if (!this.unreadActive) this.unreadOptimisticUntil = 0;
@@ -215,11 +298,10 @@ export class FinchChanBridge {
     if (status.status === 'waiting') this.waitActive = true;
     if (status.status === 'running') {
       this.busyState = this.busyState ?? 'thinking';
-      this.busyUntil = now + BUSY_WINDOW_MS;
+      this.busyUntil = now + BUSY_WINDOW_MS;   // 只要还在跑就一直续期
     } else {
       this.busyState = undefined;
     }
-    await this.recompute();
   }
 
   private async recompute(force = false): Promise<void> {
@@ -237,17 +319,29 @@ export class FinchChanBridge {
  */
 private bubbleFor(state: PetState): string | undefined {
     const pick = (group: string, count: number): string | undefined => {
-      const key = `bubble.${group}${1 + Math.floor(Math.random() * count)}`;
+      const key = `bubble.${group}${1 + this.nextBubbleIndex(group, count)}`;
       const text = this.ctx.i18n.t(key);
       return text && text !== key ? text : undefined;
     };
     switch (state) {
-      case 'thinking': return pick('thinking', 4);
-      case 'working': return pick('working', 4);
+      case 'thinking': return pick('thinking', BUBBLE_TEXTS);
+      case 'working': return pick('working', BUBBLE_TEXTS);
       case 'waiting': return pick('waiting', 1);
       case 'happy': return pick('unread', 1);
       default: return undefined;
     }
+  }
+
+  /**
+   * 挑一句气泡文案：随机，但**不和上一句重复**。
+   * thinking/working 会定期重发同一状态来换文案（见 syncState），连着两句一样会很假。
+   */
+  private nextBubbleIndex(group: string, count: number): number {
+    const last = this.bubbleCursor.get(group);
+    let index = Math.floor(Math.random() * count);
+    if (count > 1 && index === last) index = (index + 1) % count;
+    this.bubbleCursor.set(group, index);
+    return index;
   }
 
   /**
@@ -511,10 +605,8 @@ private bubbleFor(state: PetState): string | undefined {
     }
     // listWaits() 是“还有没有等待”的权威来源：这里才允许把它清零。
     this.waitActive = waits.length > 0;
-    const status = await this.ctx.status.get();
-    this.unreadActive = status.status === 'unread';
-    if (!this.unreadActive) this.unreadOptimisticUntil = 0;
-    if (status.status !== 'running') this.busyState = undefined;
+    // 和 noteStatus 用同一份逻辑：running 时把「在忙」窗口续期（否则 5 秒后掉回 idle）。
+    this.applyStatus(await this.ctx.status.get(), Date.now());
     await this.recompute(force);
   }
 
@@ -556,6 +648,11 @@ private bubbleFor(state: PetState): string | undefined {
     }
     if (message.type === 'ack' && connection.authenticated && message.state) await this.updateState(connection.deviceId!, message.state);
     if (message.type === 'status' && connection.authenticated) await this.updateTelemetry(connection.deviceId!, message);
+    if (message.type === 'settings' && connection.authenticated) {
+      // 设备的当前功能设置（连接建立时 + 每次变化，包括在设备上按 PWR 切律动模式）。
+      this.settings.set(message.deviceId, { music: message.music, gain: message.gain, beat: message.beat });
+      this.onChange();
+    }
   }
 
   private async pair(connection: Connection, message: Extract<ClientMessage, { type: 'pair' }>): Promise<void> {

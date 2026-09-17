@@ -70,6 +70,10 @@ class EmotionFace {
   };
 
   static ExpressionSpec specFor(FaceExpression expression);
+  /** 只负责形状本身（椭圆/弧/三角/爱心），不含抗锯齿。 */
+  void drawEyeShape(LovyanGFX& g, int16_t x, int16_t y, uint8_t size, EyeShape shape,
+                    uint8_t rotation, bool mirror);
+  /** 抗锯齿的眼睛：先在 2 倍大的离屏画布上画形状，再按 0.5 缩放贴回。 */
   void drawEye(LovyanGFX& g, int16_t x, int16_t y, uint8_t size, EyeShape shape,
                uint8_t rotation, bool mirror);
   void drawHearts(LovyanGFX& g, int16_t x, int16_t y, uint8_t size);
@@ -95,6 +99,11 @@ class EmotionFace {
   uint32_t nextBlinkAt_ = 0;
   uint32_t blinkUntil_ = 0;
   bool blinking_ = false;
+  /* 抗锯齿用的离屏画布：眼睛在这里按 2 倍画，再缩回原尺寸贴到屏幕上。
+   * 边长要装得下最大的形状（Laughing 会把圆下沉 radius/4，所以取 1.25 倍直径）。 */
+  static constexpr int16_t kEyeBufferSize = 160;
+  M5Canvas eyeBuffer_;
+  bool eyeBufferReady_ = false;
   uint32_t nextLookAt_ = 0;
   uint32_t nextFurrowAt_ = 0;
   uint32_t furrowUntil_ = 0;

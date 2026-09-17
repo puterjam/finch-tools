@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Log.h"
+
 #include <Arduino.h>
 #include <DNSServer.h>
 #include <Preferences.h>
@@ -70,9 +72,5 @@ class WifiProvisioning {
 };
 
 /** 配网相关日志前缀，便于串口里过滤。 */
-#define FINCHCHAN_PROV_LOG(...)                  \
-  do {                                           \
-    Serial.printf("[wifi] ");                    \
-    Serial.printf(__VA_ARGS__);                  \
-    Serial.printf("\n");                         \
-  } while (0)
+#define FINCHCHAN_PROV_LOG(...) \
+  do { FC_LOG(1, "[wifi] " __VA_ARGS__); FC_NEWLINE(1); } while (0)

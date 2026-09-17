@@ -7,6 +7,9 @@
 constexpr uint8_t kAudioBarCount = 32;
 /** FFT 点数。muspi 用 2048，这里取样率低一些（16kHz），512 足够画出同样的形。 */
 constexpr uint16_t kAudioFftSize = 512;
+/** 收音灵敏度档位（低/中/高）对应的麦克风线性增益；小程序设置菜单可切换。 */
+constexpr float kGainLevelGains[3] = {1.8f, 2.4f, 3.0f};
+constexpr uint8_t kGainLevelDefault = 1;   // 默认「中」
 
 /**
  * 麦克风频谱动效（复刻 muspi 的 `screen/plugins/spectrum`）。
@@ -31,6 +34,13 @@ class AudioVisualizer {
   void setVisible(bool visible);
   void toggle() { setVisible(!visible_); }
   bool visible() const { return visible_; }
+
+  /**
+   * 收音灵敏度（小程序设置菜单里可切）：0=低、1=中、2=高，
+   * 对应麦克风增益 1.8 / 2.4 / 3.0。越界值会被夹住。
+   */
+  void setGainLevel(uint8_t level);
+  uint8_t gainLevel() const { return gainLevel_; }
 
   /** 入场动画进度 0→1：调用方用它把表情顶上去（和卡片同一套位移）。 */
   float progress() const { return progress_; }
@@ -70,6 +80,14 @@ class AudioVisualizer {
   /** 播放指定 slot；没推过就返回 false，调用方回退到内置合成音。 */
   bool playSound(uint8_t slot);
 
+  /**
+   * 播放前的音频端口交接。StackChan 的麦克风与扬声器共用 I2S_NUM_1：
+   * 麦克风在跑时扬声器写进去只会出噪声；麦克风 end() 之后端口被卸掉，
+   * 扬声器自以为还在跑、从此再没声音。所以不管播提示音还是内置音，
+   * 都要先走这一步。返回 false 表示这台设备没有可用的扬声器。
+   */
+  bool beginPlayback();
+
   /** 每帧调用：采样 + 频谱 + 条与音符推进。关闭时只把动画收尾。 */
   void update(uint32_t now);
 
@@ -104,6 +122,8 @@ class AudioVisualizer {
   Note notes_[kNotes];
   uint32_t lastSampleAt_ = 0;
   uint32_t lastSilenceAt_ = 0;
+  /** 「还算在响」的保持窗口：见 isLoud()，用来压掉阈值上下的逐帧抖动。 */
+  uint32_t loudHoldUntil_ = 0;
   /** 连续有声音的起点；安静时清零（音乐模式的笑脸计时）。 */
   uint32_t loudSince_ = 0;
   /** 低频段能量与谱通量：节拍检测用。 */
@@ -135,6 +155,11 @@ class AudioVisualizer {
   uint32_t animStartAt_ = 0;
 
   uint32_t sampleRate_ = 16000;
+  /** 收音灵敏度档位（0 低 / 1 中 / 2 高）与其对应的线性增益。 */
+  uint8_t gainLevel_ = kGainLevelDefault;
+  float micGain() const { return kGainLevelGains[gainLevel_ <= 2 ? gainLevel_ : kGainLevelDefault]; }
+  /** 麦克风动过共用 I2S 端口（begin/end/重启）——下次播放前要把扬声器装回去。 */
+  bool speakerDirty_ = false;
   uint16_t bandEdge_[kAudioBarCount + 1] = {};
   float re_[kAudioFftSize] = {};
   float im_[kAudioFftSize] = {};

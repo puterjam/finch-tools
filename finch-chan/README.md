@@ -22,7 +22,9 @@ npm pack --pack-destination /tmp
 npx @finchtoys/minitools add /tmp/finch-chan-0.1.0.tgz
 ```
 
-Enable **FinchChan** in Toolcase. The bridge listens on `ws://0.0.0.0:8267`; find your Mac's LAN IP and use `ws://<mac-lan-ip>:8267` in the StackChan firmware.
+Enable **FinchChan** in Toolcase. The bridge listens on `ws://0.0.0.0:8267`; the device finds this Mac automatically over UDP broadcast (port 8266), so no IP needs to be configured.
+
+Firmware side (environment setup, build, flashing): see **[firmware.md](firmware.md)**. Build with `bash tools/build.sh` — artifacts land in `firmware/release/finchchan-<version>.bin`.
 
 ## Pair a StackChan
 
@@ -48,6 +50,20 @@ Use one Agent tool: `finchchan_control`.
 
 The Composer bird button offers shortcuts, and the FinchChan settings menu lists paired devices with an unpair action.
 
+### Feature settings (settings menu → Features)
+
+Every row shows its current state on the right; clicking the row switches it.
+
+| Row | Values | Device effect |
+| --- | --- | --- |
+| Rhythm mode | On / Off | Same switch as the device's PWR button (mic spectrum + beat) |
+| Mic sensitivity | Low / Mid / High | Mic gain 1.8 / 2.4 / 3.0 before the FFT |
+| Dance to the beat | On / Off | Nodding to the beat; the spectrum keeps running |
+
+The **device is the source of truth**: it reports its settings when it connects and after every
+change, so pressing PWR on the hardware updates the menu too. Rows are disabled while no device
+is connected, and the parent row's tooltip warns when several connected devices disagree.
+
 ## WebSocket protocol v1
 
 All frames are JSON. The server accepts only this small protocol:
@@ -70,7 +86,13 @@ All frames are JSON. The server accepts only this small protocol:
 // Finch -> authenticated device
 { "type": "command", "id": "uuid", "action": "state", "state": "thinking" }
 { "type": "command", "id": "uuid", "action": "say", "text": "Ready" }
-// Device -> Finch (optional acknowledgement)
+// Feature settings: every field is optional, only the ones you send change
+{ "type": "command", "id": "uuid", "action": "settings", "music": true, "gain": 1, "beat": false }
+// Device -> Finch: full settings, sent on connect and after every change
+{ "type": "settings", "deviceId": "finchchan-1a2b", "music": true, "gain": 1, "beat": false }
+// Device -> Finch (optional acknowledgement). `state` uses the protocol vocabulary
+// (idle|thinking|working|waiting|happy|error); legacy firmware wording
+// (success/sleeping/speaking) is normalised instead of being rejected.
 { "type": "ack", "id": "uuid", "state": "thinking" }
 { "type": "ping" }
 { "type": "pong" }
@@ -141,6 +163,20 @@ Token 只保存于 Finch 的系统安全存储；设备 id、名称、最近在�
 | `unpair` | `device_id` | 撤销 token 并断开设备 |
 
 Composer 的小鸟按钮提供快捷入口；FinchChan 设置菜单会列出设备并允许取消配对。
+
+### 功能设置（设置菜单 → 功能设置）
+
+每一行右侧直接显示当前状态，点一下就在状态间切换：
+
+| 菜单行 | 取值 | 对设备的作用 |
+| --- | --- | --- |
+| 律动模式 | 开 / 关 | 和设备上的 PWR 键是同一个开关（麦克风频谱 + 跟拍） |
+| 收音灵敏度 | 低 / 中 / 高 | 进 FFT 前的麦克风增益 1.8 / 2.4 / 3.0 |
+| 随节奏舞动 | 开 / 关 | 是否跟拍点头；频谱照旧 |
+
+**设备是这些设置的唯一真源**：它在连接建立时和每次变化后都上报一次，所以在硬件上按 PWR 键，
+菜单里的「律动模式」也会跟着变。没有设备在线时这几行是灰的；多台设备当前不一致时，
+父行「功能设置」的悬浮提示会说明。
 
 ## 协议和验证
 

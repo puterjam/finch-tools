@@ -1,11 +1,17 @@
 #include "EmotionFace.h"
 
+#include "Log.h"
+
 namespace {
 // 屏幕 320x240，muspi 的 80x32 布局等比放大后：眼睛单元 80px，瞳孔 60px。
 constexpr int16_t kEyeSize = 60;
 constexpr int16_t kLeftEyeX = 112;
 constexpr int16_t kRightEyeX = 208;
-constexpr int16_t kEyeY = 108;
+/* 眼睛中心的垂直基线。有气泡时 PetRenderer 会传 topInset 把它往下推（inset/2），
+ * 卡片/未读再往上抬 kPromptEyeLift，所以这一条是"所有状态的共同基准"。
+ * 98 比正中间（120）偏上，给底部按钮和频谱留出距离：眼睛占 68~128，
+ * 3 个选项时上排按钮从 160 起，还有 32px 余量。 */
+constexpr int16_t kEyeY = 98;
 
 // 单色设计：眼睛只有白色，情绪完全靠形状表达（与 muspi 的单色 OLED 一致）。
 constexpr uint16_t kEye = TFT_WHITE;
@@ -78,6 +84,11 @@ EmotionFace::ExpressionSpec EmotionFace::specFor(FaceExpression expression) {
 
 void EmotionFace::begin() {
   randomSeed(micros());
+  // 抗锯齿用的离屏画布（PSRAM）：眼睛按 2 倍画在这上面，再缩回原尺寸贴到屏幕上。
+  eyeBuffer_.setColorDepth(16);
+  eyeBuffer_.setPivot(kEyeBufferSize / 2, kEyeBufferSize / 2);
+  eyeBufferReady_ = eyeBuffer_.createSprite(kEyeBufferSize, kEyeBufferSize);
+  if (!eyeBufferReady_) FC_LOGLN(1, "[face] eye AA buffer alloc failed: eyes fall back to hard edges");
   const uint32_t now = millis();
   spec_ = specFor(expression_);
   leftShape_ = spec_.left;
@@ -156,8 +167,29 @@ void EmotionFace::drawHearts(LovyanGFX& g, int16_t x, int16_t y, uint8_t size) {
   }
 }
 
+/**
+ * 抗锯齿的眼睛：形状先在 2 倍大的离屏画布上画，再用 `pushRotateZoomWithAA()` 按 0.5 缩放贴回。
+ *
+ * 为什么这么做：屏幕是 16 位色、没有 alpha 通道，矢量填充（`fillEllipse` / `fillArc` / 三角形）
+ * 画出来都是硬边，60px 的圆边上能明显看到台阶。按 2 倍画再缩回去，LovyanGFX 会在缩放时
+ * 按透明色算覆盖度做混合，于是**所有形状**（椭圆、弧、斜切三角、爱心）一次性都平滑了，
+ * 不用把每个形状都换成"平滑图元"。
+ */
 void EmotionFace::drawEye(LovyanGFX& g, int16_t x, int16_t y, uint8_t size, EyeShape shape,
                           uint8_t rotation, bool mirror) {
+  if (!eyeBufferReady_) {   // 兜底：离屏画布没建起来就按原来的硬边画
+    drawEyeShape(g, x, y, size, shape, rotation, mirror);
+    return;
+  }
+  constexpr int16_t scale = 2;
+  eyeBuffer_.fillScreen(kBackdrop);
+  drawEyeShape(eyeBuffer_, kEyeBufferSize / 2, kEyeBufferSize / 2, size * scale, shape, rotation, mirror);
+  // 透明色 = 背景色：画布上没有 alpha，靠"和透明色的距离"算覆盖度，边上的灰像素就会和屏幕混合。
+  eyeBuffer_.pushRotateZoomWithAA(&g, x, y, 0.0f, 1.0f / scale, 1.0f / scale, kBackdrop);
+}
+
+void EmotionFace::drawEyeShape(LovyanGFX& g, int16_t x, int16_t y, uint8_t size, EyeShape shape,
+                               uint8_t rotation, bool mirror) {
   const int16_t radius = size / 2;
   const int16_t direction = mirror ? -1 : 1;
 
@@ -224,7 +256,12 @@ void EmotionFace::drawEye(LovyanGFX& g, int16_t x, int16_t y, uint8_t size, EyeS
 
 void EmotionFace::update(LovyanGFX& g, uint32_t now, int16_t topInset) {
   scheduleBehaviour(now);
-  topInset_ = topInset;
+  if (topInset != topInset_) {
+    // 第 2 档日志：眼睛落点变了才打一行。
+    // 排查"表情是不是动了几像素""why 看起来下移了"时，看这一行最直接。
+    topInset_ = topInset;
+    FC_LOG(2, "[face] eyeY=%d (topInset=%d)\n", kEyeY + topInset_, topInset_);
+  }
 
   offsetX_ = easeOffset(targetX_, offsetX_);
   offsetY_ = easeOffset(targetY_, offsetY_);

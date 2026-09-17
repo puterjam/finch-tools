@@ -23,7 +23,7 @@
 // Device id. Leave empty to derive `finchchan-XXXX` from the chip MAC (recommended);
 // only fill it in for debugging when a fixed id is needed.
 #define FINCHCHAN_DEVICE_ID ""
-#define FINCHCHAN_FIRMWARE_VERSION "0.2.3"
+#define FINCHCHAN_FIRMWARE_VERSION "0.4.5"
 
 // Enter the short-lived code returned by finchchan_control(action="pair") on first flash.
 // The firmware stores the resulting device token in NVS; clear this value after pairing.
@@ -37,6 +37,10 @@
 #define FINCHCHAN_LED_BRIGHTNESS 90
 // 1 = 头部跟着视线与状态动作，0 = 头部保持不动。
 #define FINCHCHAN_MOTION_EFFECTS 1
+// Serial log level: 0 = off (best performance) 1 = important events (default)
+// 2 = diagnostics (per-frame/per-beat/per-touch). Nothing is printed when no
+// serial monitor is attached, so this mainly affects the noise while you watch.
+#define FINCHCHAN_LOG_LEVEL 1
 
 // Conservative limits that protect the animation loop and speaker.
 #define FINCHCHAN_RECONNECT_MIN_MS 1500UL

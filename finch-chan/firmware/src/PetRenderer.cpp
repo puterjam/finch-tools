@@ -1,5 +1,8 @@
 #include "PetRenderer.h"
 
+#include "Log.h"
+#include "pen_frames.h"
+
 namespace {
 /** UTF-8 单字长度，用于按字符折行（中文一个字 3 字节）。 */
 size_t utf8GlyphLength(uint8_t lead) {
@@ -56,9 +59,100 @@ constexpr uint16_t kOptionAllow = 0x4ECC;    // 允许：绿色
 constexpr uint16_t kOptionDeny = 0xE249;     // 拒绍：红色
 constexpr uint16_t kOptionDanger = 0xB143;   // 不可逆的“允许”：更深的红，故意更重
 constexpr uint16_t kOptionEdge = 0x6B4D;
+/* 右上角状态条：`♪ 🌕` —— 电量用 QuinqueFive 的月相字形表示，一个字符搞定，
+ * 不显示数字；音符只在音乐模式开着时出现，放在左边。
+ * 字形取自 muspi 的状态字体 assets/fonts/QuinqueFive.ttf，用它的**原生 5px** 点阵
+ * （muspi 自己的状态栏就是这个字号），离线导出后内嵌，和表情一样不需要运行时字体文件。
+ * 数据行优先、每行 1 字节、MSB 在左，只占高位 kBadgeGlyph 位。
+ * 四档的填充量单调递减：实心 → 细缝 → 宽缝 → 空心。 */
+constexpr int16_t kBadgeGlyph = 5;           // 字形边长（原生 5px）
+constexpr int16_t kBadgeGap = 3;             // 音符与月相之间（1 = 字体自带步进，3 = 略松）
+constexpr int16_t kBadgeMarginRight = 10;
+constexpr int16_t kBadgeTopY = 8;
+constexpr uint8_t kBadgeRows = 5;
+constexpr uint8_t kBadgeStride = 1;
+constexpr uint16_t kBadgeGreenColor = 0x4EF0;   // 和频谱条同一个薄荷绿：电量充足
+constexpr uint16_t kBadgeWarnColor = 0xFFE0;    // 黄：该留意了（蓝分量为 0，不偏色）
+constexpr uint16_t kBadgeLowColor = 0xE249;     // 红：快没电了
+constexpr uint32_t kBatteryPollMs = 10000;    // 电量轮询间隔（I2C，别每帧读）
+/* 电量分档：
+ *   <=20%     空心 + 红
+ *   20~100%   三段平均分配：21~46 宽缝、47~73 细缝、74~100 实心
+ * 判定写成 (level - 20) * 3 与 80 / 160 比较：等价于把 80 个点三等分（每段 26.67），
+ * 既不用浮点，也不会在边界上差一。 */
+constexpr int32_t kBadgeRedPercent = 20;
+/* 气泡顶边：状态栏占 y 8~12，所以气泡从 13 起，两者不会叠在一起。 */
+constexpr int16_t kBubbleTopY = kBadgeTopY + kBadgeRows + 1;
+
+/** U+266A ♪ */
+const uint8_t kMusicNote[kBadgeRows] = {0x30, 0x28, 0x20, 0xE0, 0xE0};
+/** 电量 74~100%：U+1F311（实心）。 */
+const uint8_t kMoonSolid[kBadgeRows] = {0x70, 0xF8, 0xF8, 0xF8, 0x70};
+/** 47~73%：U+1F313（细缝）。 */
+const uint8_t kMoonSlit[kBadgeRows] = {0x70, 0xE8, 0xE8, 0xE8, 0x70};
+/** 21~46%：U+1F314（宽缝）。 */
+const uint8_t kMoonSlot[kBadgeRows] = {0x70, 0xC8, 0xC8, 0xC8, 0x70};
+/** <=20%：U+1F315（空心，配合红色）。 */
+const uint8_t kMoonRing[kBadgeRows] = {0x70, 0x88, 0x88, 0x88, 0x70};
+
+/** 把一个点阵贴到画布上：行优先、每行 stride 字节、MSB 在左。 */
+void blitMask(LovyanGFX& g, int16_t x, int16_t y, const uint8_t* rows, int16_t width, int16_t height,
+              uint8_t stride, uint16_t color) {
+  for (int16_t row = 0; row < height; ++row) {
+    const uint8_t* line = rows + row * stride;
+    for (int16_t col = 0; col < width; ++col) {
+      if (line[col >> 3] & (1 << (7 - (col & 7)))) g.drawPixel(x + col, y + row, color);
+    }
+  }
+}
+
+/** 状态栏的点阵字形（尺寸见 kBadgeGlyph / kBadgeRows）。 */
+void blitGlyph(LovyanGFX& g, int16_t x, int16_t y, const uint8_t* rows, uint16_t color) {
+  blitMask(g, x, y, rows, kBadgeGlyph, kBadgeRows, kBadgeStride, color);
+}
+
+/**
+ * 每像素 `bits` 位的点阵（0 = 透明，其余按比例映射到 16 档灰）。
+ * 笔的帧用它来抗锯齿：斜边靠中间灰过渡，不然就是硬邦邦的台阶。
+ * 只在 bits ∈ {1,2,4,8}（能整除一个字节）时使用。
+ * 帧的档数变了（改生成器的 BITS）这里不用动：查表固定 16 档，按比例取。
+ */
+void blitMaskN(LovyanGFX& g, int16_t x, int16_t y, const uint8_t* rows, int16_t width, int16_t height,
+               uint8_t stride, uint8_t bits, const uint16_t* grayLut) {
+  const uint8_t per_byte = static_cast<uint8_t>(8 / bits);
+  const uint8_t maxLevel = static_cast<uint8_t>((1 << bits) - 1);
+  for (int16_t row = 0; row < height; ++row) {
+    const uint8_t* line = rows + row * stride;
+    for (int16_t col = 0; col < width; ++col) {
+      const uint8_t shift = static_cast<uint8_t>((per_byte - 1 - (col % per_byte)) * bits);
+      const uint8_t level = static_cast<uint8_t>((line[col / per_byte] >> shift) & maxLevel);
+      if (level) g.drawPixel(x + col, y + row, grayLut[level * 15 / maxLevel]);
+    }
+  }
+}
 // 卡片出现动画：眼睛向上让位，按钮从屏幕下方滑入。
 constexpr uint32_t kPromptAnimMs = 280;
 constexpr int16_t kPromptEyeLift = 26;
+/* 只有气泡、没有卡片/未读抬升时（thinking / working）额外下压的量：
+ * 这两个状态气泡与眼睛之间本来就有 55px 空隙，基线抬高后再跟着上移会显得表情浮在半空。
+ * 卡片/未读滑入时按 lift 线性收到 0，所以入场动画不会中途跳一下。 */
+constexpr int16_t kBubbleOnlyDrop = 10;
+/* 「动笔」：thinking/working 状态右下角那支笔（帧见 pen_frames.h）。
+ * 笔尖固定在这个屏幕坐标上，笔身绕它来回摆——所以调位置是调笔尖，不是调整帧。
+ * 只有 working 会摆；thinking 停在正中那帧（初始位置）。
+ * 摆幅用 kPenSwingFrames 缩放：拿中心附近几帧来用，9 = 满摆（预渲染的 ±6°）、
+ * 3 ≈ ±1.4°、1 = 完全不动。 */
+constexpr int16_t kPenTipScreenX = 253;
+constexpr int16_t kPenTipScreenY = 187;
+constexpr uint8_t kPenSwingFrames = 9;
+constexpr uint32_t kPenSwingPeriodMs = 1400;   // 摆动一次（一个来回）的时间
+constexpr uint8_t kPenSwingsPerRound = 3;      // 一轮摆几下
+constexpr uint32_t kPenRestMs = 3000;          // 一轮摆完停多久再继续
+/** 16 档灰查找表（RGB565，0 不用）：帧的位数变化时按比例映射到这里，改 BITS 不用动固件。 */
+constexpr uint16_t kPenGrayLut[16] = {
+    0x0000, 0x1082, 0x2104, 0x3186, 0x4228, 0x52AA, 0x632C, 0x73AE,
+    0x8C51, 0x9CD3, 0xAD55, 0xBDD7, 0xCE79, 0xDEFB, 0xEF7D, 0xFFFF,
+};
 constexpr int16_t kPromptButtonSlide = 56;
 /** 音频动效占用底部一行，高度与单按钮行一致（muspi spectrum 的条形区）。 */
 constexpr int16_t kAudioRowMargin = 10;
@@ -111,22 +205,32 @@ void PetRenderer::applyExpression(FaceExpression expression) {
   expression_ = expression;
   face_.setExpression(expression);
   // 诊断用：表情切换日志（可读名称，见 faceName）。
-  Serial.printf("face=%s\n", faceName(expression));
+  FC_LOG(2, "face=%s\n", faceName(expression));
 }
 
 void PetRenderer::noteTouch() {
   noteActivity(millis(), false);
 }
 
-/** PWR 短按：切换收听模式（麦克风音频动效）。 */
-void PetRenderer::toggleAudioVisualizer() {
-  audio_.toggle();
-  if (audio_.visible()) {
+/**
+ * 律动模式（麦克风音频动效）开关。
+ * PWR 短按和小程序设置菜单走的是同一条路径，所以两边的状态永远一致；
+ * 由调用方负责把新状态回报给桥接（见 main.cpp）。
+ */
+void PetRenderer::setMusicMode(bool on) {
+  if (audio_.visible() == on) return;
+  audio_.setVisible(on);
+  if (on) {
     noteTouch();   // 睡着时先友好叫醒，并重置空闲计时
     applyExpression(FaceExpression::Happy);
   } else {
     applyExpression(faceFor(state_));
   }
+}
+
+/** PWR 短按：切换律动模式。 */
+void PetRenderer::toggleAudioVisualizer() {
+  setMusicMode(!audio_.visible());
 }
 
 /**
@@ -187,7 +291,7 @@ void PetRenderer::noteActivity(uint32_t now, bool startled) {
 void PetRenderer::enterDozing(uint32_t now) {
   if (sleepLevel_ == SleepLevel::Dozing) return;
   sleepLevel_ = SleepLevel::Dozing;
-  Serial.println("sleep=dozing");
+  FC_LOGLN(1, "sleep=dozing");
   reacting_ = false;
   applyExpression(FaceExpression::Sleeping);
   leds_.setState(PetState::Sleeping);
@@ -198,7 +302,7 @@ void PetRenderer::enterDozing(uint32_t now) {
 void PetRenderer::enterDeepSleep(uint32_t now, int32_t idleMs) {
   if (sleepLevel_ == SleepLevel::DeepSleep) return;
   sleepLevel_ = SleepLevel::DeepSleep;
-  Serial.printf("sleep=deep (screen off, idle %ldms)\n", static_cast<long>(idleMs));
+  FC_LOG(1, "sleep=deep (screen off, idle %ldms)\n", static_cast<long>(idleMs));
   applyExpression(FaceExpression::Sleeping);
   leds_.setState(PetState::Sleeping);
   motion_.setDozing(true);
@@ -220,7 +324,7 @@ void PetRenderer::wakeUp(uint32_t now, bool startled) {
   M5.Display.setBrightness(brightness_);
   motion_.setDozing(false);
   if (startled) {
-    Serial.println("wake=startled (task/connection)");
+    FC_LOGLN(1, "wake=startled (task/connection)");
     waking_ = true;
     wakeUntil_ = now + 900;
     // 惊醒：先睁大眼、左右轻晃一下，演完再进入真正的状态表情。
@@ -229,7 +333,7 @@ void PetRenderer::wakeUp(uint32_t now, bool startled) {
     leds_.setState(state_);
     return;
   }
-  Serial.println("wake=friendly (touch/pat)");
+  FC_LOGLN(1, "wake=friendly (touch/pat)");
   reactToPat();
 }
 
@@ -292,7 +396,7 @@ bool PetRenderer::wantsBubble(PetState state) {
 void PetRenderer::setState(PetState state, const char* speech, const char* bubble) {
   const uint32_t now = millis();
   const bool changed = state != state_;
-  if (changed) Serial.printf("state=%s\n", petStateName(state));   // 只在真的变了才打
+  if (changed) FC_LOG(1, "state=%s\n", petStateName(state));   // 只在真的变了才打
   state_ = state;
   stateChangedAt_ = now;
   noteActivity(now, true);   // 有任务/状态过来 = 被叫起来干活
@@ -363,6 +467,8 @@ void PetRenderer::cue(PetState state) {
     default: return;
   }
   // 提示音期间不看麦克风：否则会把自己的声音当成输入，频谱瞬间拉满。
+  // 先做端口交接（音乐模式下麦克风正占着共用的 I2S，直接播就是爆音）。
+  if (!audio_.beginPlayback()) return;
   audio_.muteFor(duration + 350);
   playEnvelopedTone(frequency, duration);
 }
@@ -372,6 +478,7 @@ void PetRenderer::update(uint32_t now) {
   if (now - lastFrameAt_ < 40) return;
   lastFrameAt_ = now;
   audio_.update(now);   // 采样 + 条形/音符推进（关掉时只把动画收尾）
+  pollBattery(now);     // 10 秒一次，缓存给右上角状态条用
 
   // ── 睡眠只在真正的空闲里计时：idle 且无卡片。running / waiting 等状态不睡 ──
   // 注意：handleTouch() 用的是更新的 millis()，可能比本轮的 now 还新几毫秒；
@@ -402,7 +509,7 @@ void PetRenderer::update(uint32_t now) {
   // 限频：wakeup() 会重发 SLPOUT/DISPON，短时间内反复触发本身就会闪黑一帧。
   if (M5.Display.getBrightness() == 0 && now - lastRelightAt_ > 1000) {
     lastRelightAt_ = now;
-    Serial.println("[power] panel relight (brightness was 0)");
+    FC_LOGLN(1, "[power] panel relight (brightness was 0)");
     M5.Display.wakeup();
     M5.Display.setBrightness(brightness_);
   }
@@ -445,10 +552,19 @@ void PetRenderer::update(uint32_t now) {
   const bool cardShowing = promptActive_ && overlays;
   const bool unreadShowing = overlays && !cardShowing && isUnread();
   const bool audioShowing = !cardShowing && audio_.visible() && overlays;
+  // 只有 working 画那支动笔（thinking 不画，看起来怪）；有卡片时让位给卡片
+  const bool penShowing = overlays && !cardShowing &&
+                           state_ == PetState::Working;
   // 未读按钮用和卡片同一套位移（26px）与入场动画时长：状态一变就开始上移。
   unreadProgress_ = unreadShowing ? fminf(1.0f, static_cast<float>(now - stateChangedAt_) / kPromptAnimMs) : 0.0f;
   const float lift = cardShowing ? kPromptEyeLift * promptProgress_
                                  : (unreadShowing ? kPromptEyeLift * unreadProgress_ : 0.0f);
+  /* 只有气泡、没有卡片/未读抬升时（thinking / working）再多压 kBubbleOnlyDrop 下来。
+   * 那两个状态下气泡和眼睛之间本来就有 55px 空隙，基线抬高后再跟着上移会显得表情浮在半空。
+   * 补偿跟着 lift 线性淡出：卡片/未读滑入时 lift 从 0 涨到 26，补偿同步从 10 收到 0，
+   * 所以入场动画中途不会跳一下。 */
+  const int16_t bubbleDrop = static_cast<int16_t>(lift >= kPromptEyeLift ? 0.0f
+                                                                        : (1.0f - lift / kPromptEyeLift) * kBubbleOnlyDrop);
   // 音乐模式下 idle 的笑脸会跟随音乐轻微浮动（2~5px，声音越大浮动越明显）。
   int16_t audioBob = 0;
   if (audioShowing && state_ == PetState::Idle) {
@@ -464,7 +580,8 @@ void PetRenderer::update(uint32_t now) {
   // 音乐模式 + idle：跟着鼓点点头（模拟人听歌不自觉跟着节奏点头）。
   // 一次触发只播一个完整点头；动作没播完（含伺服回稳）之前，后面的鼓点排队跳过，
   // 这样每个点头都是干净的“下去→回中”，而不是被打断得碎碎地抽。
-  const bool beatMode = audioShowing && state_ == PetState::Idle;
+  // 「随节奏舞动」可以关掉：频谱照旧，只是不再点头。
+  const bool beatMode = audioShowing && state_ == PetState::Idle && beatDance_;
   motion_.setBeatMode(beatMode);   // 跟拍期间不跟视线、不播随机小动作，头部保持稳
   if (beatMode && audio_.isLoud() && audio_.consumeBeat()) {
     if (!motion_.busy() && now >= beatNodUntil_) {
@@ -491,7 +608,7 @@ void PetRenderer::update(uint32_t now) {
       const char* name = action == MotionDirector::Action::BeatNodFast
                              ? "nodFast"
                              : (action == MotionDirector::Action::BeatNodStrong ? "nodStrong" : "nod");
-      Serial.printf("[beat] #%u x%.1f bpm=%u -> %s\n", audio_.beatCount(), strength,
+      FC_LOG(2, "[beat] #%u x%.1f bpm=%u -> %s\n", audio_.beatCount(), strength,
                     period ? 60000UL / period : 0, name);
     }
   }
@@ -501,11 +618,11 @@ void PetRenderer::update(uint32_t now) {
     M5.Display.fillScreen(TFT_BLACK);
     if (cardShowing) {
       const int16_t inset = drawBubble(M5.Display, promptTitle_);
-      face_.update(M5.Display, now, inset / 2 - static_cast<int16_t>(lift));
+      face_.update(M5.Display, now, inset / 2 - static_cast<int16_t>(lift) + (inset ? bubbleDrop : 0));
       drawPromptButtons(M5.Display);
     } else if (overlays) {
       const int16_t inset = drawBubble(M5.Display, bubble_);
-      face_.update(M5.Display, now, inset / 2 - static_cast<int16_t>(lift) - audioBob);
+      face_.update(M5.Display, now, inset / 2 - static_cast<int16_t>(lift) + (inset ? bubbleDrop : 0) - audioBob);
       drawSpeech(M5.Display);
       if (audioShowing) audio_.draw(M5.Display, kAudioRowMargin, kAudioRowHeight);
     } else {
@@ -516,6 +633,9 @@ void PetRenderer::update(uint32_t now) {
   // 卡片在的时候不画：卡片要能完全盖住音频动效。
   if (overlays && !cardShowing && audio_.notesAlive()) audio_.drawNotes(M5.Display);
   if (unreadShowing) drawUnreadButton(M5.Display);
+  // 右上角状态条：电量常显，音乐模式时前面多一个 ♪。
+  if (penShowing) drawPen(M5.Display, now);
+  if (overlays) drawStatusBadge(M5.Display);
     return;
   }
 
@@ -523,11 +643,11 @@ void PetRenderer::update(uint32_t now) {
   if (cardShowing) {
     // 等待卡片：气泡标题在上，眼睛向上让位，按钮从下方滑入停在表情下方。
     const int16_t inset = drawBubble(canvas_, promptTitle_);
-    face_.update(canvas_, now, inset / 2 - static_cast<int16_t>(lift));
+    face_.update(canvas_, now, inset / 2 - static_cast<int16_t>(lift) + (inset ? bubbleDrop : 0));
     drawPromptButtons(canvas_);
   } else if (overlays) {
     const int16_t inset = drawBubble(canvas_, bubble_);
-    face_.update(canvas_, now, inset / 2 - static_cast<int16_t>(lift) - audioBob);
+    face_.update(canvas_, now, inset / 2 - static_cast<int16_t>(lift) + (inset ? bubbleDrop : 0) - audioBob);
     drawSpeech(canvas_);
     // 音频动效：底部一行条形；卡片出现时上面那条分支已经把它盖掉了。
     if (audioShowing) audio_.draw(canvas_, kAudioRowMargin, kAudioRowHeight);
@@ -539,6 +659,9 @@ void PetRenderer::update(uint32_t now) {
   if (overlays && !cardShowing && audio_.notesAlive()) audio_.drawNotes(canvas_);
   // 有未读：底部给一个灰色「查看」按钮（和卡片一样盖在频谱上面）。
   if (unreadShowing) drawUnreadButton(canvas_);
+  // 右上角状态条：电量常显，音乐模式时前面多一个 ♪。
+  if (penShowing) drawPen(canvas_, now);
+  if (overlays) drawStatusBadge(canvas_);
   canvas_.pushSprite(0, 0);
   // 等这一帧的 DMA 真正发完，再开始画下一帧：否则下一帧的 fillScreen 会追着
   // 还在读缓冲的 DMA 改内容，偶发一帧花屏/整帧黑（正是"眨眼时闪一下空帧"的样子）。
@@ -561,9 +684,92 @@ void PetRenderer::checkBlankFrame(uint32_t now) {
   }
   if (now - blankLogAt_ < 3000) return;
   blankLogAt_ = now;
-  Serial.printf("[frame] blank! #%lu state=%s face=%s sleep=%d prompt=%d\n",
+  FC_LOG(1, "[frame] blank! #%lu state=%s face=%s sleep=%d prompt=%d\n",
                 static_cast<unsigned long>(frameCount_), petStateName(state_), faceName(expression_),
                 static_cast<int>(sleepLevel_), promptActive_ ? 1 : 0);
+}
+
+/**
+ * working 右下角那支动笔（thinking 不画，看起来怪）。
+ * 笔尖钉在 (kPenTipScreenX, kPenTipScreenY)，笔身绕它按正弦来回摆；
+ * 帧是离线预渲染好的（帧内笔尖在 (kPenTipX, kPenTipY)），这里只做选帧 + blit。
+ *
+ * 节奏：摆 kPenSwingsPerRound 下（每下 kPenSwingPeriodMs），然后停 kPenRestMs 再继续；
+ * 停顿期间停在正中那帧（= 初始位置）。
+ */
+void PetRenderer::drawPen(LovyanGFX& g, uint32_t now) {
+  const int16_t center = (kPenFrameCount - 1) / 2;          // 正中那帧（0°）
+  const int16_t half = (kPenSwingFrames - 1) / 2;           // 两侧各取几帧
+  int16_t index = center;
+  if (state_ == PetState::Working) {
+    const uint32_t swingTotal = kPenSwingPeriodMs * kPenSwingsPerRound;
+    const uint32_t phase = now % (swingTotal + kPenRestMs);
+    if (phase < swingTotal) {
+      const float t = static_cast<float>(phase % kPenSwingPeriodMs) / kPenSwingPeriodMs * 2.0f * PI;
+      index = center + static_cast<int16_t>(lroundf(sinf(t) * half));
+    }
+  }
+  if (index < 0) index = 0;
+  if (index >= kPenFrameCount) index = kPenFrameCount - 1;
+  blitMaskN(g, kPenTipScreenX - kPenTipX, kPenTipScreenY - kPenTipY, kPenFrames[index],
+            kPenFrameSize, kPenFrameSize, static_cast<uint8_t>(kPenFrameSize * kPenFrameBits / 8),
+            kPenFrameBits, kPenGrayLut);
+}
+
+/**
+ * 右上角状态条：`♪ 🌕`。
+ * 电量用一个月相字形表示（不显示数字）：20~100% 三等分（74~100 实心、47~73 细缝、
+ * 21~46 宽缝），≤20% 空心。颜色按红绿灯走：音符与实心/细缝是薄荷绿（`kBadgeGreenColor`）、
+ * 宽缝转黄（`kBadgeWarnColor`）、空心转红（`kBadgeLowColor`）。
+ * 音符只在音乐模式开着时出现，放在月相左边。
+ */
+void PetRenderer::drawStatusBadge(LovyanGFX& g) {
+  const bool music = audio_.visible();
+  const bool hasLevel = batteryLevel_ >= 0;
+  if (!music && !hasLevel) return;   // 电量读不到、又不在音乐模式：整条不画
+
+  const uint8_t* moon = kMoonRing;
+  uint16_t moonColor = kBadgeLowColor;
+  if (hasLevel) {
+    const int32_t scaled = (batteryLevel_ - kBadgeRedPercent) * 3;   // 0 ~ 240
+    if (scaled > 160) {
+      moon = kMoonSolid;
+      moonColor = kBadgeGreenColor;
+    } else if (scaled > 80) {
+      moon = kMoonSlit;
+      moonColor = kBadgeGreenColor;
+    } else if (scaled > 0) {
+      moon = kMoonSlot;
+      moonColor = kBadgeWarnColor;
+    } else {
+      moon = kMoonRing;
+      moonColor = kBadgeLowColor;   // ≤20%
+    }
+  }
+
+  const int16_t parts = (music ? 1 : 0) + (hasLevel ? 1 : 0);
+  const int16_t width = parts * kBadgeGlyph + (parts - 1) * kBadgeGap;
+  int16_t x = static_cast<int16_t>(g.width() - kBadgeMarginRight - width);
+  // 固定在右上角：气泡出现也不跟着动（状态栏在最后绘制，盖在气泡上面）。
+  const int16_t y = kBadgeTopY;
+  if (music) {
+    blitGlyph(g, x, y, kMusicNote, kBadgeGreenColor);
+    x += kBadgeGlyph + kBadgeGap;
+  }
+  if (hasLevel) blitGlyph(g, x, y, moon, moonColor);
+}
+
+/**
+ * 轮询电量。读的是 AXP2101（I2C），不要每帧读，所以缓存 + 10 秒一次；
+ * 数值变化时才打日志，方便在串口里核对读数是否可信。
+ */
+void PetRenderer::pollBattery(uint32_t now) {
+  if (batteryPolledAt_ && now - batteryPolledAt_ < kBatteryPollMs) return;
+  batteryPolledAt_ = now;
+  const int32_t level = M5.Power.getBatteryLevel();
+  if (level == batteryLevel_) return;
+  batteryLevel_ = level;
+  FC_LOG(2, "[power] battery=%ld%%%s\n", static_cast<long>(level), M5.Power.isCharging() ? " (charging)" : "");
 }
 
 /**
@@ -657,7 +863,7 @@ int16_t PetRenderer::drawBubble(LovyanGFX& g, const String& text) {
   const int16_t bubbleWidth = min(static_cast<int16_t>(g.width() - 16), static_cast<int16_t>(widest + padding * 2));
   const int16_t bubbleHeight = lineCount * lineHeight + padding * 2 - 2;
   const int16_t x = (g.width() - bubbleWidth) / 2;
-  const int16_t y = 5;
+  const int16_t y = kBubbleTopY;   // 让开右上角的状态栏（见 kBubbleTopY 注释）
 
   g.fillRoundRect(x, y, bubbleWidth, bubbleHeight, 10, kBubbleFill);
   g.drawRoundRect(x, y, bubbleWidth, bubbleHeight, 10, kBubbleEdge);

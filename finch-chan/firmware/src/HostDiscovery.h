@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Log.h"
+
 #include <Arduino.h>
 #include <WiFiUdp.h>
 
@@ -39,9 +41,5 @@ class HostDiscovery {
   void sendProbe();
 };
 
-#define FINCHCHAN_DISC_LOG(...)                  \
-  do {                                           \
-    Serial.printf("[discovery] ");               \
-    Serial.printf(__VA_ARGS__);                  \
-    Serial.printf("\n");                         \
-  } while (0)
+#define FINCHCHAN_DISC_LOG(...) \
+  do { FC_LOG(1, "[discovery] " __VA_ARGS__); FC_NEWLINE(1); } while (0)

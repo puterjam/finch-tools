@@ -1,5 +1,7 @@
 #include "StackChanRuntime.h"
 
+#include "Log.h"
+
 #include <WiFi.h>
 
 void StackChanRuntime::begin() {
@@ -11,7 +13,7 @@ void StackChanRuntime::begin() {
    */
   M5StackChan.Motion.setAutoTorqueReleaseEnabled(false);
   M5StackChan.Motion.setTorqueEnabled(true);
-  Serial.println("[motion] auto torque release disabled, torque held");
+  FC_LOGLN(1, "[motion] auto torque release disabled, torque held");
 }
 
 void StackChanRuntime::update() {
@@ -33,6 +35,6 @@ void StackChanRuntime::setPowerSave(bool enabled, bool deep) {
     WiFi.setSleep(false);   // 醒来后要低延迟：命令、气泡、卡片都靠它
     M5.Power.setLed(255);
   }
-  Serial.printf("[power] save=%d deep=%d cpu=%uMHz\n", enabled ? 1 : 0, nextDeep ? 1 : 0,
+  FC_LOG(1, "[power] save=%d deep=%d cpu=%uMHz\n", enabled ? 1 : 0, nextDeep ? 1 : 0,
                 static_cast<unsigned>(getCpuFrequencyMhz()));
 }

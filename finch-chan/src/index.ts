@@ -1,5 +1,6 @@
 import type * as finch from 'finch';
 import { FinchChanBridge, SYNC_INTERVAL_MS, eventToState, isPetState, statusToState } from './bridge.js';
+import type { GainLevel } from './protocol.js';
 
 const TOOL_NAME = 'finchchan_control';
 
@@ -32,6 +33,10 @@ export function activate(ctx: finch.MiniToolContext): void {
   // Finch 那边没有状态变化事件可发）。2 秒一次，延迟上限很短，开销可忽略。
   const syncTimer = setInterval(() => void bridge.syncState(), SYNC_INTERVAL_MS);
   ctx.subscriptions.push({ dispose: () => clearInterval(syncTimer) });
+  // 气泡文案轮换：单独一条 1 秒的定时器去问桥接"到点了吗"，
+  // 这样实际间隔精确等于 BUBBLE_ROTATE_MS（挂在上面那条 2 秒对账上会变成 ~6 秒）。
+  const bubbleTimer = setInterval(() => void bridge.rotateBubble(), 1_000);
+  ctx.subscriptions.push({ dispose: () => clearInterval(bubbleTimer) });
   ctx.subscriptions.push(ctx.notifications.onDidPost((notification) => {
     // 通知用来把“刚发生的事”立刻反映到设备上：
     //   background-done → 立刻显示“有未读”（不等 status 轮询）
@@ -86,7 +91,7 @@ action:
     },
   }));
 
-  // 设置菜单：桥接状态 + 每台设备的配对 / 取消配对。
+  // 设置菜单：桥接状态 + 功能设置 + 每台设备的配对 / 取消配对。
   ctx.subscriptions.push(ctx.settingsMenu.register({
     async getMenu() {
       const snapshot = await bridge.snapshot();
@@ -99,6 +104,29 @@ action:
         iconName: 'bird',
         disabled: true,
       }];
+
+      // 功能设置：三行各自在右侧显示当前状态（开/关、低/中/高）。
+      // 状态来自设备上报（见 bridge.settingsSnapshot），所以按硬件 PWR 键切的律动模式也会同步过来。
+      const features = bridge.settingsSnapshot();
+      const online = features.connected > 0;
+      const featureRow = (id: string, label: string, value: string): finch.ComposerActionMenuItem => ({
+        id,
+        label,
+        description: online ? value : ctx.i18n.t('settings.noOnlineDevice'),
+        disabled: !online,
+      });
+      rows.push({
+        id: 'features',
+        label: ctx.i18n.t('settings.features'),
+        iconName: 'sliders-horizontal',
+        hoverText: online && features.mixed ? ctx.i18n.t('settings.mixed') : ctx.i18n.t('settings.featuresHint'),
+        children: [
+          featureRow('music:toggle', ctx.i18n.t('settings.musicMode'), onOffText(ctx.i18n, features.music)),
+          featureRow('gain:cycle', ctx.i18n.t('settings.micGain'), gainText(ctx.i18n, features.gain)),
+          featureRow('beat:toggle', ctx.i18n.t('settings.beatDance'), onOffText(ctx.i18n, features.beat)),
+        ],
+      });
+
       if (!snapshot.devices.length) {
         rows.push({ id: 'hint', label: ctx.i18n.t('settings.noDevice'), disabled: true });
         return rows;
@@ -117,6 +145,33 @@ action:
       return rows;
     },
     async execute(_context, itemId) {
+      // 功能设置：点一下就在状态间切换（开关 / 低中高），改完设备会回报状态。
+      if (itemId === 'music:toggle' || itemId === 'gain:cycle' || itemId === 'beat:toggle') {
+        const features = bridge.settingsSnapshot();
+        if (!features.connected) { ctx.ui.notify(ctx.i18n.t('settings.noOnlineDevice'), 'warning'); return; }
+        let sent = 0;
+        let label = '';
+        let value = '';
+        if (itemId === 'music:toggle') {
+          const next = !(features.music ?? false);
+          sent = bridge.sendSettings({ music: next });
+          label = ctx.i18n.t('settings.musicMode');
+          value = onOffText(ctx.i18n, next);
+        } else if (itemId === 'gain:cycle') {
+          const next = (((features.gain ?? 1) + 1) % 3) as GainLevel;   // 低 → 中 → 高 → 低
+          sent = bridge.sendSettings({ gain: next });
+          label = ctx.i18n.t('settings.micGain');
+          value = gainText(ctx.i18n, next);
+        } else {
+          const next = !(features.beat ?? true);
+          sent = bridge.sendSettings({ beat: next });
+          label = ctx.i18n.t('settings.beatDance');
+          value = onOffText(ctx.i18n, next);
+        }
+        ctx.ui.notify(sent ? ctx.i18n.t('settings.featuresSent', { name: label, value })
+                           : ctx.i18n.t('settings.featuresFailed'), sent ? 'info' : 'warning');
+        return;
+      }
       if (itemId.startsWith('unpair:')) {
         const removed = await bridge.unpair(itemId.slice(7));
         ctx.ui.notify(removed ? ctx.i18n.t('settings.unpaired') : ctx.i18n.t('settings.notFound'), removed ? 'info' : 'warning');
@@ -139,6 +194,18 @@ action:
 
 function textResult(text: string): finch.ToolResult { return { content: [{ type: 'text', text }] }; }
 function errorResult(text: string): finch.ToolResult { return { content: [{ type: 'text', text }], isError: true }; }
+
+/** 开关状态的中文/英文文案（未知 → “－”）。 */
+function onOffText(i18n: finch.MiniToolI18n, value: boolean | undefined): string {
+  if (value === undefined) return i18n.t('settings.unknown');
+  return i18n.t(value ? 'settings.on' : 'settings.off');
+}
+
+/** 收音灵敏度的文案：0=低、1=中、2=高。 */
+function gainText(i18n: finch.MiniToolI18n, gain: GainLevel | undefined): string {
+  if (gain === undefined) return i18n.t('settings.unknown');
+  return i18n.t(gain === 0 ? 'settings.gainLow' : gain === 1 ? 'settings.gainMid' : 'settings.gainHigh');
+}
 
 // Exported for the package smoke test and firmware-side protocol validation.
 export { PET_STATES, parseClientMessage, sanitizeText } from './protocol.js';

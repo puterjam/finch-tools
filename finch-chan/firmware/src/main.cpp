@@ -2,6 +2,7 @@
 #include <M5Unified.h>
 #include <WiFi.h>
 #include "config.h"
+#include "Log.h"
 #include "CommandQueue.h"
 #include "HostDiscovery.h"
 #include "PetRenderer.h"
@@ -48,19 +49,22 @@ void handleSerialCommands() {
         case WifiProvisioning::Phase::Portal: phase = "portal"; break;
         case WifiProvisioning::Phase::Connected: phase = "connected"; break;
       }
-      Serial.printf("[finchchan] wifi=%s ip=%s ssid=%s rssi=%d\n", phase, provisioning.localIp(),
+      FC_LOG(1, "[finchchan] wifi=%s ip=%s ssid=%s rssi=%d\n", phase, provisioning.localIp(),
                     provisioning.ssid(), provisioning.connected() ? static_cast<int>(WiFi.RSSI()) : 0);
-      Serial.printf("[finchchan] bridge=%s:%u relay=%s paired=%s\n", discovery.host(), static_cast<unsigned>(discovery.port()),
+      FC_LOG(1, "[finchchan] bridge=%s:%u relay=%s paired=%s\n", discovery.host(), static_cast<unsigned>(discovery.port()),
                     relay.connected() ? "connected" : "offline", relay.paired() ? "yes" : "no");
+      FC_LOG(1, "[finchchan] music=%s gain=%s beat=%s\n", pet.musicMode() ? "on" : "off",
+                    pet.micGainLevel() == 0 ? "low" : pet.micGainLevel() == 1 ? "mid" : "high",
+                    pet.beatDance() ? "on" : "off");
     } else if (line == "pair") {
       relay.submitPairCode(nullptr);   // 打印用法
     } else if (line.startsWith("pair ")) {
       relay.submitPairCode(line.substring(5).c_str());
     } else if (line == "wifi-reset") {
-      Serial.println("[finchchan] clearing wifi credentials and restarting into portal...");
+      FC_LOGLN(1, "[finchchan] clearing wifi credentials and restarting into portal...");
       provisioning.forgetCredentials();   // 不会返回：内部 ESP.restart()
     } else if (line.length()) {
-      Serial.println("[finchchan] commands: status | pair <code> | wifi-reset");
+      FC_LOGLN(1, "[finchchan] commands: status | pair <code> | wifi-reset");
     }
     line = "";
   }
@@ -88,8 +92,17 @@ void processCommands() {
         if (!command.id[0] || !strcmp(command.id, pet.promptId())) pet.clearPrompt();
         break;
       case PetCommand::Type::WifiReset:
-        Serial.println("[finchchan] wifi-reset requested from Finch: clearing credentials and restarting");
+        FC_LOGLN(1, "[finchchan] wifi-reset requested from Finch: clearing credentials and restarting");
         provisioning.forgetCredentials();   // 不会返回：内部 ESP.restart()
+        break;
+      case PetCommand::Type::Settings:
+        // 小程序设置菜单下发的功能设置；改完立刻回报一份完整设置。
+        if (command.settingMusic >= 0) pet.setMusicMode(command.settingMusic != 0);
+        if (command.settingGain >= 0) pet.setMicGainLevel(static_cast<uint8_t>(command.settingGain));
+        if (command.settingBeat >= 0) pet.setBeatDance(command.settingBeat != 0);
+        FC_LOG(1, "[settings] music=%d gain=%u beat=%d\n", pet.musicMode() ? 1 : 0, pet.micGainLevel(),
+                      pet.beatDance() ? 1 : 0);
+        relay.reportSettings(pet.musicMode(), pet.micGainLevel(), pet.beatDance());
         break;
       case PetCommand::Type::Ping: break;  // ack is emitted by relay before queueing.
     }
@@ -121,7 +134,7 @@ void dispatchPromptOption(const char* source, const char* optionId) {
       pet.reactToAnswer("allow");
     } else {
       pairOfferActive = false;
-      Serial.printf("[%s] pairing offer dismissed on device\n", source);
+      FC_LOG(1, "[%s] pairing offer dismissed on device\n", source);
     }
     pet.clearPrompt();
     return;
@@ -147,21 +160,36 @@ void handleZonePress(uint8_t zone) {
     } else {
       optionId = "open";   // 单选项卡片：去 Finch 作答
     }
-    Serial.printf("top touch zone=%u card=%s -> %s\n", zone, pet.promptId(), optionId);
+    FC_LOG(2, "top touch zone=%u card=%s -> %s\n", zone, pet.promptId(), optionId);
     dispatchPromptOption("top", optionId);
     return;
   }
   if (pet.isUnread()) {
-    Serial.println("top touch -> open unread session");
+    FC_LOGLN(2, "top touch -> open unread session");
     relay.notifyTap();
     return;
   }
-  Serial.printf("top touch zone=%u ignored (no card, nothing unread)\n", zone);
+  FC_LOG(2, "top touch zone=%u ignored (no card, nothing unread)\n", zone);
 }
 
 uint32_t lastScreenTouchAt = 0;
 
-/** 屏幕触摸（M5.Touch）：卡片按钮靠坐标命中。 */
+/**
+ * 点在表情/空白处（不是按钮）：跳去 Finch 打开这张卡片所属的会话，
+ * 让用户看清楚到底在问什么，而不是替他在设备上做决定。
+ * 配对确认卡是设备本地的，没有对应会话，点表情不做事。
+ */
+void openPromptSession(const char* source) {
+  if (!pet.hasPrompt()) return;
+  if (!strcmp(pet.promptId(), kPairPromptId)) {
+    FC_LOG(2, "[%s] face tap on local pair card: ignored\n", source);
+    return;
+  }
+  FC_LOG(1, "[%s] face tap -> open this card's session in Finch\n", source);
+  relay.notifyTap(pet.promptId());
+}
+
+/** 屏幕触摸（M5.Touch）：卡片按钮靠坐标命中，点表情/空白处=去看会话。 */
 void handleScreenTouch(uint32_t now) {
   if (!M5.Touch.isEnabled()) return;
   const auto& detail = M5.Touch.getDetail();
@@ -171,30 +199,31 @@ void handleScreenTouch(uint32_t now) {
 
   const int16_t x = detail.x;
   const int16_t y = detail.y;
-  Serial.printf("screen touch x=%d y=%d card=%s unread=%d\n", x, y, pet.hasPrompt() ? pet.promptId() : "-",
+  FC_LOG(2, "screen touch x=%d y=%d card=%s unread=%d\n", x, y, pet.hasPrompt() ? pet.promptId() : "-",
                 pet.isUnread() ? 1 : 0);
   const bool wasSleeping = pet.isSleeping();
   pet.noteTouch();   // 记一次活动（睡着时这里顺便唤醒）
   if (wasSleeping) {
-    Serial.println("screen touch while sleeping -> wake (friendly)");
+    FC_LOGLN(2, "screen touch while sleeping -> wake (friendly)");
     return;
   }
   if (pet.hasPrompt()) {
     char optionId[24] = {};
     if (pet.hitTestPrompt(x, y, optionId, sizeof(optionId))) {
-      Serial.printf("screen touch -> %s\n", optionId);
+      FC_LOG(2, "screen touch -> %s\n", optionId);
       dispatchPromptOption("screen", optionId);
     } else {
-      Serial.println("screen touch -> not on a button");
+      // 没点在按钮上（点了表情或气泡）：跳去 Finch 看这张卡在问什么。
+      openPromptSession("screen");
     }
     return;
   }
   if (pet.isUnread()) {
-    Serial.println("screen touch -> open unread session");
+    FC_LOGLN(2, "screen touch -> open unread session");
     relay.notifyTap();
     return;
   }
-  Serial.println("screen touch -> ignored (no card, nothing unread)");
+  FC_LOGLN(2, "screen touch -> ignored (no card, nothing unread)");
 }
 
 /** IMU 慢跟随基线，用来识别加速度突变（拍头）。 */
@@ -219,7 +248,7 @@ bool readPatSpike(uint32_t now) {
   if (delta < FINCHCHAN_PAT_THRESHOLD_G) return false;
   if (now - lastPatAt < 700) return false;        // 一次拍头只算一下
   lastPatAt = now;
-  Serial.printf("pat: delta=%.2fg\n", delta);
+  FC_LOG(2, "pat: delta=%.2fg\n", delta);
   return true;
 }
 
@@ -245,7 +274,7 @@ void handleTouch() {
   // 睡着（含关屏）时：任何触碰都只负责把它叫醒（友好叫醒，不演惊讶）。
   if (pet.isSleeping()) {
     if (anyTouch || swiped) {
-      Serial.println("top touch while sleeping -> wake (friendly)");
+      FC_LOGLN(2, "top touch while sleeping -> wake (friendly)");
       pet.noteTouch();
     }
     return;
@@ -256,22 +285,22 @@ void handleTouch() {
     if (down && !pressed[zone]) {
       // 一行把「哪个区被按」与「当前屏幕上有没有卡片」都记下来，
       // 这样“按钮没被点中”是能被定位到具体哪一步的。
-      Serial.printf("top touch zone %u (i=%u,%u,%u) card=%s options=%u unread=%d\n", zone, intensities[0],
+      FC_LOG(2, "top touch zone %u (i=%u,%u,%u) card=%s options=%u unread=%d\n", zone, intensities[0],
                     intensities[1], intensities[2], pet.hasPrompt() ? pet.promptId() : "-",
                     pet.promptOptionCount(), pet.isUnread() ? 1 : 0);
       pet.noteTouch();
       handleZonePress(zone);
     } else if (!down && pressed[zone]) {
-      Serial.printf("top touch zone %u released (i=%u,%u,%u)\n", zone, intensities[0], intensities[1], intensities[2]);
+      FC_LOG(2, "top touch zone %u released (i=%u,%u,%u)\n", zone, intensities[0], intensities[1], intensities[2]);
     }
     pressed[zone] = down;
   }
   // 前后滑动也当作按下：向前 = Front，向后 = Back。
   if (touch.wasSwipedForward()) {
-    Serial.println("top touch swipe forward -> Front");
+    FC_LOGLN(2, "top touch swipe forward -> Front");
     handleZonePress(0);
   } else if (touch.wasSwipedBackward()) {
-    Serial.println("top touch swipe backward -> Back");
+    FC_LOGLN(2, "top touch swipe backward -> Back");
     handleZonePress(2);
   }
 }
@@ -279,16 +308,19 @@ void handleTouch() {
 
 void setup() {
   Serial.begin(115200);
+  // 串口是 USB-CDC：把发送超时设成 0（写不出去就丢），没有宿主连着时也不打日志，
+  // 否则关掉串口监视器之后主循环会被 printf 拖住、界面直接卡死。
+  fcLogBegin();
   delay(150);
-  Serial.printf("FinchChan %s booting\n", FINCHCHAN_FIRMWARE_VERSION);
+  FC_LOG(1, "FinchChan %s booting\n", FINCHCHAN_FIRMWARE_VERSION);
 
   // BSP owns its safe motion/update lifecycle; FinchChan owns visible vector expressions.
   stackChan.begin();
   pet.begin();
   pet.setState(PetState::Idle);
   // 两套触摸硬件各自报一下状态（卡片按钮能不能点，看这行就知道）。
-  Serial.printf("[input] screen touch panel: %s\n", M5.Touch.isEnabled() ? "enabled" : "NOT detected");
-  Serial.println("[input] top touch zones: Si12T Front/Middle/Back via StackChan-BSP");
+  FC_LOG(1, "[input] screen touch panel: %s\n", M5.Touch.isEnabled() ? "enabled" : "NOT detected");
+  FC_LOGLN(1, "[input] top touch zones: Si12T Front/Middle/Back via StackChan-BSP");
   // 配网 → 找桥接 → 连 WS。地址都不再写死在固件里。
   provisioning.begin();
   discovery.begin();
@@ -302,10 +334,12 @@ void loop() {
   M5.update();
   handleSerialCommands();
 
-  // PWR 短按：切换收听模式（麦克风音频动效）。只有显示时才开麦，关掉就释放。
+  // PWR 短按：切换律动模式（麦克风音频动效）。只有显示时才开麦，关掉就释放。
+  // 切换后立刻上报，这样小程序设置菜单里那行「律动模式」会和硬件保持一致。
   if (M5.BtnPWR.wasClicked()) {
-    Serial.println("[input] PWR clicked -> toggle audio visualizer");
-    pet.toggleAudioVisualizer();
+    FC_LOGLN(1, "[input] PWR clicked -> toggle rhythm mode");
+    pet.setMusicMode(!pet.musicMode());
+    relay.reportSettings(pet.musicMode(), pet.micGainLevel(), pet.beatDance());
   }
 
   provisioning.update(now);
@@ -347,13 +381,13 @@ void loop() {
     pairOfferActive = true;
     pairRequestedAt = 0;
     pairErrorUntil = 0;
-    Serial.println("[finchchan] Finch opened a pairing window: showing confirm card");
+    FC_LOGLN(1, "[finchchan] Finch opened a pairing window: showing confirm card");
   }
   if (relay.consumePairError()) {
     pairErrorUntil = now + 6000;
     pairRequestedAt = 0;
     pairOfferActive = false;
-    Serial.println("[finchchan] pairing refused: open the pairing window in Finch first");
+    FC_LOGLN(1, "[finchchan] pairing refused: open the pairing window in Finch first");
   }
   if (!pairing) {
     pairOfferActive = false;
@@ -380,7 +414,7 @@ void loop() {
     options[1].destructive = false;
     pet.clearNotice();
     pet.setPrompt(kPairPromptId, "question", "要连上 Finch 吗？", options, 2);
-    Serial.println("[finchchan] pairing card shown: tap front to confirm");
+    FC_LOGLN(1, "[finchchan] pairing card shown: tap front to confirm");
   }
   pet.update(now);
   // 待机降功耗：打瞌睡就开 modem sleep，熄屏再加降主频；唤醒的那一帧立即恢复。
