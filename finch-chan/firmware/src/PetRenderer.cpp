@@ -133,9 +133,9 @@ void blitMaskN(LovyanGFX& g, int16_t x, int16_t y, const uint8_t* rows, int16_t 
 // 卡片出现动画：眼睛向上让位，按钮从屏幕下方滑入。
 constexpr uint32_t kPromptAnimMs = 280;
 constexpr int16_t kPromptEyeLift = 26;
-/* 只有气泡、没有卡片/未读抬升时（thinking / working）额外下压的量：
+/* 只有气泡、没有卡片抬升时（thinking / working）额外下压的量：
  * 这两个状态气泡与眼睛之间本来就有 55px 空隙，基线抬高后再跟着上移会显得表情浮在半空。
- * 卡片/未读滑入时按 lift 线性收到 0，所以入场动画不会中途跳一下。 */
+ * 卡片滑入时按 lift 线性收到 0，所以入场动画不会中途跳一下。 */
 constexpr int16_t kBubbleOnlyDrop = 10;
 /* 「动笔」：thinking/working 状态右下角那支笔（帧见 pen_frames.h）。
  * 笔尖固定在这个屏幕坐标上，笔身绕它来回摆——所以调位置是调笔尖，不是调整帧。
@@ -555,13 +555,14 @@ void PetRenderer::update(uint32_t now) {
   // 只有 working 画那支动笔（thinking 不画，看起来怪）；有卡片时让位给卡片
   const bool penShowing = overlays && !cardShowing &&
                            state_ == PetState::Working;
-  // 未读按钮用和卡片同一套位移（26px）与入场动画时长：状态一变就开始上移。
+  // 未读「查看」按钮的入场进度（只有按钮自己滑入，表情不跟着抬）。
   unreadProgress_ = unreadShowing ? fminf(1.0f, static_cast<float>(now - stateChangedAt_) / kPromptAnimMs) : 0.0f;
-  const float lift = cardShowing ? kPromptEyeLift * promptProgress_
-                                 : (unreadShowing ? kPromptEyeLift * unreadProgress_ : 0.0f);
+  /* 只有**等待卡片**会把表情抬起来让位；未读那个「查看」按钮不抬——
+   * 笑脸保持原位（气泡推下来的位置），按钮自己从下面滑进来。 */
+  const float lift = cardShowing ? kPromptEyeLift * promptProgress_ : 0.0f;
   /* 只有气泡、没有卡片/未读抬升时（thinking / working）再多压 kBubbleOnlyDrop 下来。
    * 那两个状态下气泡和眼睛之间本来就有 55px 空隙，基线抬高后再跟着上移会显得表情浮在半空。
-   * 补偿跟着 lift 线性淡出：卡片/未读滑入时 lift 从 0 涨到 26，补偿同步从 10 收到 0，
+   * 补偿跟着 lift 线性淡出：卡片滑入时 lift 从 0 涨到 26，补偿同步从 10 收到 0，
    * 所以入场动画中途不会跳一下。 */
   const int16_t bubbleDrop = static_cast<int16_t>(lift >= kPromptEyeLift ? 0.0f
                                                                         : (1.0f - lift / kPromptEyeLift) * kBubbleOnlyDrop);

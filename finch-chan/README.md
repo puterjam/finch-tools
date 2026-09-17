@@ -24,7 +24,7 @@ npx @finchtoys/minitools add /tmp/finch-chan-0.1.0.tgz
 
 Enable **FinchChan** in Toolcase. The bridge listens on `ws://0.0.0.0:8267`; the device finds this Mac automatically over UDP broadcast (port 8266), so no IP needs to be configured.
 
-Firmware side (environment setup, build, flashing): see **[firmware.md](firmware.md)**. Build with `bash tools/build.sh` — artifacts land in `firmware/release/finchchan-<version>.bin`.
+Firmware side (environment setup, build, flashing): see the [flashing guide](https://github.com/puterjam/finch-tools/blob/main/finch-chan/firmware.md) in the repo. Build with `bash tools/build.sh` — artifacts land in `firmware/release/finchchan-<version>.bin`.
 
 ## Pair a StackChan
 
