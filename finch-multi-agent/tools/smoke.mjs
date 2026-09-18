@@ -342,7 +342,7 @@ check('the result names each worker session', (output.match(/sess-\d+/g) ?? []).
 const waited = await toolDefinition.execute({ action: 'wait', runId: 'nope' }, exec);
 check('wait on an unknown run fails cleanly', waited.isError === true);
 
-// ── the interruption path: revise mid-run ───────────────────────────────────
+// ── the interruption path: replace a task mid-run ───────────────────────────
 
 // A slow run with a two-step chain: t1 feeds t2, so redirecting t1 has to drag
 // t2 along rather than leaving it blocked behind a cancelled dependency.
@@ -384,7 +384,7 @@ check('a run that outlives the budget reports still running', /小队还在干�
 const slowRunId = (slowRun.content[0].text.match(/run-[a-z0-9-]+/) ?? [])[0];
 if (process.env.MA_DEBUG) {
   const snapshot = await toolDefinition.execute({ action: 'status', runId: slowRunId }, exec);
-  console.log('--- before revise ---\n' + snapshot.content[0].text);
+  console.log('--- before the replacement ---\n' + snapshot.content[0].text);
 }
 
 const redirected = await toolDefinition.execute(

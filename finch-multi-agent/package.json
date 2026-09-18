@@ -1,6 +1,6 @@
 {
   "name": "finch-multi-agent",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Spin up a team of sub-agents from one natural-language goal: Fan out a plan into parallel worker Sessions that share immutable Artifacts, versioned Documents and structured Handoffs.",
   "author": {
     "name": "PuterJam",
@@ -35,10 +35,10 @@
   "finch": {
     "manifestVersion": 1,
     "id": "multi-agent",
-    "minVersion": "1.6.4",
+    "minVersion": "1.7.0",
     "name": "Multi-Agent",
     "description": "Turn one goal into a team of sub-agents: parallel worker sessions that hand off immutable artifacts instead of chat messages.",
-    "systemPrompt": "Use multi_agent_run when a request is genuinely decomposable into independent, low-bandwidth subtasks — research fan-out, multi-module review, batch processing, parallel drafting. Do not use it for small tasks, tightly coupled work, or anything needing low-latency back-and-forth. From the user's side there are only two steps — ask, then get the answer — so keep dispatching, executing and waiting inside one continuous chain of calls, and never narrate the mechanics or ask whether to keep waiting. Name every subtask as \"<role> · <what it is doing>\" (e.g. \"Competitor research · price the top three\") — that string becomes the worker's session title. To wait for a result, call wait (repeatedly if needed); never sleep and never poll with status. When the user changes direction mid-run, use revise to stop the affected tasks and queue replacements in the same run — do not start a new one.",
+    "systemPrompt": "Use multi_agent_run when a request is genuinely decomposable into independent, low-bandwidth subtasks — research fan-out, multi-module review, batch processing, parallel drafting. Do not use it for small tasks, tightly coupled work, or anything needing low-latency back-and-forth. From the user's side there are only two steps — ask, then get the answer — so keep dispatching, executing and waiting inside one continuous chain of calls, and never narrate the mechanics or ask whether to keep waiting. Name every subtask as \"<role> · <what it is doing>\" (e.g. \"Competitor research · price the top three\") — that string becomes the worker's session title. To wait for a result, call wait (repeatedly if needed); never sleep and never poll with status. You do not have to plan the whole thing up front: use add to queue or replace tasks, drop to stop them and start to release held roles — never a second run.",
     "main": "dist/index.js",
     "activationEvents": [
       "onStartup"

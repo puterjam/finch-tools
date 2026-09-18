@@ -126,7 +126,7 @@ default" to go back.
   nothing leaves your machine, and no network access is requested.
 - Workers run with automatic permission handling so an unattended run does not stall; a
   genuinely dangerous operation still waits for you.
-- Requires Finch 1.6.4 or newer.
+- Requires Finch 1.7.0 or newer.
 
 ---
 
@@ -232,4 +232,4 @@ Finch 会一直盯到出结果，而不是把活退回给你看着。
 
 - 任务状态保存在小程序自己存储目录下的本地 SQLite 数据库里——数据不出本机，也不申请网络权限。
 - worker 采用自动权限处理，避免无人值守时卡住；真正危险的操作仍然会等你确认。
-- 需要 Finch 1.6.4 或更高版本。
+- 需要 Finch 1.7.0 或更高版本。
