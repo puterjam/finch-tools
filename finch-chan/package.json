@@ -1,6 +1,6 @@
 {
   "name": "finch-chan",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Send privacy-safe Finch activity states to a paired StackChan pet on your local network.",
   "author": { "name": "PuterJam", "url": "https://github.com/puterjam" },
   "repository": { "type": "git", "url": "git+https://github.com/puterjam/finch-tools.git", "directory": "finch-chan" },
@@ -19,7 +19,7 @@
   },
   "finch": {
     "manifestVersion": 1,
-    "minVersion": "1.6.1",
+    "minVersion": "1.7.0",
     "id": "finch-chan",
     "name": "FinchChan",
     "description": "Send privacy-safe Finch activity states to a paired StackChan pet on your local network.",

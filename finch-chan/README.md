@@ -13,6 +13,10 @@ FinchChan sends only a finite pet state—never prompts, chat messages, tool inp
 
 ## Install
 
+Requires **Finch 1.7.0 or newer** (`finch.minVersion`): the mini tool answers wait cards from *any*
+session, which needs `permissions.sessionInteractions: 'all'` — that value only exists from 1.7.0
+on. On older Finch the install is refused.
+
 Build and install the packed tarball (recommended for local testing):
 
 ```sh
@@ -57,7 +61,7 @@ Every row shows its current state on the right; clicking the row switches it.
 | Row | Values | Device effect |
 | --- | --- | --- |
 | Rhythm mode | On / Off | Same switch as the device's PWR button (mic spectrum + beat) |
-| Mic sensitivity | Low / Mid / High | Mic gain 1.8 / 2.4 / 3.0 before the FFT |
+| Mic sensitivity | Low / Mid / High | Mic gain 1.8 / 2.4 / 4.5 before the FFT |
 | Dance to the beat | On / Off | Nodding to the beat; the spectrum keeps running |
 
 The **device is the source of truth**: it reports its settings when it connects and after every
@@ -128,6 +132,10 @@ FinchChan 只发送有限的宠物状态，**绝不发送**提示词、对话正
 
 ## 安装
 
+要求 **Finch 1.7.0 或更新**（`finch.minVersion`）：设备上要代答**任意会话**的等待卡片，
+需要 `permissions.sessionInteractions: 'all'`，而这个取值从 1.7.0 才有；
+更早的 Finch 会直接拒绝安装。
+
 建议本地测试时先打包再安装：
 
 ```sh
@@ -171,7 +179,7 @@ Composer 的小鸟按钮提供快捷入口；FinchChan 设置菜单会列出设�
 | 菜单行 | 取值 | 对设备的作用 |
 | --- | --- | --- |
 | 律动模式 | 开 / 关 | 和设备上的 PWR 键是同一个开关（麦克风频谱 + 跟拍） |
-| 收音灵敏度 | 低 / 中 / 高 | 进 FFT 前的麦克风增益 1.8 / 2.4 / 3.0 |
+| 收音灵敏度 | 低 / 中 / 高 | 进 FFT 前的麦克风增益 1.8 / 2.4 / 4.5 |
 | 随节奏舞动 | 开 / 关 | 是否跟拍点头；频谱照旧 |
 
 **设备是这些设置的唯一真源**：它在连接建立时和每次变化后都上报一次，所以在硬件上按 PWR 键，

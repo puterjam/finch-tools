@@ -362,6 +362,14 @@ void loop() {
   stackChan.update();
   relay.update(now);
   processCommands();
+  // 诊断（第 2 档日志）：堆占用与**最大可用块**。跑久了变卡时看这两行数值就知道
+  // 是不是堆碎片化（largest 一路变小 = 碎片；free 一路变小 = 泄漏）。
+  static uint32_t heapLoggedAt = 0;
+  if (now - heapLoggedAt > 30000UL) {
+    heapLoggedAt = now;
+    FC_LOG(2, "[heap] free=%u largest=%u\n", static_cast<unsigned>(ESP.getFreeHeap()),
+           static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+  }
   // 桥接刚连上（有任务/会话在活动）也当作“有事发生”，把睡着的叫醒。
   static bool wasConnected = false;
   static uint32_t lastConnectedAt = 0;
