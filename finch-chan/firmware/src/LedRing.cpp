@@ -75,7 +75,20 @@ void LedRing::update(uint32_t now) {
   const uint32_t period = effect_.periodMs ? effect_.periodMs : 1000;
   const uint32_t phase = (now - startedAt_) % period;
   const uint8_t factor = factorFor(effect_, phase);
-  const uint8_t level = static_cast<uint8_t>(static_cast<uint16_t>(FINCHCHAN_LED_BRIGHTNESS) * factor / 255);
+  uint8_t level = static_cast<uint8_t>(static_cast<uint16_t>(FINCHCHAN_LED_BRIGHTNESS) * factor / 255);
+  /* 亮度量化：呼吸是连续斜坡，不量化的话亮度几乎每帧都在变，
+   * `apply()` 会**每帧**写一次 12 颗灯 + refresh —— 实测这一项每帧 6ms
+   * （38fps 下占了近四分之一帧时间，工作状态呼吸灯一亮就掉帧）。
+   * 量化后写入频率从每帧一次降到每秒 10~20 次。
+   * 步长按满档 255 取，所以实际档数 = FINCHCHAN_LED_BRIGHTNESS / 8；
+   * 默认 90 时是 11 档（一个 2 秒呼吸周期内每档停留约 180ms，
+   * 每次只变 9/255 ≈ 3.5% 亮度，环境灯上看不出来）。
+   * 万一以后把亮度调到很低（比如 ≤32）觉得台阶明显，把步长改成相对值
+   * （max(2, FINCHCHAN_LED_BRIGHTNESS / 16)）即可。 */
+  constexpr uint8_t kLevelStep = 8;
+  const uint16_t quantized =
+      static_cast<uint16_t>(static_cast<uint16_t>(level) + kLevelStep / 2) / kLevelStep * kLevelStep;
+  level = quantized > 255 ? 255 : static_cast<uint8_t>(quantized);   // 四舍五入，保留 255 满档
   // Only repaint when the brightness actually steps; SPI writes are not free.
   if (level == lastLevel_) return;
   lastLevel_ = level;

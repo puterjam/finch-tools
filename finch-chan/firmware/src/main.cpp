@@ -329,10 +329,30 @@ void setup() {
   relay.setSoundBank(&pet.audioBank());
 }
 
+/* ── 分阶段耗时诊断（第 2 档日志）──
+ * compose/push 只能解释渲染那一半，剩下每帧约 10ms 花在主循环各处。
+ * 把循环按阶段计时、每 5 秒打一行平均值，就知道该掐哪一段（µs/帧）。 */
+constexpr uint8_t kProfStages = 8;
+const char* const kProfNames[kProfStages] = {"input", "prov", "disc", "touch", "bsp", "ws", "render", "tail"};
+uint32_t gProfUs[kProfStages] = {};
+uint32_t gProfFrames = 0;
+uint32_t gProfAt = 0;
+
+/** 作用域计时：析构时把耗时累加到对应槽位（包住多条语句也不用改结构）。 */
+struct StageTimer {
+  uint32_t* slot;
+  uint32_t start;
+  explicit StageTimer(uint32_t* target) : slot(target), start(micros()) {}
+  ~StageTimer() { *slot += micros() - start; }
+};
+
 void loop() {
   const uint32_t now = millis();
-  M5.update();
-  handleSerialCommands();
+  {
+    StageTimer timer(&gProfUs[0]);
+    M5.update();
+    handleSerialCommands();
+  }
 
   // PWR 短按：切换律动模式（麦克风音频动效）。只有显示时才开麦，关掉就释放。
   // 切换后立刻上报，这样小程序设置菜单里那行「律动模式」会和硬件保持一致。
@@ -342,7 +362,10 @@ void loop() {
     relay.reportSettings(pet.musicMode(), pet.micGainLevel(), pet.beatDance());
   }
 
-  provisioning.update(now);
+  {
+    StageTimer timer(&gProfUs[1]);
+    provisioning.update(now);
+  }
   // 配网 / 连接阶段：屏幕只显示提示，不跑表情与卡片。
   if (provisioning.portalActive()) {
     pet.showNotice("配网中", provisioning.apName(), "手机连上它，打开 192.168.4.1");
@@ -355,13 +378,25 @@ void loop() {
     return;
   }
 
-  discovery.update(now, provisioning.connected());
-  if (discovery.found()) relay.setEndpoint(discovery.host(), discovery.port());
+  {
+    StageTimer timer(&gProfUs[2]);
+    discovery.update(now, provisioning.connected());
+    if (discovery.found()) relay.setEndpoint(discovery.host(), discovery.port());
+  }
 
-  handleTouch();
-  stackChan.update();
-  relay.update(now);
-  processCommands();
+  {
+    StageTimer timer(&gProfUs[3]);
+    handleTouch();
+  }
+  {
+    StageTimer timer(&gProfUs[4]);
+    stackChan.update();
+  }
+  {
+    StageTimer timer(&gProfUs[5]);
+    relay.update(now);
+    processCommands();
+  }
   // 诊断（第 2 档日志）：堆占用与**最大可用块**。跑久了变卡时看这两行数值就知道
   // 是不是堆碎片化（largest 一路变小 = 碎片；free 一路变小 = 泄漏）。
   static uint32_t heapLoggedAt = 0;
@@ -424,8 +459,33 @@ void loop() {
     pet.setPrompt(kPairPromptId, "question", "要连上 Finch 吗？", options, 2);
     FC_LOGLN(1, "[finchchan] pairing card shown: tap front to confirm");
   }
-  pet.update(now);
+  {
+    StageTimer timer(&gProfUs[6]);
+    pet.update(now);
+  }
   // 待机降功耗：打瞌睡就开 modem sleep，熄屏再加降主频；唤醒的那一帧立即恢复。
-  stackChan.setPowerSave(pet.isSleeping(), pet.isScreenOff());
-  delay(1);
+  {
+    StageTimer timer(&gProfUs[7]);
+    stackChan.setPowerSave(pet.isSleeping(), pet.isScreenOff());
+    delay(1);
+  }
+
+  // 分阶段耗时诊断：每 5 秒一行，单位 µs/帧。
+  gProfFrames += 1;
+  if (kFinchChanLogLevel >= 2 && gProfAt && now - gProfAt >= 5000) {
+    const uint32_t frames = gProfFrames;
+    char line[176] = "[prof]";
+    for (uint8_t index = 0; index < kProfStages; ++index) {
+      char piece[32];
+      snprintf(piece, sizeof(piece), " %s=%u", kProfNames[index],
+               static_cast<unsigned>(gProfUs[index] / frames));
+      strlcat(line, piece, sizeof(line));
+    }
+    FC_LOG(2, "%s (us/frame)\n", line);
+    gProfAt = now;
+    gProfFrames = 0;
+    for (uint8_t index = 0; index < kProfStages; ++index) gProfUs[index] = 0;
+  } else if (!gProfAt) {
+    gProfAt = now;
+  }
 }

@@ -130,6 +130,12 @@ class PetRenderer {
   uint32_t composeUs_ = 0;
   uint32_t pushUs_ = 0;
   uint32_t pushedPixels_ = 0;
+  /**
+   * 渲染帧内部的细分耗时（µs，累计值）：只靠 compose/push 对不上账，
+   * 帧循环里还有一段时间花在音频/灯光/舵机上，拆开才知道该掐哪一段。
+   * 顺序：audio / led / motion / sleep（含电量轮询）/ erase / face。
+   */
+  uint32_t subUs_[6] = {};
   /** 下一帧要不要整屏重画/重推（静态内容变了，或每 2 秒兜底一次）。 */
   bool fullFrame_ = true;
   uint32_t lastFullFrameAt_ = 0;
@@ -166,9 +172,10 @@ class PetRenderer {
   void enterDozing(uint32_t now);
   void enterDeepSleep(uint32_t now, int32_t idleMs);
   void wakeUp(uint32_t now, bool startled);
-  /** 把文字画成顶部气泡，返回气泡下方可用的起始 y。 */
-  int16_t drawBubble(LovyanGFX& g, const char* text);
-  /** 等待卡片的按钮行：在表情下方（权限卡为允许/拒绍，答题卡为去回复）。 */
+  /** 把文字画成顶部气泡，返回气泡下方可用的起始 y。
+   *  paint=false 时只算几何不落笔：增量帧靠它拿到眼睛该落在哪，但不重画静态气泡。 */
+  int16_t drawBubble(LovyanGFX& g, const char* text, bool paint = true);
+  /** 等待卡片的按钮行：在表情下方（权限卡为允许/拒绝，答题卡为去回复）。 */
   void drawPromptButtons(LovyanGFX& g);
   /** 有未读时底部的灰色「查看」按钮（点击行为与“任意点击”一致）。 */
   void drawUnreadButton(LovyanGFX& g);

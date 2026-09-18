@@ -551,15 +551,22 @@ void PetRenderer::update(uint32_t now) {
            frames * 1000.0f / span, 1000 / kFrameIntervalMs,
            frames ? composeUs_ / 1000.0f / frames : 0.0f, frames ? pushUs_ / 1000.0f / frames : 0.0f,
            frames ? static_cast<float>(pushedPixels_) / frames : 0.0f);
+    FC_LOG(2, "[render] audio=%u led=%u motion=%u sleep=%u erase=%u face=%u (us/frame)\n",
+           frames ? subUs_[0] / frames : 0, frames ? subUs_[1] / frames : 0, frames ? subUs_[2] / frames : 0,
+           frames ? subUs_[3] / frames : 0, frames ? subUs_[4] / frames : 0, frames ? subUs_[5] / frames : 0);
     fpsWindowAt_ = now;
     fpsWindowFrames_ = frameCount_;
     composeUs_ = 0;
     pushUs_ = 0;
     pushedPixels_ = 0;
+    for (uint8_t index = 0; index < 6; ++index) subUs_[index] = 0;
   } else if (!fpsWindowAt_) {
     fpsWindowAt_ = now;
   }
+  const uint32_t tAudio = micros();
   audio_.update(now);   // 采样 + 条形/音符推进（关掉时只把动画收尾）
+  subUs_[0] += micros() - tAudio;
+  const uint32_t tSleep = micros();
   pollBattery(now);     // 10 秒一次，缓存给右上角状态条用
 
   // ── 睡眠只在真正的空闲里计时：idle 且无卡片。running / waiting 等状态不睡 ──
@@ -602,7 +609,10 @@ void PetRenderer::update(uint32_t now) {
     if (!promptActive_) applyExpression(faceFor(state_));
   }
 
+  subUs_[3] += micros() - tSleep;
+  const uint32_t tLed = micros();
   leds_.update(now);
+  subUs_[1] += micros() - tLed;
   if (promptActive_) {
     const uint32_t elapsed = now - promptShownAt_;
     promptProgress_ = elapsed >= kPromptAnimMs ? 1.0f : static_cast<float>(elapsed) / kPromptAnimMs;
@@ -626,7 +636,9 @@ void PetRenderer::update(uint32_t now) {
   }
 
   // 头部动作：空闲跟视线、working 偶尔点头、表情切换时的肢体反应。
+  const uint32_t tMotion = micros();
   motion_.update(now, expression_, face_.gazeOffsetX(), face_.gazeOffsetY());
+  subUs_[2] += micros() - tMotion;
 
   // 惊醒中 / 打瞌睡时都不叠气泡与卡片，只演表情。
   const bool overlays = !waking_ && sleepLevel_ == SleepLevel::Awake;
@@ -744,6 +756,7 @@ void PetRenderer::update(uint32_t now) {
 
   // 诊断：合成耗时（画到离屏画布）——和推送耗时一起每 5 秒报一次
   const uint32_t composeStart = micros();
+  const uint32_t tErase = composeStart;
   if (fullFrame) {
     canvas_.fillScreen(TFT_BLACK);
   } else if (audioShowing) {
@@ -754,15 +767,21 @@ void PetRenderer::update(uint32_t now) {
     // 眼睛不用擦：缓存是一次不透明的 80x80 拷贝，每帧位移几像素必然盖住上一次。
     canvas_.fillRect(kPenBandX, kPenBandY, kPenBandW, kPenBandH, TFT_BLACK);
   }
+  subUs_[4] += micros() - tErase;
+  /* 增量帧只重画"会动的部分"：静态内容（气泡/卡片按钮/未读按钮/状态条）留在画布上，
+   * 不再每帧重画一遍 —— 这一项就能省下好几毫秒。
+   * 音乐模式例外：整块擦除的区域会盖到气泡下沿，所以那时候照旧整帧重画。 */
+  const bool paintStatic = fullFrame || audioShowing;
+  const uint32_t tFace = micros();
   if (cardShowing) {
     // 等待卡片：气泡标题在上，眼睛向上让位，按钮从下方滑入停在表情下方。
-    const int16_t inset = drawBubble(canvas_, promptTitle_.c_str());
+    const int16_t inset = drawBubble(canvas_, promptTitle_.c_str(), paintStatic);
     face_.update(canvas_, now, inset / 2 - static_cast<int16_t>(lift) + (inset ? bubbleDrop : 0) - unreadRaise);
-    drawPromptButtons(canvas_);
+    if (paintStatic) drawPromptButtons(canvas_);
   } else if (overlays) {
-    const int16_t inset = drawBubble(canvas_, bubble_.c_str());
+    const int16_t inset = drawBubble(canvas_, bubble_.c_str(), paintStatic);
     face_.update(canvas_, now, inset / 2 - static_cast<int16_t>(lift) + (inset ? bubbleDrop : 0) - unreadRaise - audioBob);
-    drawSpeech(canvas_);
+    if (paintStatic) drawSpeech(canvas_);
     // 音频动效：底部一行条形；卡片出现时上面那条分支已经把它盖掉了。
     if (audioShowing) audio_.draw(canvas_, kAudioRowMargin, kAudioRowHeight);
   } else {
@@ -772,10 +791,11 @@ void PetRenderer::update(uint32_t now) {
   // 卡片在的时候不画：卡片要能完全盖住音频动效。
   if (overlays && !cardShowing && audio_.notesAlive()) audio_.drawNotes(canvas_);
   // 有未读：底部给一个灰色「查看」按钮（和卡片一样盖在频谱上面）。
-  if (unreadShowing) drawUnreadButton(canvas_);
+  if (paintStatic && unreadShowing) drawUnreadButton(canvas_);
   // 右上角状态条：电量常显，音乐模式时前面多一个 ♪。
   if (penShowing) drawPen(canvas_, now);
-  if (overlays) drawStatusBadge(canvas_);
+  if (paintStatic && overlays) drawStatusBadge(canvas_);
+  subUs_[5] += micros() - tFace;
   const uint32_t composeUs = micros() - composeStart;   // 本帧合成耗时
   composeUs_ += composeUs;                             // 下面是推送
   /* 推送区域 = 本帧眼睛框 ∪ 上一帧推过的框。
@@ -1020,7 +1040,7 @@ void PetRenderer::drawPromptButtons(LovyanGFX& g) {
   g.setTextDatum(middle_center);
 }
 
-int16_t PetRenderer::drawBubble(LovyanGFX& g, const char* text) {
+int16_t PetRenderer::drawBubble(LovyanGFX& g, const char* text, bool paint) {
   if (!text || !*text) return 0;
   g.setFont(&fonts::efontCN_16);
   g.setTextSize(1);
@@ -1041,14 +1061,16 @@ int16_t PetRenderer::drawBubble(LovyanGFX& g, const char* text) {
   const int16_t x = (g.width() - bubbleWidth) / 2;
   const int16_t y = kBubbleTopY;   // 让开右上角的状态栏（见 kBubbleTopY 注释）
 
-  g.fillRoundRect(x, y, bubbleWidth, bubbleHeight, 10, kBubbleFill);
-  g.drawRoundRect(x, y, bubbleWidth, bubbleHeight, 10, kBubbleEdge);
-  g.fillTriangle(g.width() / 2 - 7, y + bubbleHeight - 2, g.width() / 2 + 7, y + bubbleHeight - 2,
-                 g.width() / 2, y + bubbleHeight + 7);
-  g.setTextColor(TFT_WHITE, kBubbleFill);
-  for (uint8_t index = 0; index < lineCount; ++index) {
-    g.drawString(lines[index], x + (bubbleWidth - g.textWidth(lines[index])) / 2,
-                 y + padding - 1 + index * lineHeight);
+  if (paint) {
+    g.fillRoundRect(x, y, bubbleWidth, bubbleHeight, 10, kBubbleFill);
+    g.drawRoundRect(x, y, bubbleWidth, bubbleHeight, 10, kBubbleEdge);
+    g.fillTriangle(g.width() / 2 - 7, y + bubbleHeight - 2, g.width() / 2 + 7, y + bubbleHeight - 2,
+                   g.width() / 2, y + bubbleHeight + 7);
+    g.setTextColor(TFT_WHITE, kBubbleFill);
+    for (uint8_t index = 0; index < lineCount; ++index) {
+      g.drawString(lines[index], x + (bubbleWidth - g.textWidth(lines[index])) / 2,
+                   y + padding - 1 + index * lineHeight);
+    }
   }
   g.setFont(&fonts::Font0);
   g.setTextDatum(middle_center);
