@@ -471,6 +471,16 @@ const finchTheme = EditorView.theme({
     fontSize: '0.9rem',
     fontFamily: 'var(--md-editor-font-family, var(--finch-font-mono))',
   },
+  // The rendered in-cell preview is an extra sibling of the package's own
+  // `.tbl-cell-view` (see installStaticTableCellPreview), so the package's
+  // element steps aside with CSS instead of being rewritten. While a cell is
+  // being edited the package hides its static view; the preview follows.
+  '.tbl-cell:has(> .tbl-cell-view[data-md-preview]) > .tbl-cell-view:not([data-md-preview])': {
+    display: 'none',
+  },
+  '.tbl-cell:has(.tbl-cell-editor) > .tbl-cell-view[data-md-preview]': {
+    display: 'none',
+  },
   // Tint the active cell / row / column boundary against dark skins. The
   // outline itself keeps the package's default 2px width — its ::after
   // overlay geometry (`calc(100% + 2px)` at -1px offset) is designed for
@@ -3218,65 +3228,108 @@ function escapeTableCellHtml(text: string): string {
 function renderStaticTableCellMarkdown(source: string): string {
   const tokens: string[] = [];
   const token = (html: string) => `\u0000${tokens.push(html) - 1}\u0000`;
+  // Delimiters are emitted as tokens so the punctuation one rule wrote can
+  // never be read back by a later rule: `**bold**` used to be re-matched by
+  // the single-asterisk emphasis rule, leaving a stray `*` visible after the
+  // bold text. The text between the delimiters stays in the buffer, so nested
+  // emphasis inside bold still renders.
+  const delimiter = (text: string) => token(`<span class="cm-md-delimiter">${text}</span>`);
+  // Tokens are expanded recursively: a rule can nest another rule's tokens
+  // (inline code wraps its backticks), and a single pass would leave the inner
+  // placeholder visible as raw text.
+  const expand = (html: string): string =>
+    html.replace(/\u0000(\d+)\u0000/g, (_match, index) => expand(tokens[Number(index)]!));
   let html = escapeTableCellHtml(source);
 
   html = html.replace(/`([^`\n]+)`/g, (_match, code) => token(
-    '<span class="cm-md-delimiter">`</span>'
+    delimiter('`')
     + `<span class="cm-md-inline-code">${code}</span>`
-    + '<span class="cm-md-delimiter">`</span>',
+    + delimiter('`'),
   ));
   // Resolve a Markdown link before bare URLs, otherwise the URL token would
   // leave its surrounding `[label]()` syntax visible in the static cell.
   html = html.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/gi, (_match, label, url) => token(
-    '<span class="cm-md-delimiter">[</span>'
+    delimiter('[')
     + `<span class="cm-md-link" data-md-href="${url}" role="link" title="${url}">${label}</span>`
-    + '<span class="cm-md-delimiter">](</span>'
-    + `<span class="cm-md-delimiter">${url}</span>`
-    + '<span class="cm-md-delimiter">)</span>',
+    + delimiter('](')
+    + delimiter(url)
+    + delimiter(')'),
   ));
   html = html.replace(/https?:\/\/[^\s<]+/gi, (url) => token(
     `<span class="cm-md-link" data-md-href="${url}" role="link" title="${url}">${url}</span>`,
   ));
   html = html.replace(/==(?=\S)([^<>\n]+?)(?<=\S)==/g, (_match, text) =>
-    `<span class="cm-md-delimiter">==</span><mark class="cm-md-mark">${text}</mark><span class="cm-md-delimiter">==</span>`,
+    delimiter('==') + `<mark class="cm-md-mark">${text}</mark>` + delimiter('=='),
   );
-  html = html.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, (_match, delimiter, text) =>
-    `<span class="cm-md-delimiter">${delimiter}</span><strong class="cm-md-strong">${text}</strong><span class="cm-md-delimiter">${delimiter}</span>`,
+  html = html.replace(/(\*\*|__)(?=\S)([\s\S]*?\S)\1/g, (_match, marker, text) =>
+    delimiter(marker) + `<strong class="cm-md-strong">${text}</strong>` + delimiter(marker),
   );
   html = html.replace(/\*(?=\S)([^*\n]*?\S)\*/g, (_match, text) =>
-    `<span class="cm-md-delimiter">*</span><em class="cm-md-emphasis">${text}</em><span class="cm-md-delimiter">*</span>`,
+    delimiter('*') + `<em class="cm-md-emphasis">${text}</em>` + delimiter('*'),
   );
   html = html.replace(/_(?=\S)([^_\n]*?\S)_/g, (_match, text) =>
-    `<span class="cm-md-delimiter">_</span><em class="cm-md-emphasis">${text}</em><span class="cm-md-delimiter">_</span>`,
+    delimiter('_') + `<em class="cm-md-emphasis">${text}</em>` + delimiter('_'),
   );
-  return html.replace(/\u0000(\d+)\u0000/g, (_match, index) => tokens[Number(index)]!);
+  return expand(html);
 }
 
 let tablePreviewMouseSelecting = false;
 
+/* Inline-Markdown rendering for the table's *static* cells.
+ *
+ * The package renders a non-edited cell as plain text inside `.tbl-cell-view`:
+ * its Svelte component keeps a comment anchor in there and inserts/replaces the
+ * raw text nodes around it. An earlier version of this patch wrote the rendered
+ * preview into that element with `innerHTML`, which threw the anchor away —
+ * from then on every update the component made was inserted into a detached
+ * tree, so the visible cell kept the text it had when the preview was first
+ * painted. A row/column move, a sort, a duplicate or a clear all change cell
+ * text without rebuilding the widget (the widget patches the document, and the
+ * document round-trip reuses the same component), so those edits silently never
+ * showed up until the panel was reopened.
+ *
+ * So the preview now lives *outside* the package's element: it is an extra
+ * sibling that carries the same `tbl-cell-view` class (identical metrics,
+ * padding, wrapping and header colors) and the package's own element is hidden
+ * by CSS while the preview exists. Nothing the package owns is moved, removed
+ * or rewritten, its anchor stays put and its text keeps tracking the model,
+ * which is what lets the preview re-render from the live text.
+ */
+const CELL_PREVIEW_ATTR = 'data-md-preview';
+
 function installStaticTableCellPreview(root: HTMLElement): () => void {
-  const render = () => root.querySelectorAll<HTMLElement>('.tbl-cell-view').forEach((cell) => {
-    const cellRoot = cell.closest<HTMLElement>('.tbl-cell');
-    const editorContent = cellRoot?.querySelector<HTMLElement>('.tbl-cell-editor .cm-content');
-    const alreadyRendered = !!cell.querySelector('[data-md-preview]');
-
-    // A selected cell keeps its static sibling hidden while its embedded CM
-    // editor changes. Cache that editor's source on the owning cell; when the
-    // editor is later unmounted, the old static DOM must not win over it.
-    if (editorContent) cellRoot!.dataset.mdPreviewEditedSource = editorContent.textContent || '';
-    const source = editorContent
-      ? editorContent.textContent || ''
-      : alreadyRendered
-        ? (cellRoot?.dataset.mdPreviewEditedSource ?? cell.textContent ?? '')
-        : cell.textContent || '';
-
-    if (cell.dataset.mdPreviewSource === source && alreadyRendered) return;
-    cell.dataset.mdPreviewSource = source;
-    cell.innerHTML = `<span data-md-preview="true">${renderStaticTableCellMarkdown(source)}</span>`;
-  });
-  // Svelte can unmount the cell editor and restore its static sibling across
-  // several microtasks. Render on the next animation frame, after that DOM
-  // transition settles, instead of racing its intermediate static markup.
+  const render = () => {
+    root.querySelectorAll<HTMLElement>(`.tbl-cell-view:not([${CELL_PREVIEW_ATTR}])`).forEach((view) => {
+      const cell = view.closest<HTMLElement>('.tbl-cell');
+      if (!cell) return;
+      const source = view.textContent || '';
+      const html = renderStaticTableCellMarkdown(source);
+      const preview = cell.querySelector<HTMLElement>(`:scope > [${CELL_PREVIEW_ATTR}]`);
+      // Nothing to render in this cell (no links, emphasis, code or mark):
+      // leave the package's own text in place instead of hiding it behind an
+      // identical copy.
+      if (html === escapeTableCellHtml(source)) {
+        preview?.remove();
+        delete view.dataset.mdPreviewSource;
+        return;
+      }
+      if (preview) {
+        if (view.dataset.mdPreviewSource === source) return;
+        view.dataset.mdPreviewSource = source;
+        preview.innerHTML = html;
+        return;
+      }
+      view.dataset.mdPreviewSource = source;
+      const rendered = document.createElement('div');
+      rendered.className = 'tbl-cell-view';
+      rendered.setAttribute(CELL_PREVIEW_ATTR, 'true');
+      rendered.innerHTML = html;
+      view.after(rendered);
+    });
+  };
+  // The component replaces its text nodes across several microtasks, so render
+  // on the next animation frame, after that DOM transition settles, instead of
+  // racing its intermediate markup.
   let frame = 0;
   let pending = false;
   const scheduleRender = () => {
