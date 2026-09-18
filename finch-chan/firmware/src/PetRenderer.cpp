@@ -131,6 +131,9 @@ void blitMaskN(LovyanGFX& g, int16_t x, int16_t y, const uint8_t* rows, int16_t 
   }
 }
 // 卡片出现动画：眼睛向上让位，按钮从屏幕下方滑入。
+/* 帧间隔（毫秒）：40 = 25fps（原先的值），20 = 50fps。
+ * 整屏推送 153KB 的耗时是真正的天花板，帧率日志会显示实际能跑到多少。 */
+constexpr uint32_t kFrameIntervalMs = 20;
 constexpr uint32_t kPromptAnimMs = 280;
 constexpr int16_t kPromptEyeLift = 26;
 /* 只有气泡、没有卡片抬升时（thinking / working / 未读）额外下压的量：
@@ -160,25 +163,73 @@ constexpr int16_t kPromptButtonSlide = 56;
 constexpr int16_t kAudioRowMargin = 10;
 constexpr int16_t kAudioRowHeight = 48;
 
-/** 按宽度把文本折成最多 maxLines 行；折不下时最后一行加省略号。 */
-uint8_t wrapLines(LovyanGFX& g, const String& text, int16_t maxWidth, String* lines, uint8_t maxLines) {
-  uint8_t count = 0;
-  String current;
+/* ── 增量渲染的区域 ──
+ * 屏幕整帧 320x240 推一次要 34ms（SPI 约 4.5MB/s），所以静止内容不重推。
+ * 每帧真正会动的只有三块：眼睛带、底部频谱带、右下角那支笔。 */
+/** 眼睛带：水平覆盖 112±17±40 与 208±17±40 的并集（±17 = 视线偏移，±40 = 眼睛缓存的一半）。 */
+constexpr int16_t kEyeBandX = 48;
+constexpr int16_t kEyeBandW = 224;
+/** 眼睛缓存边长的一半（80x80 的不透明拷贝，见 EmotionFace::drawEye）。 */
+constexpr int16_t kEyeBlitHalf = 40;
+/** 估算擦除上沿时多留的余量：抖动是 ±7px 方波，单帧最多跳 14px。 */
+constexpr int16_t kEyeEraseSlack = kEyeBlitHalf + 16;
+/** 笔的包围盒（笔尖 253,187 + 56x56 帧 + 摆动余量）。
+ *  （音乐模式下不用单独推它：整宽的脏区已经涵盖了右下角，见 update。） */
+constexpr int16_t kPenBandX = 246;
+constexpr int16_t kPenBandY = 126;
+constexpr int16_t kPenBandW = 66;
+constexpr int16_t kPenBandH = 70;
+/** 兜底：即使没有任何"静态内容变化"事件，也至少每隔这么久整屏重推一次，防止漏刷。 */
+constexpr uint32_t kFullFrameEveryMs = 2000;
+
+/** 一行最多存多少字节（中文 3 字节 × 约 17 个字 + 余量）。 */
+constexpr size_t kLineChars = 64;
+
+/**
+ * 按宽度把文本折成最多 maxLines 行；折不下时最后一行加省略号。
+ *
+ * **零堆分配**：这个函数每帧都要跑，而且中文气泡一次要遍历十几个字形。
+ * 之前每个字形都建 `String`（substring + 拼接），25fps 下每秒近千次 new/free ——
+ * ESP32 的 DRAM 堆几小时后就会碎片化，malloc 越来越慢，表现就是"跑久了越来越卡"。
+ * 现在改用固定长度 char 缓冲（都在栈上）。
+ */
+uint8_t wrapLines(LovyanGFX& g, const char* text, int16_t maxWidth, char lines[][kLineChars], uint8_t maxLines) {
+  char line[kLineChars] = {};
+  char probe[kLineChars + 8] = {};
+  const size_t length = strlen(text);
   size_t position = 0;
-  while (position < text.length() && count < maxLines) {
-    const size_t glyphLength = utf8GlyphLength(static_cast<uint8_t>(text[position]));
-    const String glyph = text.substring(position, position + glyphLength);
-    const String candidate = current + glyph;
-    if (current.length() && g.textWidth(candidate) > maxWidth) {
-      lines[count++] = current;
-      current = glyph;
-    } else {
-      current = candidate;
+  size_t lineLength = 0;
+  uint8_t count = 0;
+
+  while (position < length) {
+    const size_t glyph = utf8GlyphLength(static_cast<uint8_t>(text[position]));
+    if (position + glyph > length) break;                    // 半截 UTF-8：丢掉
+    if (lineLength + glyph >= kLineChars) break;             // 这行装不下了（保险）
+    memcpy(probe, line, lineLength);
+    memcpy(probe + lineLength, text + position, glyph);
+    probe[lineLength + glyph] = '\0';
+    if (lineLength && g.textWidth(probe) > maxWidth) {
+      if (count + 1 >= maxLines) break;                      // 没有更多行了：留给省略号
+      memcpy(lines[count], line, lineLength + 1);
+      count += 1;
+      lineLength = 0;
+      line[0] = '\0';
+      continue;                                              // 这个字形留给下一行
     }
-    position += glyphLength;
+    memcpy(line + lineLength, text + position, glyph);
+    lineLength += glyph;
+    line[lineLength] = '\0';
+    position += glyph;
   }
-  if (count < maxLines && current.length()) lines[count++] = current;
-  if (position < text.length() && count == maxLines) lines[maxLines - 1] += "…";
+  if (count < maxLines && lineLength) {
+    memcpy(lines[count], line, lineLength + 1);
+    count += 1;
+  }
+  if (position < length && count == maxLines) {
+    // 还有内容没排下：最后一行加省略号
+    const size_t used = strlen(lines[maxLines - 1]);
+    if (used + 4 < kLineChars) strlcat(lines[maxLines - 1], "…", kLineChars);
+  }
   return count;
 }
 }  // namespace
@@ -228,6 +279,7 @@ void PetRenderer::setMusicMode(bool on) {
   } else {
     applyExpression(faceFor(state_));
   }
+  markFullFrame();   // 状态条上的 ♪ 与底部频谱带都跟着变
 }
 
 /** PWR 短按：切换律动模式。 */
@@ -277,6 +329,7 @@ void PetRenderer::clearNotice() {
   M5.Display.setBrightness(brightness_);
   applyExpression(faceFor(state_));
   leds_.setState(state_);
+  markFullFrame();   // 提示屏是直接画在屏幕上的，回正常渲染必须整屏重画
 }
 
 /**
@@ -325,6 +378,7 @@ void PetRenderer::wakeUp(uint32_t now, bool startled) {
   lastActivityAt_ = now;
   M5.Display.setBrightness(brightness_);
   motion_.setDozing(false);
+  markFullFrame();   // 从关屏/暗屏回来，整屏内容都要重刷
   if (startled) {
     FC_LOGLN(1, "wake=startled (task/connection)");
     waking_ = true;
@@ -411,6 +465,7 @@ void PetRenderer::setState(PetState state, const char* speech, const char* bubbl
   // 只有状态真的变了才响：桥接为了对账会强制重发同一状态，
   // 不过滤就会出现“点一下又响一次”。
   if (changed) cue(state);
+  markFullFrame();   // 气泡文案/表情落点都可能变，下一帧整屏重画
 }
 
 void PetRenderer::setPrompt(const char* requestId, const char* kind, const char* title,
@@ -423,6 +478,7 @@ void PetRenderer::setPrompt(const char* requestId, const char* kind, const char*
   promptActive_ = promptOptionCount_ > 0;
   promptAnswerable_ = promptActive_ && !strcmp(promptKind_, "permission");
   noteActivity(millis(), true);   // 弹出卡片 = 被叫起来干活
+  markFullFrame();
   if (promptActive_) {
     // 每张新卡片都从头播一次入场动画。
     promptShownAt_ = millis();
@@ -438,6 +494,7 @@ void PetRenderer::clearPrompt() {
   applyExpression(faceFor(state_));
   leds_.setState(state_);
   noteActivity(millis(), false);
+  markFullFrame();
 }
 
 bool PetRenderer::hitTestPrompt(int16_t x, int16_t y, char* optionId, size_t optionIdSize) const {
@@ -477,8 +534,31 @@ void PetRenderer::cue(PetState state) {
 
 void PetRenderer::update(uint32_t now) {
   if (noticeActive_) return;   // 配网提示屏优先：不画表情，也不计时睡眠
-  if (now - lastFrameAt_ < 40) return;
+  /* 帧率上限 = 1 / kFrameIntervalMs。20ms = 50fps 是"尽量快"的档位：
+   * 整屏 153KB 的 SPI 推送本身就要十几毫秒，能不能真跑到 50 取决于屏幕总线；
+   * 达不到也不会更糟，只是按实际速度跑。实际值看第 2 档日志的 `[frame] fps=`。 */
+  if (now - lastFrameAt_ < kFrameIntervalMs) return;
   lastFrameAt_ = now;
+  frameCount_ += 1;
+
+  // 诊断（第 2 档日志）：每 5 秒报一次实际帧率与耗时拆解。
+  // compose = 画到离屏画布的时间，push = 推区域/整屏的时间，px = 每帧平均推了多少像素
+  // （整屏是 76800；增量帧只推眼睛带那种量级，这才是帧率的关键）。
+  if (fpsWindowAt_ && now - fpsWindowAt_ >= 5000) {
+    const uint32_t span = now - fpsWindowAt_;
+    const uint32_t frames = frameCount_ - fpsWindowFrames_;
+    FC_LOG(2, "[frame] fps=%.1f (cap %u) compose=%.1fms push=%.1fms px=%.0f\n",
+           frames * 1000.0f / span, 1000 / kFrameIntervalMs,
+           frames ? composeUs_ / 1000.0f / frames : 0.0f, frames ? pushUs_ / 1000.0f / frames : 0.0f,
+           frames ? static_cast<float>(pushedPixels_) / frames : 0.0f);
+    fpsWindowAt_ = now;
+    fpsWindowFrames_ = frameCount_;
+    composeUs_ = 0;
+    pushUs_ = 0;
+    pushedPixels_ = 0;
+  } else if (!fpsWindowAt_) {
+    fpsWindowAt_ = now;
+  }
   audio_.update(now);   // 采样 + 条形/音符推进（关掉时只把动画收尾）
   pollBattery(now);     // 10 秒一次，缓存给右上角状态条用
 
@@ -624,11 +704,11 @@ void PetRenderer::update(uint32_t now) {
     // 无画布时退化为直接绘制（首帧或 PSRAM 不足时的兜底路径）。
     M5.Display.fillScreen(TFT_BLACK);
     if (cardShowing) {
-      const int16_t inset = drawBubble(M5.Display, promptTitle_);
+      const int16_t inset = drawBubble(M5.Display, promptTitle_.c_str());
       face_.update(M5.Display, now, inset / 2 - static_cast<int16_t>(lift) + (inset ? bubbleDrop : 0) - unreadRaise);
       drawPromptButtons(M5.Display);
     } else if (overlays) {
-      const int16_t inset = drawBubble(M5.Display, bubble_);
+      const int16_t inset = drawBubble(M5.Display, bubble_.c_str());
       face_.update(M5.Display, now, inset / 2 - static_cast<int16_t>(lift) + (inset ? bubbleDrop : 0) - unreadRaise - audioBob);
       drawSpeech(M5.Display);
       if (audioShowing) audio_.draw(M5.Display, kAudioRowMargin, kAudioRowHeight);
@@ -646,14 +726,41 @@ void PetRenderer::update(uint32_t now) {
     return;
   }
 
-  canvas_.fillScreen(TFT_BLACK);
+  /* ── 增量渲染 ──
+   * fullFrame：静态内容变了（状态/卡片/气泡/电量/律动模式），或每 2 秒兜底一次 → 整屏清屏 + 整屏推。
+   * 其它帧只擦/重画/重推"真的会动"的三块：眼睛带、频谱带、笔。
+   * 整屏推一次 34ms 是硬地板（SPI 约 4.5MB/s），不这么做帧率上不去。
+   * 静态内容每帧照旧重画（画的是同样的像素），所以跳过清屏不会留下旧痕迹。 */
+  const bool animating = (promptActive_ && promptProgress_ < 1.0f) || (unreadShowing && unreadProgress_ < 1.0f);
+  const bool fullFrame = fullFrame_ || animating || (now - lastFullFrameAt_ >= kFullFrameEveryMs);
+  if (fullFrame) { fullFrame_ = false; lastFullFrameAt_ = now; }
+
+  /* 音乐模式的脏区上沿：音符最高飘到 kNoteDirtyTopY，眼睛再往上留出抖动余量。
+   * 这里必须"先擦后画"，所以只能按上一帧画到的位置估一个上沿；
+   * 下面推送时再用本帧的精确眼睛框收一次，不会多推。 */
+  int16_t musicTop = fullFrame ? 0 : static_cast<int16_t>(face_.eyeDrawY() - kEyeEraseSlack);
+  if (musicTop > AudioVisualizer::kNoteDirtyTopY) musicTop = AudioVisualizer::kNoteDirtyTopY;
+  if (musicTop < 0) musicTop = 0;
+
+  // 诊断：合成耗时（画到离屏画布）——和推送耗时一起每 5 秒报一次
+  const uint32_t composeStart = micros();
+  if (fullFrame) {
+    canvas_.fillScreen(TFT_BLACK);
+  } else if (audioShowing) {
+    // 音符会飘、频谱会跳，而且都不是不透明块，必须整块擦干净再重画。
+    canvas_.fillRect(0, musicTop, 320, 240 - musicTop, TFT_BLACK);
+  } else if (penShowing) {
+    // 笔的贴图会跳过透明像素，所以它那块得先擦；
+    // 眼睛不用擦：缓存是一次不透明的 80x80 拷贝，每帧位移几像素必然盖住上一次。
+    canvas_.fillRect(kPenBandX, kPenBandY, kPenBandW, kPenBandH, TFT_BLACK);
+  }
   if (cardShowing) {
     // 等待卡片：气泡标题在上，眼睛向上让位，按钮从下方滑入停在表情下方。
-    const int16_t inset = drawBubble(canvas_, promptTitle_);
+    const int16_t inset = drawBubble(canvas_, promptTitle_.c_str());
     face_.update(canvas_, now, inset / 2 - static_cast<int16_t>(lift) + (inset ? bubbleDrop : 0) - unreadRaise);
     drawPromptButtons(canvas_);
   } else if (overlays) {
-    const int16_t inset = drawBubble(canvas_, bubble_);
+    const int16_t inset = drawBubble(canvas_, bubble_.c_str());
     face_.update(canvas_, now, inset / 2 - static_cast<int16_t>(lift) + (inset ? bubbleDrop : 0) - unreadRaise - audioBob);
     drawSpeech(canvas_);
     // 音频动效：底部一行条形；卡片出现时上面那条分支已经把它盖掉了。
@@ -669,11 +776,71 @@ void PetRenderer::update(uint32_t now) {
   // 右上角状态条：电量常显，音乐模式时前面多一个 ♪。
   if (penShowing) drawPen(canvas_, now);
   if (overlays) drawStatusBadge(canvas_);
-  canvas_.pushSprite(0, 0);
+  const uint32_t composeUs = micros() - composeStart;   // 本帧合成耗时
+  composeUs_ += composeUs;                             // 下面是推送
+  /* 推送区域 = 本帧眼睛框 ∪ 上一帧推过的框。
+   * 画布上眼睛旧位置没被擦（不透明贴图会盖住），但**屏幕**上它只存在于推过的那些行里，
+   * 所以按这个并集推：既不多推行，也不会在抖动/呼吸把眼睛挪动时留下半截旧眼睛。 */
+  const int16_t eyeNowTop = static_cast<int16_t>(face_.eyeDrawY() - kEyeBlitHalf);
+  const int16_t eyeNowBottom = static_cast<int16_t>(face_.eyeDrawY() + kEyeBlitHalf);
+  int16_t eyeTop = eyeNowTop;
+  int16_t eyeBottom = eyeNowBottom;
+  if (fullFrame || eyePushedTop_ < 0) {
+    eyeTop = 0;
+    eyeBottom = 240;
+  } else {
+    if (eyePushedTop_ < eyeTop) eyeTop = eyePushedTop_;
+    if (eyePushedBottom_ > eyeBottom) eyeBottom = eyePushedBottom_;
+    if (eyeTop < 0) eyeTop = 0;
+    if (eyeBottom > 240) eyeBottom = 240;
+  }
+  eyePushedTop_ = eyeNowTop;
+  eyePushedBottom_ = eyeNowBottom;
+
+  if (fullFrame) {
+    canvas_.pushSprite(0, 0);
+    pushedPixels_ += 320 * 240;
+  } else if (audioShowing) {
+    int16_t top = musicTop;
+    if (eyeTop < top) top = eyeTop;   // 眼睛挪上去的那几行也要一起推
+    pushCanvasRect(0, top, 320, 240 - top);
+    pushedPixels_ += static_cast<uint32_t>(320) * (240 - top);
+  } else {
+    pushCanvasRect(kEyeBandX, eyeTop, kEyeBandW, eyeBottom - eyeTop);
+    pushedPixels_ += static_cast<uint32_t>(kEyeBandW) * (eyeBottom - eyeTop);
+    if (penShowing) {
+      pushCanvasRect(kPenBandX, kPenBandY, kPenBandW, kPenBandH);
+      pushedPixels_ += static_cast<uint32_t>(kPenBandW) * kPenBandH;
+    }
+  }
   // 等这一帧的 DMA 真正发完，再开始画下一帧：否则下一帧的 fillScreen 会追着
   // 还在读缓冲的 DMA 改内容，偶发一帧花屏/整帧黑（正是"眨眼时闪一下空帧"的样子）。
   M5.Display.waitDisplay();
+  pushUs_ += micros() - composeStart - composeUs;
   checkBlankFrame(now);
+}
+
+/**
+ * 只把画布的一块矩形推到屏幕（逐行 pushImage）。
+ * 画布是行优先的 16 位 sprite，所以按行给出指针即可；
+ * `startWrite/endWrite` 把这一批行的 SPI 事务合并，避免每行单独起停。
+ */
+void PetRenderer::pushCanvasRect(int16_t x, int16_t y, int16_t w, int16_t h) {
+  if (w <= 0 || h <= 0) return;
+  const int16_t limitX = canvas_.width();
+  const int16_t limitY = canvas_.height();
+  if (x < 0) { w = static_cast<int16_t>(w + x); x = 0; }
+  if (y < 0) { h = static_cast<int16_t>(h + y); y = 0; }
+  if (x + w > limitX) w = static_cast<int16_t>(limitX - x);
+  if (y + h > limitY) h = static_cast<int16_t>(limitY - y);
+  if (w <= 0 || h <= 0) return;
+
+  auto* buffer = static_cast<uint16_t*>(canvas_.getBuffer());
+  M5.Display.startWrite();
+  for (int16_t row = 0; row < h; ++row) {
+    M5.Display.pushImage(x, y + row, w, 1, buffer + static_cast<int32_t>(y + row) * limitX + x);
+  }
+  M5.Display.endWrite();
 }
 
 /**
@@ -682,7 +849,7 @@ void PetRenderer::update(uint32_t now) {
  * 用来确认/排除渲染层的空帧问题，而不是靠肉眼猜。
  */
 void PetRenderer::checkBlankFrame(uint32_t now) {
-  frameCount_ += 1;
+
   if ((frameCount_ & 3) != 0) return;   // 每 4 帧抽一次，开销可忽略
   for (int16_t y = 6; y < 240; y += 12) {
     for (int16_t x = 6; x < 320; x += 24) {
@@ -776,6 +943,7 @@ void PetRenderer::pollBattery(uint32_t now) {
   const int32_t level = M5.Power.getBatteryLevel();
   if (level == batteryLevel_) return;
   batteryLevel_ = level;
+  markFullFrame();   // 右上角电量字形变了
   FC_LOG(2, "[power] battery=%ld%%%s\n", static_cast<long>(level), M5.Power.isCharging() ? " (charging)" : "");
 }
 
@@ -841,7 +1009,7 @@ void PetRenderer::drawPromptButtons(LovyanGFX& g) {
     }
     g.fillRoundRect(x, y, buttonWidth, height, 10, fill);
     g.drawRoundRect(x, y, buttonWidth, height, 10, kOptionEdge);
-    const String label = String(option.label);
+    const char* label = option.label;   // 直接指向卡片里的固定缓冲，不建 String
     // 按钮文字用粗体，小屏上更容易读。
     g.setFont(&fonts::efontCN_16_b);
     g.setTextColor(labelColor, fill);
@@ -852,13 +1020,14 @@ void PetRenderer::drawPromptButtons(LovyanGFX& g) {
   g.setTextDatum(middle_center);
 }
 
-int16_t PetRenderer::drawBubble(LovyanGFX& g, const String& text) {
-  if (!text.length()) return 0;
+int16_t PetRenderer::drawBubble(LovyanGFX& g, const char* text) {
+  if (!text || !*text) return 0;
   g.setFont(&fonts::efontCN_16);
   g.setTextSize(1);
   g.setTextDatum(top_left);
 
-  String lines[2];
+  // 固定缓冲，不走 String：这个函数每帧都在跑（见 wrapLines 的注释）
+  char lines[2][kLineChars] = {};
   const int16_t maxWidth = g.width() - 34;
   const uint8_t lineCount = wrapLines(g, text, maxWidth, lines, 2);
   if (!lineCount) { g.setFont(&fonts::Font0); g.setTextDatum(middle_center); return 0; }

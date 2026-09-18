@@ -88,8 +88,19 @@ void EmotionFace::begin() {
   eyeBuffer_.setColorDepth(16);
   eyeBuffer_.setPivot(kEyeBufferSize / 2, kEyeBufferSize / 2);
   eyeBufferReady_ = eyeBuffer_.createSprite(kEyeBufferSize, kEyeBufferSize);
-  if (!eyeBufferReady_) FC_LOGLN(1, "[face] eye AA buffer alloc failed: eyes fall back to hard edges");
+  eyeCacheReady_ = true;
+  for (uint8_t slot = 0; slot < 2; ++slot) {
+    eyeCache_[slot].setColorDepth(16);
+    eyeCache_[slot].setPsram(true);
+    if (!eyeCache_[slot].createSprite(kEyeCacheSize, kEyeCacheSize)) eyeCacheReady_ = false;
+  }
+  if (!eyeBufferReady_ || !eyeCacheReady_) {
+    FC_LOGLN(1, "[face] eye AA buffer alloc failed: eyes fall back to hard edges");
+    eyeBufferReady_ = false;
+    eyeCacheReady_ = false;
+  }
   const uint32_t now = millis();
+  eyeDrawY_ = kEyeY;   // 第一帧之前先当成基线（增量推送要用）
   spec_ = specFor(expression_);
   leftShape_ = spec_.left;
   rightShape_ = spec_.right;
@@ -101,16 +112,23 @@ void EmotionFace::begin() {
 
 void EmotionFace::setExpression(FaceExpression expression) {
   const uint32_t now = millis();
+  const bool changed = expression != expression_;
   expression_ = expression;
   spec_ = specFor(expression);
   leftShape_ = spec_.left;
   rightShape_ = spec_.right;
   expressionChangedAt_ = now;
-  targetX_ = 0; targetY_ = 0; lookMoves_ = 0;
-  nextLookAt_ = now + random(kLookMinMs, kLookMaxMs);
-  nextFurrowAt_ = now + random(kFurrowMinMs, kFurrowMaxMs);
-  if (spec_.shake) swayUntil_ = now + kShakeMs;
-  if (spec_.shocked) gaspUntil_ = now + kGaspMs;
+  /* 只有**真的换表情**才重置视线与随机动作的计时。
+   * 桥接每 2 秒对账会重发同一个状态 → 每次都调到这里；若每次都把 targetX_ 归零，
+   * 眼睛正好看向旁边时就会用 0.2s 缓动"滑"回中间（切律动模式时最明显），
+   * 而且 nextLookAt_/nextFurrowAt_ 永远被推迟 2 秒 → 随机环顾/皱眉根本上不了场。 */
+  if (changed) {
+    targetX_ = 0; targetY_ = 0; lookMoves_ = 0;
+    nextLookAt_ = now + random(kLookMinMs, kLookMaxMs);
+    nextFurrowAt_ = now + random(kFurrowMinMs, kFurrowMaxMs);
+    if (spec_.shake) swayUntil_ = now + kShakeMs;
+    if (spec_.shocked) gaspUntil_ = now + kGaspMs;
+  }
   if (expression == FaceExpression::Thinking) { targetX_ = -14; targetY_ = -8; }
   if (expression == FaceExpression::Reluctant) { targetX_ = 10; targetY_ = 8; }
 }
@@ -182,10 +200,45 @@ void EmotionFace::drawEye(LovyanGFX& g, int16_t x, int16_t y, uint8_t size, EyeS
     return;
   }
   constexpr int16_t scale = 2;
-  eyeBuffer_.fillScreen(kBackdrop);
-  drawEyeShape(eyeBuffer_, kEyeBufferSize / 2, kEyeBufferSize / 2, size * scale, shape, rotation, mirror);
-  // 透明色 = 背景色：画布上没有 alpha，靠"和透明色的距离"算覆盖度，边上的灰像素就会和屏幕混合。
-  eyeBuffer_.pushRotateZoomWithAA(&g, x, y, 0.0f, 1.0f / scale, 1.0f / scale, kBackdrop);
+  /* 抗锯齿（2 倍画 → 0.5 贴回）本身很贵：`pushRotateZoomWithAA` 是逐像素的双线性重采样，
+   * 一只眼睛就要十几毫秒。但**形状只在表情/眨眼/皱眉切换时才变**，位置变化都是平移。
+   * 所以把「AA 之后的眼睛」缓存成一张小图（左右各一份，键 = 形状 + 旋转），
+   * 每帧只做一次不透明的平移拷贝 —— 结果一模一样（底色都是黑），成本掉到零点几毫秒。 */
+  const uint8_t slot = mirror ? 1 : 0;
+  if (!eyeCacheReady_ || static_cast<uint8_t>(shape) != cacheShape_[slot] || rotation != cacheRotation_[slot]) {
+    eyeBuffer_.fillScreen(kBackdrop);
+    drawEyeShape(eyeBuffer_, kEyeBufferSize / 2, kEyeBufferSize / 2, size * scale, shape, rotation, mirror);
+    eyeCache_[slot].fillScreen(kBackdrop);
+    // 透明色 = 背景色：画布上没有 alpha，靠"和透明色的距离"算覆盖度，边上的灰像素就会混合。
+    eyeBuffer_.pushRotateZoomWithAA(&eyeCache_[slot], kEyeCacheSize / 2, kEyeCacheSize / 2, 0.0f, 1.0f / scale,
+                                    1.0f / scale, kBackdrop);
+    cacheShape_[slot] = static_cast<uint8_t>(shape);
+    cacheRotation_[slot] = rotation;
+  }
+  // 缓存图底色是黑、屏幕那块也是黑，所以不透明拷贝即可（没必要再按透明色混合一次）。
+  const int16_t dstX = x - kEyeCacheSize / 2;
+  const int16_t dstY = y - kEyeCacheSize / 2;
+  if (eyeBlit_) {
+    // 目标是离屏 sprite：两边都是 16 位、行优先紧密排布 → 直接按行 memcpy。
+    // 走 pushSprite 的话是逐像素 writePixel（一只眼睛 6400 个像素要几毫秒）。
+    auto* dst = static_cast<uint16_t*>(eyeBlit_->getBuffer());
+    const auto* src = static_cast<const uint16_t*>(eyeCache_[slot].getBuffer());
+    const int32_t stride = eyeBlit_->width();
+    const int32_t limitY = eyeBlit_->height();
+    for (int16_t row = 0; row < kEyeCacheSize; ++row) {
+      const int32_t py = dstY + row;
+      if (py < 0 || py >= limitY) continue;
+      int32_t from = 0;
+      int32_t to = kEyeCacheSize;
+      if (dstX < 0) from = -dstX;
+      if (dstX + to > stride) to = stride - dstX;
+      if (to <= from) continue;
+      memcpy(dst + py * stride + dstX + from, src + row * kEyeCacheSize + from,
+             static_cast<size_t>(to - from) * sizeof(uint16_t));
+    }
+    return;
+  }
+  eyeCache_[slot].pushSprite(&g, dstX, dstY);
 }
 
 void EmotionFace::drawEyeShape(LovyanGFX& g, int16_t x, int16_t y, uint8_t size, EyeShape shape,
@@ -254,7 +307,22 @@ void EmotionFace::drawEyeShape(LovyanGFX& g, int16_t x, int16_t y, uint8_t size,
   }
 }
 
+int16_t EmotionFace::eyeCenterY() const {
+  // 眼睛实际落点：基线 + 气泡下推（topInset_）+ 视线偏移（呼吸/抖动只有几像素，算在带内余量里）
+  return static_cast<int16_t>(kEyeY + topInset_ + offsetY_);
+}
+
 void EmotionFace::update(LovyanGFX& g, uint32_t now, int16_t topInset) {
+  eyeBlit_ = nullptr;   // 通用目标（M5.Display 提示屏）：没有 memcpy 快速通道
+  updateInternal(g, now, topInset);
+}
+
+void EmotionFace::update(M5Canvas& g, uint32_t now, int16_t topInset) {
+  eyeBlit_ = &g;
+  updateInternal(g, now, topInset);
+}
+
+void EmotionFace::updateInternal(LovyanGFX& g, uint32_t now, int16_t topInset) {
   scheduleBehaviour(now);
   if (topInset != topInset_) {
     // 第 2 档日志：眼睛落点变了才打一行。
@@ -287,6 +355,7 @@ void EmotionFace::update(LovyanGFX& g, uint32_t now, int16_t topInset) {
   if (gasping && spec_.shocked) { left = EyeShape::Wide; right = EyeShape::Wide; }
 
   const int16_t offsetY = offsetY_ + breathe + shake + topInset_;
+  eyeDrawY_ = static_cast<int16_t>(kEyeY + offsetY);   // 增量推送要用"实际画到哪了"
   drawEye(g, kLeftEyeX + offsetX_, kEyeY + offsetY, kEyeSize, left, spec_.rotation, false);
   drawEye(g, kRightEyeX + offsetX_, kEyeY + offsetY, kEyeSize, right, spec_.rotation, true);
 }

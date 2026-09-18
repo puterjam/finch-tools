@@ -119,9 +119,23 @@ class PetRenderer {
   String bubble_;
   uint32_t stateChangedAt_ = 0;
   uint32_t lastFrameAt_ = 0;
-  /** 空帧自检：日志限频 + 帧计数（排查"偶尔闪一帧全黑"用）。 */
+  
   uint32_t blankLogAt_ = 0;
+  /** 已渲染帧数（空帧自检与帧率统计共用）。 */
   uint32_t frameCount_ = 0;
+  /** 帧率统计窗口（第 2 档日志每 5 秒报一次 fps）。 */
+  uint32_t fpsWindowAt_ = 0;
+  uint32_t fpsWindowFrames_ = 0;
+  /** 这一窗口里"合成"（画到离屏画布）与"推送"（SPI 发到屏幕）累计微秒数。 */
+  uint32_t composeUs_ = 0;
+  uint32_t pushUs_ = 0;
+  uint32_t pushedPixels_ = 0;
+  /** 下一帧要不要整屏重画/重推（静态内容变了，或每 2 秒兜底一次）。 */
+  bool fullFrame_ = true;
+  uint32_t lastFullFrameAt_ = 0;
+  /** 上一帧实际推过的"眼睛带"上下沿（-1 = 还没推过）：本帧按并集推，见 update。 */
+  int16_t eyePushedTop_ = -1;
+  int16_t eyePushedBottom_ = -1;
   /** 补亮屏幕的限频时间戳。 */
   uint32_t lastRelightAt_ = 0;
   /** 电量（-1 = 读不到）与上次轮询时间。 */
@@ -153,7 +167,7 @@ class PetRenderer {
   void enterDeepSleep(uint32_t now, int32_t idleMs);
   void wakeUp(uint32_t now, bool startled);
   /** 把文字画成顶部气泡，返回气泡下方可用的起始 y。 */
-  int16_t drawBubble(LovyanGFX& g, const String& text);
+  int16_t drawBubble(LovyanGFX& g, const char* text);
   /** 等待卡片的按钮行：在表情下方（权限卡为允许/拒绍，答题卡为去回复）。 */
   void drawPromptButtons(LovyanGFX& g);
   /** 有未读时底部的灰色「查看」按钮（点击行为与“任意点击”一致）。 */
@@ -164,6 +178,14 @@ class PetRenderer {
   void drawPen(LovyanGFX& g, uint32_t now);
   /** 轮询并缓存电量（I2C 读 PMIC，别每帧读）。 */
   void pollBattery(uint32_t now);
+  /**
+   * 只把画布的一块矩形推到屏幕（逐行 pushImage）。
+   * 整屏 320x240 推一次要 34ms（SPI 约 4.5MB/s），所以静止内容不重推、
+   * 每帧只推"这一帧真的变了"的区域 —— 这是帧率能上 30+ 的关键。
+   */
+  void pushCanvasRect(int16_t x, int16_t y, int16_t w, int16_t h);
+  /** 静态内容变了（状态/卡片/气泡/电量/律动模式）→ 下一帧整屏重画重推。 */
+  void markFullFrame() { fullFrame_ = true; }
   void drawSpeech(LovyanGFX& g);
   void cue(PetState state);
 };

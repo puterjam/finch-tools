@@ -54,10 +54,24 @@ class EmotionFace {
   void setExpression(FaceExpression expression);
   /** 把当前表情画到给定画布（通常是离屏 sprite）；topInset 用于给上方内容让位。 */
   void update(LovyanGFX& g, uint32_t now, int16_t topInset = 0);
+  /**
+   * 画在离屏 sprite 上时走这个重载：眼睛缓存图可以直接按行 memcpy 贴回去。
+   * sprite→sprite 的 pushSprite 是逐像素走 writePixel（两只是 12800 个像素、
+   * 实测好几毫秒），而两边都是 16 位、行优先紧密排布，memcpy 只要零点几毫秒。
+   */
+  void update(M5Canvas& g, uint32_t now, int16_t topInset = 0);
 
   /** 当前视线偏移（像素），头部动作用它来同步看向同一侧。 */
   int16_t gazeOffsetX() const { return offsetX_; }
   int16_t gazeOffsetY() const { return offsetY_; }
+  /** 当前眼睛中心的屏幕 Y（含气泡下推与视线偏移）：增量推送要按它算"眼睛带"。 */
+  int16_t eyeCenterY() const;
+  /**
+   * 上一帧**实际**画出去的眼睛中心 Y（含呼吸/抖动这些每帧重算的偏移）。
+   * eyeCenterY() 是不含这两项的估算值，而抖动是 ±7px 的方波（单帧能跳 14px），
+   * 增量推送按它决定要重推哪些行，漏了就留下半截旧眼睛。
+   */
+  int16_t eyeDrawY() const { return eyeDrawY_; }
 
  private:
   struct ExpressionSpec {
@@ -104,6 +118,20 @@ class EmotionFace {
   static constexpr int16_t kEyeBufferSize = 160;
   M5Canvas eyeBuffer_;
   bool eyeBufferReady_ = false;
+  /* 「AA 之后的眼睛」缓存：形状不变时每帧只做一次平移拷贝（见 drawEye 的注释）。
+   * **左右各一份**：两只眼睛的形状镜像（mirror）不同，共用一份的话每帧都会互相冲掉缓存，
+   * 等于没缓存（实测 compose 会被拖到 38ms）。
+   * 底色是黑、眼睛那块屏幕也是黑，所以可以不透明拷贝，省掉逐像素混合。 */
+  static constexpr int16_t kEyeCacheSize = kEyeBufferSize / 2;
+  M5Canvas eyeCache_[2];
+  bool eyeCacheReady_ = false;
+  uint8_t cacheShape_[2] = {0xFF, 0xFF};
+  uint8_t cacheRotation_[2] = {0xFF, 0xFF};
+  /** 本帧的目标是个 sprite 时记在这里 → 眼睛缓存走按行 memcpy 的快速通道。 */
+  M5Canvas* eyeBlit_ = nullptr;
+  /** 上一帧实际画出去的眼睛中心 Y（见 eyeDrawY()）；begin() 里初始化成基线。 */
+  int16_t eyeDrawY_ = 0;
+  void updateInternal(LovyanGFX& g, uint32_t now, int16_t topInset);
   uint32_t nextLookAt_ = 0;
   uint32_t nextFurrowAt_ = 0;
   uint32_t furrowUntil_ = 0;

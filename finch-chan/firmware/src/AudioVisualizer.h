@@ -7,8 +7,10 @@
 constexpr uint8_t kAudioBarCount = 32;
 /** FFT 点数。muspi 用 2048，这里取样率低一些（16kHz），512 足够画出同样的形。 */
 constexpr uint16_t kAudioFftSize = 512;
-/** 收音灵敏度档位（低/中/高）对应的麦克风线性增益；小程序设置菜单可切换。 */
-constexpr float kGainLevelGains[3] = {1.8f, 2.4f, 3.0f};
+/** 收音灵敏度档位（低/中/高）对应的麦克风线性增益；小程序设置菜单可切换。
+ *  这是进 FFT 前的乘数，没有硬上限 —— 但调太大时正常音量会把频谱顶满（动态范围变小），
+ *  所以 高 取 4.5：比默认的中(2.4)明显灵敏，又还没到"一直满格"的程度。 */
+constexpr float kGainLevelGains[3] = {1.8f, 2.4f, 4.5f};
 constexpr uint8_t kGainLevelDefault = 1;   // 默认「中」
 
 /**
@@ -98,6 +100,13 @@ class AudioVisualizer {
   /** 还有音符在空中（关掉动效后让它们飘完）。 */
   bool notesAlive() const;
 
+  /**
+   * 音乐动效的"脏区"上沿：音符最高升到 y=69（kNoteCeilingY - 3*size），
+   * 从这里往下到屏幕底部就是音符 + 频谱会动的范围。
+   * 增量推送按它决定要重推多高，改音符参数时记得同步。
+   */
+  static constexpr int16_t kNoteDirtyTopY = 64;
+
  private:
   static constexpr uint8_t kNotes = 4;
 
@@ -120,6 +129,8 @@ class AudioVisualizer {
   float peaks_[kAudioBarCount] = {};
   float avgLevel_ = 0.0f;
   Note notes_[kNotes];
+  /** 音符位移的上一次时间戳：位移按秒算（见 update 里"不按帧"的注释）。 */
+  uint32_t lastNoteStepAt_ = 0;
   uint32_t lastSampleAt_ = 0;
   uint32_t lastSilenceAt_ = 0;
   /** 「还算在响」的保持窗口：见 isLoud()，用来压掉阈值上下的逐帧抖动。 */

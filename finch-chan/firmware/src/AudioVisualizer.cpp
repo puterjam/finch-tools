@@ -13,7 +13,10 @@ constexpr uint16_t kBarColor = 0x4EF0;    // 薄荷绿
 constexpr uint16_t kPeakColor = 0xDFFB;   // 峰值线：接近白
 constexpr uint16_t kNoteColor = 0xFE4F;   // 音符：暖琥珀
 
-constexpr uint32_t kSampleIntervalMs = 40;   // 与渲染帧率一致
+/* 麦克风采样周期：**故意不和渲染帧率联动** —— 频谱的上升/衰减、节拍阈值都是按
+ * 40ms 一拍调好的，跟着帧率改成 20ms 等于把所有时间常数砍一半（条会抖、拍会乱）。
+ * 所以画面可以跑 50fps，频谱数据仍按 25Hz 刷新。 */
+constexpr uint32_t kSampleIntervalMs = 40;
 constexpr int16_t kSampleCount = kAudioFftSize;
 /* 灵敏度（比较敏感时都往小里改）：
  *   kGainLevelGains : 进 FFT 前的线性增益，低/中/高 = 1.8 / 2.4 / 3.0（在头文件里，
@@ -67,6 +70,17 @@ constexpr int16_t kNoteRightMaxX = 306;   // 320 - 14
 /* 起始高度在下半部随机，但避开最下面那一行频谱（182 以下）。 */
 constexpr int16_t kNoteTopY = 116;
 constexpr int16_t kNoteBottomY = 168;
+/* 上升速度：**像素/秒**，不是像素/帧。
+ * 原来是 1.2~2.1 px/帧，帧率从 12 提到 35 之后音符快了近三倍，直接冲出推送区域
+ * （表现就是音符上半截被裁掉、飘过去的像素留在屏上）。定成 px/s 后，
+ * 不论帧率怎么调，观感都和当初 25fps 时一致。 */
+constexpr float kNoteRiseMinPxPerSec = 30.0f;
+constexpr float kNoteRiseMaxPxPerSec = 52.0f;
+/** 左右慢摆的最大横向速度（原 ±0.25 px/帧 ≈ ±6 px/s）。 */
+constexpr float kNoteSwayMaxPxPerSec = 6.0f;
+/* 升到这里就不再往上：再高就飞出"两侧空带"，屏幕顶边也会把它切掉。
+ * 墨迹最高到 (96 - 3*9) = 69，所以增量推送的上沿按 64 算（见 kNoteDirtyTopY）。 */
+constexpr int16_t kNoteCeilingY = 96;
 constexpr uint32_t kNoteLifeMinMs = 1400;
 constexpr uint32_t kNoteLifeMaxMs = 1950;
 constexpr uint32_t kNoteMinGapMs = 900;
@@ -463,14 +477,27 @@ void AudioVisualizer::update(uint32_t now) {
   }
 
   // 音符：显示时每隔 0.9~2.2 秒从左右交替飘一个；关掉后让在飞的飘完。
+  // 位移按 **时间** 算（不按帧），这样调帧率不会把音符一起调快。
+  const uint32_t stepAt = now;
+  uint32_t dtMs = lastNoteStepAt_ ? stepAt - lastNoteStepAt_ : kSampleIntervalMs;
+  lastNoteStepAt_ = stepAt;
+  if (dtMs > 200) dtMs = 200;   // 别让一次卡顿把音符瞬移出去
+  const float dtSec = static_cast<float>(dtMs) / 1000.0f;
   for (uint8_t index = 0; index < kNotes; ++index) {
     if (!notes_[index].alive) continue;
     if (now - notes_[index].bornAt > notes_[index].lifeMs) {
       notes_[index].alive = false;
       continue;
     }
-    notes_[index].y -= notes_[index].vy;
-    notes_[index].x += notes_[index].sway;
+    Note& note = notes_[index];
+    note.y -= note.vy * dtSec;
+    note.x += note.sway * dtSec;
+    // 不许飞出两侧空带，也不许升到顶边被切掉（超出推送区域的那些像素就是"残留"）。
+    if (note.y < kNoteCeilingY) note.y = static_cast<float>(kNoteCeilingY);
+    const int16_t minX = note.right ? kNoteRightMinX : kNoteLeftMinX;
+    const int16_t maxX = note.right ? kNoteRightMaxX : kNoteLeftMaxX;
+    if (note.x < minX) note.x = static_cast<float>(minX);
+    else if (note.x > maxX) note.x = static_cast<float>(maxX);
   }
   // 音符只在“正在收音”时冒（安静后立即停，且清掉在飞的）。
   if (visible_ && loudSince_ != 0 && now >= nextNoteAt_) {
@@ -484,8 +511,9 @@ void AudioVisualizer::update(uint32_t now) {
                           : static_cast<float>(random(kNoteLeftMinX, kNoteLeftMaxX));
     // 起始高度也随机（下半部，不压到频谱那一行）。
     note.y = static_cast<float>(random(kNoteTopY, kNoteBottomY));
-    note.vy = 1.2f + static_cast<float>(random(0, 90)) / 100.0f;              // 1.2~2.1 px/帧
-    note.sway = (static_cast<float>(random(0, 100)) / 100.0f - 0.5f) * 0.5f;   // 左右慢摆
+    note.vy = kNoteRiseMinPxPerSec +
+              static_cast<float>(random(0, 100)) / 100.0f * (kNoteRiseMaxPxPerSec - kNoteRiseMinPxPerSec);
+    note.sway = (static_cast<float>(random(0, 200)) / 100.0f - 1.0f) * kNoteSwayMaxPxPerSec;   // ±6 px/s
     noteOnRight_ = !noteOnRight_;
     noteCursor_ = (noteCursor_ + 1) % kNotes;
     nextNoteAt_ = now + kNoteMinGapMs + static_cast<uint32_t>(random(0, kNoteMaxGapMs - kNoteMinGapMs));
