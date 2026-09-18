@@ -32,6 +32,175 @@
     }
   };
 
+  // ---- Boot ----------------------------------------------------------
+  // Two things this page cannot know when it paints its first frame: the real
+  // `--finch-*` theme values (the platform injects them at webview dom-ready,
+  // i.e. after this script has already run) and whether the host is about to
+  // push a document. Painting regardless is what the user saw as: every open
+  // flashing the wrong palette for a beat, and entering App View flashing the
+  // empty-state home page before the document it was opened for.
+  //
+  // The two halves are handled differently, because they cost different
+  // things to get wrong:
+  //
+  //   * The surface has to be painted immediately — leaving the page blank
+  //     just hands the frame to the host's own "loading" placeholder, which
+  //     is a plain white screen. So panel.html paints its first frame from
+  //     the theme values this page saw last time (the inline script there),
+  //     and the platform tokens replace them the moment they land
+  //     (`adoptPlatformTheme` below, which also refreshes that cache). From
+  //     the second open onwards the first frame is therefore already the
+  //     current skin's colours and there is nothing left to flash.
+  //
+  //   * The content can afford to wait, so it does: `md-boot` (panel.css)
+  //     hides the app tree until the host has answered whether a document is
+  //     coming. Nothing is ever painted in the wrong palette, and the empty
+  //     state never flashes in front of a document that is about to arrive.
+  //
+  // Both waits have a timeout, and a page opened outside a Finch webview (no
+  // Bridge — local development in a plain browser) skips the content gate.
+  var bootThemeReady = false;
+  var bootStateReady = false;
+  var bootDone = false;
+  var bootThemeWatch = null;
+  // The tokens normally land within a frame or two of `dom-ready`, so this
+  // only ever fires if the platform never injected them at all.
+  var BOOT_THEME_TIMEOUT = 400;
+  // The host always answers `panelReady` with either a document or
+  // `lastFileUnavailable`, so this is a last-resort net, not a schedule.
+  var BOOT_STATE_TIMEOUT = 1500;
+  // Aliases panel.css resolves the platform tokens into; the same names are
+  // what the pre-paint cache in panel.html restores.
+  var THEME_ALIASES = ['bg', 'card', 'text', 'muted', 'border', 'accent', 'hover', 'active'];
+  var THEME_CACHE_KEY = 'md-theme-aliases';
+
+  function platformTokensPresent() {
+    try {
+      var style = getComputedStyle(document.documentElement);
+      return !!style.getPropertyValue('--finch-theme-mode').trim()
+        || !!style.getPropertyValue('--finch-bg-main').trim();
+    } catch (_) {
+      // Cannot read through to the tokens — never keep the page hidden over it.
+      return true;
+    }
+  }
+
+  function readThemeAliases() {
+    var values = {};
+    var style = getComputedStyle(document.documentElement);
+    for (var i = 0; i < THEME_ALIASES.length; i++) {
+      var name = THEME_ALIASES[i];
+      var value = style.getPropertyValue('--' + name).trim();
+      if (!value) return null;
+      values[name] = value;
+    }
+    return values;
+  }
+
+  // What is currently stored, so re-recording is a no-op unless the resolved
+  // colours really changed (a skin change — see the steady look-out below).
+  var themeCacheJson = null;
+  try { themeCacheJson = localStorage.getItem(THEME_CACHE_KEY); } catch (_) {}
+
+  function recordThemeAliases() {
+    var values = readThemeAliases();
+    if (!values) return;
+    var json = JSON.stringify(values);
+    if (json === themeCacheJson) return;
+    themeCacheJson = json;
+    try { localStorage.setItem(THEME_CACHE_KEY, json); } catch (_) {}
+  }
+
+  /** Hand the surfaces over to the platform's own tokens.
+   *
+   * panel.html started from the cached values last time so the first frame
+   * was not a guess. They are inline custom properties, which outrank the
+   * `:root` rules the platform injects — so as soon as the real tokens are
+   * readable the overrides have to go, or a later skin change would never
+   * reach this page. Removing them is a no-op visually when the cache is
+   * current, which it is on every open after the first. Idempotent, so the
+   * steady look-out below can simply call it. */
+  function adoptPlatformTheme() {
+    var root = document.documentElement;
+    for (var i = 0; i < THEME_ALIASES.length; i++) root.style.removeProperty('--' + THEME_ALIASES[i]);
+    recordThemeAliases();
+  }
+
+  function stopBootThemeWatch() {
+    if (!bootThemeWatch) return;
+    clearInterval(bootThemeWatch);
+    bootThemeWatch = null;
+  }
+
+  function revealBoot() {
+    if (bootDone || !bootThemeReady || !bootStateReady) return;
+    bootDone = true;
+    stopBootThemeWatch();
+    document.documentElement.classList.remove('md-boot');
+    // Revealing from `visibility:hidden` does not resize anything, but the
+    // editor may have measured a not-yet-laid-out viewport if it was created
+    // inside the gate — one layout pass settles it either way.
+    try { if (cm && cm.layout) requestAnimationFrame(function () { cm.layout(); }); } catch (_) {}
+  }
+
+  /** The host has told us whether a document is coming (or one has landed). */
+  function bootNoticeState() {
+    bootStateReady = true;
+    revealBoot();
+  }
+
+  if (api) {
+    if (platformTokensPresent()) {
+      // Already injected before this script ran (a fast host): hand over
+      // right away, i.e. still before the first paint — in that case not even
+      // a stale cache can be seen.
+      adoptPlatformTheme();
+      bootThemeReady = true;
+    } else {
+      // The platform injects by adding a stylesheet, which may or may not be
+      // observable as a DOM mutation — poll instead of guessing.
+      var bootThemeStarted = Date.now();
+      bootThemeWatch = setInterval(function () {
+        if (platformTokensPresent()) {
+          stopBootThemeWatch();
+          adoptPlatformTheme();
+          bootThemeReady = true;
+          revealBoot();
+          return;
+        }
+        if (Date.now() - bootThemeStarted < BOOT_THEME_TIMEOUT) return;
+        // Do not gate the page on the theme any longer than that — but keep a
+        // cheap look-out so the overrides are still handed over whenever the
+        // tokens do arrive, and so a skin change made while this panel is open
+        // refreshes the cache for the next one.
+        stopBootThemeWatch();
+        bootThemeReady = true;
+        revealBoot();
+      }, 16);
+    }
+    // Keep the pre-paint cache honest without polling for it: a skin change
+    // while this panel is open is re-injected by the platform, so recording
+    // the resolved values when the panel goes away (or on a light/dark flip,
+    // which needs no DOM write to observe) is enough to make the next open
+    // start from the current skin. The slow interval is only a backstop for a
+    // panel that is never hidden and never sees a mode change.
+    function refreshThemeCache() { if (platformTokensPresent()) adoptPlatformTheme(); }
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') refreshThemeCache();
+    });
+    window.addEventListener('pagehide', refreshThemeCache);
+    try {
+      var darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener('change', refreshThemeCache);
+    } catch (_) {}
+    setInterval(refreshThemeCache, 5000);
+    setTimeout(bootNoticeState, BOOT_STATE_TIMEOUT);
+  } else {
+    // Outside the host there is nothing to wait for.
+    bootDone = true;
+    document.documentElement.classList.remove('md-boot');
+  }
+
   // ---- i18n ----------------------------------------------------------
   // This page is a standalone static document (loaded into a host webview,
   // not a bundled app with its own build-time locale), so translation
@@ -4008,7 +4177,12 @@
       if (m.type === 'styleSessionStarted') { setStyleSessionLoading(true); setStatusWithSession(t('aiStyle.appViewDesigning'), false, m.sessionId, 0); return; }
       if (m.type === 'styleSessionFinished') { setStyleSessionLoading(false); setStatusWithSession(m.message || t('aiStyle.appViewDone'), false, m.sessionId, 5000); return; }
       if (m.type === 'styleSessionFailed') { setStyleSessionLoading(false); setStatusWithSession(m.message || t('aiStyle.appViewFailed'), true, m.sessionId, 5000); return; }
-      if (m.type === 'lastFileUnavailable') { return; }
+      if (m.type === 'lastFileUnavailable') {
+        // Definitive "nothing to restore" answer — with it the boot gate knows
+        // the empty state is the right first screen, so it can reveal.
+        bootNoticeState();
+        return;
+      }
       if (m.type === 'lastSessionInfo') {
         lastSessionId = m.sessionId || null;
         syncToolbar();
@@ -4093,6 +4267,10 @@
             setStatus(t('status.contentUpdated'));
           }
         }
+        // Last statement of a document that actually landed in the editor:
+        // the boot gate can now reveal, so the empty state this push was about
+        // to replace is never shown at all.
+        bootNoticeState();
         return;
       }
       if (m.type === 'sourceMissing') {

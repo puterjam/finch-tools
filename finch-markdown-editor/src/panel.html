@@ -1,11 +1,40 @@
 <!doctype html>
-<html lang="zh-CN">
+<!-- `md-boot` hides the app tree for the first frame(s): panel.ts drops it once
+     the host has said whether a document is coming, so the empty-state home
+     page never flashes in front of one. The surface behind it is painted
+     immediately (see the inline script below) — see the boot comments in
+     panel.css and panel.ts. -->
+<html lang="zh-CN" class="md-boot">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>写字</title>
 <link rel="stylesheet" href="panel.css">
-
+<script>
+// Pre-paint theme. The platform injects the real `--finch-*` tokens at webview
+// dom-ready, which is after this document has painted once — so the first
+// frame used to come from panel.css's generic light/dark fallback, i.e. some
+// other skin's colours, and visibly corrected itself a moment later.
+//
+// Instead, start from the values that were actually in effect the last time
+// this page was open and let panel.ts hand the surfaces back to the platform
+// tokens as soon as they land (`adoptPlatformTheme`), refreshing this cache
+// for next time. Runs inline, before this document's first paint. Values are
+// the resolved panel.css aliases, applied on <html> itself so they outrank the
+// `:root` rules until the overrides are removed.
+(function () {
+  try {
+    var cached = JSON.parse(localStorage.getItem('md-theme-aliases') || 'null');
+    if (!cached) return;
+    var root = document.documentElement;
+    for (var name in cached) {
+      if (Object.prototype.hasOwnProperty.call(cached, name) && cached[name]) {
+        root.style.setProperty('--' + name, cached[name]);
+      }
+    }
+  } catch (_) {}
+})();
+</script>
 </head>
 <body>
 <main class="app">
