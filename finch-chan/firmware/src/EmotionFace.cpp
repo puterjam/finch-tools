@@ -355,7 +355,24 @@ void EmotionFace::updateInternal(LovyanGFX& g, uint32_t now, int16_t topInset) {
   if (gasping && spec_.shocked) { left = EyeShape::Wide; right = EyeShape::Wide; }
 
   const int16_t offsetY = offsetY_ + breathe + shake + topInset_;
-  eyeDrawY_ = static_cast<int16_t>(kEyeY + offsetY);   // 增量推送要用"实际画到哪了"
-  drawEye(g, kLeftEyeX + offsetX_, kEyeY + offsetY, kEyeSize, left, spec_.rotation, false);
-  drawEye(g, kRightEyeX + offsetX_, kEyeY + offsetY, kEyeSize, right, spec_.rotation, true);
+  const int16_t drawY = static_cast<int16_t>(kEyeY + offsetY);
+  const int16_t drawX = offsetX_;
+  /* 擦掉上一帧眼睛墨迹的残余。
+   * 眼睛贴图是 80x80，而墨迹只有 60x60 —— 每边只余 10px，而视线缓动单帧就能挪
+   * 10px 左右（东张西望时最明显），于是旧位置的边缘会剩一条细弧推上屏幕。
+   * 这里在真的挪动过的时候把上一帧的墨迹范围擦成底色（静止时零成本）。
+   * 眼睛带里没有别的静态内容（布局核对过），唯一会重叠的是右下角那支笔，
+   * 而笔是在这一步之后才画的。 */
+  if (eyeDrawn_ && (drawX != eyeDrawX_ || drawY != eyeDrawY_)) {
+    constexpr int16_t inkR = kEyeSize / 2;
+    constexpr int16_t pad = 2;
+    g.fillRect(kLeftEyeX + eyeDrawX_ - inkR - pad, eyeDrawY_ - inkR - pad,
+               static_cast<int16_t>(kRightEyeX - kLeftEyeX + inkR * 2 + pad * 2),
+               static_cast<int16_t>(inkR * 2 + pad * 2), kBackdrop);
+  }
+  eyeDrawn_ = true;
+  eyeDrawX_ = drawX;
+  eyeDrawY_ = drawY;   // 增量推送按"实际画到哪了"算带
+  drawEye(g, kLeftEyeX + drawX, drawY, kEyeSize, left, spec_.rotation, false);
+  drawEye(g, kRightEyeX + drawX, drawY, kEyeSize, right, spec_.rotation, true);
 }

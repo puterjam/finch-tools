@@ -131,6 +131,10 @@ class EmotionFace {
   M5Canvas* eyeBlit_ = nullptr;
   /** 上一帧实际画出去的眼睛中心 Y（见 eyeDrawY()）；begin() 里初始化成基线。 */
   int16_t eyeDrawY_ = 0;
+  /** 上一帧实际画出去的眼睛横向偏移（用来算"旧墨迹要不要擦"）。 */
+  int16_t eyeDrawX_ = 0;
+  /** 还没画过任何一帧时不要擦（eyeDrawX_/Y_ 只是初值）。 */
+  bool eyeDrawn_ = false;
   void updateInternal(LovyanGFX& g, uint32_t now, int16_t topInset);
   uint32_t nextLookAt_ = 0;
   uint32_t nextFurrowAt_ = 0;
