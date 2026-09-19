@@ -134,6 +134,10 @@ void blitMaskN(LovyanGFX& g, int16_t x, int16_t y, const uint8_t* rows, int16_t 
 /* 帧间隔（毫秒）：40 = 25fps（原先的值），20 = 50fps。
  * 整屏推送 153KB 的耗时是真正的天花板，帧率日志会显示实际能跑到多少。 */
 constexpr uint32_t kFrameIntervalMs = 20;
+/** 被拍头之后的反应时长（绿光、摇头、笑脸维持多久）。 */
+constexpr uint32_t kPatReactionMs = 3000;
+/** 被撸之后的反应时长：比拍头久一些，手感"沉"。 */
+constexpr uint32_t kStrokeReactionMs = 4000;
 constexpr uint32_t kPromptAnimMs = 280;
 constexpr int16_t kPromptEyeLift = 26;
 /* 只有气泡、没有卡片抬升时（thinking / working / 未读）额外下压的量：
@@ -407,7 +411,25 @@ void PetRenderer::reactToPat() {
   applyExpression(random(0, 2) == 0 ? FaceExpression::Happy : FaceExpression::Loving);
   motion_.play(MotionDirector::Action::PatShake);
   reacting_ = true;
-  reactionUntil_ = now + 3000;
+  reactionUntil_ = now + kPatReactionMs;
+  leds_.setState(PetState::Success);
+  cue(PetState::Success);
+}
+
+/**
+ * 被撸（顶部面板顺毛 / 来回摸）。
+ * 和拍头的区别：表情用笑眼（Delighted）而不是随机笑脸/爱心，动作是小幅摆动，
+ * 开心状态保持更久 —— 让人摸得出来"这次不一样"。
+ */
+void PetRenderer::reactToStroke(bool overridePat) {
+  const uint32_t now = millis();
+  // 和拍头共用同一个防抖窗口：撸的时候手会同时压到电容区，不该叠成两次反应。
+  // 但"手刚碰上去 IMU 先判成拍了一下、随后才滑出撸的手势"这种顺序要允许盖掉。
+  if (!overridePat && reacting_ && now < reactionUntil_) return;
+  applyExpression(FaceExpression::Delighted);
+  motion_.play(MotionDirector::Action::Wiggle);
+  reacting_ = true;
+  reactionUntil_ = now + kStrokeReactionMs;
   leds_.setState(PetState::Success);
   cue(PetState::Success);
 }

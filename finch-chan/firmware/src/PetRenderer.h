@@ -61,6 +61,13 @@ class PetRenderer {
   AudioVisualizer& audioBank() { return audio_; }
   /** 被拍了一下头：笑脸或爱心（随机）+ 慢慢摇头。 */
   void reactToPat();
+  /**
+   * 被"撸"了（顶部面板顺毛/来回摸）：比拍头更沉一点的开心 —— 笑眼 + 小幅摆动，
+   * 反应时间也更长。默认走同一个防抖窗口（手同时碰到电容区不会叠两次）；
+   * overridePat=true 时允许盖掉刚触发不久的那次"拍头" —— 手刚碰上去时 IMU
+   * 会先判成拍了一下，随后才滑出"撸"的手势，这时应该以撸为准。
+   */
+  void reactToStroke(bool overridePat = false);
   /** 屏幕被碰了一下：被摸醒也算友好叫醒，不演惊讶。 */
   void noteTouch();
   /** 被拍头（IMU 尖峰）：任何时候都是亲密反应。 */

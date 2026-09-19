@@ -60,11 +60,20 @@ void handleSerialCommands() {
       relay.submitPairCode(nullptr);   // 打印用法
     } else if (line.startsWith("pair ")) {
       relay.submitPairCode(line.substring(5).c_str());
+    } else if (line == "pat") {
+      // 串口测试用：不用真的上手拍，直接触发"被拍"的反应。
+      FC_LOGLN(1, "[finchchan] test: pat reaction");
+      pet.notePat();
+    } else if (line == "stroke") {
+      // 串口测试用：不用真的上手撸，直接触发"被撸"的反应。
+      FC_LOGLN(1, "[finchchan] test: stroke reaction");
+      pet.noteTouch();
+      pet.reactToStroke(true);
     } else if (line == "wifi-reset") {
       FC_LOGLN(1, "[finchchan] clearing wifi credentials and restarting into portal...");
       provisioning.forgetCredentials();   // 不会返回：内部 ESP.restart()
     } else if (line.length()) {
-      FC_LOGLN(1, "[finchchan] commands: status | pair <code> | wifi-reset");
+      FC_LOGLN(1, "[finchchan] commands: status | pair <code> | pat | stroke | wifi-reset");
     }
     line = "";
   }
@@ -260,6 +269,11 @@ void onPat(uint32_t now) {
 
 void handleTouch() {
   const uint32_t now = millis();
+  /* 撸手势：实测这台硬件的 Si12T **不报**前后滑动事件（wasSwiped* 从不触发），
+   * 但三个区会**先后**报到（手在头上移动时 0→1→2 依次被按下），所以按"跨区次数"判定。
+   * 整手一起压上来时多个区会在同一轮循环里报（now 相同），那种不算"手指在移动"。 */
+  constexpr uint8_t kStrokeMovesNeeded = 2;   // 跨区两次（0→1→2 或 0→1→0 来回撸）
+  constexpr uint32_t kStrokeWindowMs = 900;   // 整串动作要在这个窗口内完成
   // 拍头（IMU 尖峰）先判：睡着就唤醒，醒着就开心一下。
   if (readPatSpike(now)) onPat(now);
   // 屏幕触摸（M5.Touch）与顶部电容区是两套硬件，分别处理。
@@ -267,6 +281,14 @@ void handleTouch() {
 
   auto& touch = M5StackChan.TouchSensor;
   static bool pressed[3] = {false, false, false};
+  /* 撸（顺毛）手势：
+   *   a) 硬件报的前后滑动（wasSwipedForward/Backward）—— 保留，但实测这台 Si12T 不出这个事件；
+   *   b) 主力判定：0.9 秒内**先后**按到不同的区，累计跨区两次就算撸（0→1→2 顺毛、
+   *      0→1→0 来回摸都算）。同一轮循环里一起报的多个区（整手压上来）不算移动。
+   * 有卡片时滑动是"确认 / 取消"（见 handleZonePress），所以只在没有卡片时当撸。 */
+  static uint8_t strokeLastZone = 0xFF;   // 上一次按到的区（0xFF = 手势还没开始）
+  static uint8_t strokeMoves = 0;         // 这次手势里已经跨了几个区
+  static uint32_t strokeWindowAt = 0;
   const auto& intensities = touch.getIntensities();
   const bool anyTouch = intensities[0] || intensities[1] || intensities[2];
   const bool swiped = touch.wasSwipedForward() || touch.wasSwipedBackward();
@@ -285,23 +307,51 @@ void handleTouch() {
     if (down && !pressed[zone]) {
       // 一行把「哪个区被按」与「当前屏幕上有没有卡片」都记下来，
       // 这样“按钮没被点中”是能被定位到具体哪一步的。
-      FC_LOG(2, "top touch zone %u (i=%u,%u,%u) card=%s options=%u unread=%d\n", zone, intensities[0],
-                    intensities[1], intensities[2], pet.hasPrompt() ? pet.promptId() : "-",
-                    pet.promptOptionCount(), pet.isUnread() ? 1 : 0);
+      FC_LOG(2, "top touch zone %u t=%u (i=%u,%u,%u) card=%s options=%u unread=%d\n", zone,
+                    static_cast<unsigned>(now), intensities[0], intensities[1], intensities[2],
+                    pet.hasPrompt() ? pet.promptId() : "-", pet.promptOptionCount(),
+                    pet.isUnread() ? 1 : 0);
       pet.noteTouch();
       handleZonePress(zone);
+      if (!pet.hasPrompt()) {
+        const bool expired = strokeLastZone == 0xFF || now - strokeWindowAt > kStrokeWindowMs;
+        if (expired) {
+          strokeMoves = 0;   // 手势起点：重新开始数
+        } else if (now != strokeWindowAt && zone != strokeLastZone) {
+          // 不同时刻、不同的区 = 手指在移动（同一轮循环里一起报的多区不算）。
+          strokeMoves += 1;
+        }
+        strokeLastZone = zone;
+        strokeWindowAt = now;
+        if (strokeMoves >= kStrokeMovesNeeded) {
+          strokeMoves = 0;
+          strokeLastZone = 0xFF;
+          FC_LOG(2, "[touch] stroke (moved across %u zones) -> react\n", kStrokeMovesNeeded);
+          pet.reactToStroke(true);
+        }
+      }
     } else if (!down && pressed[zone]) {
       FC_LOG(2, "top touch zone %u released (i=%u,%u,%u)\n", zone, intensities[0], intensities[1], intensities[2]);
     }
     pressed[zone] = down;
   }
-  // 前后滑动也当作按下：向前 = Front，向后 = Back。
+  // 前后滑动：有卡片时当作按下（向前 = Front，向后 = Back），没卡片时就是被撸了一下。
   if (touch.wasSwipedForward()) {
-    FC_LOGLN(2, "top touch swipe forward -> Front");
-    handleZonePress(0);
+    if (pet.hasPrompt()) {
+      FC_LOGLN(2, "top touch swipe forward -> Front");
+      handleZonePress(0);
+    } else {
+      FC_LOGLN(2, "[touch] stroke (swipe forward) -> react");
+      pet.reactToStroke(true);
+    }
   } else if (touch.wasSwipedBackward()) {
-    FC_LOGLN(2, "top touch swipe backward -> Back");
-    handleZonePress(2);
+    if (pet.hasPrompt()) {
+      FC_LOGLN(2, "top touch swipe backward -> Back");
+      handleZonePress(2);
+    } else {
+      FC_LOGLN(2, "[touch] stroke (swipe backward) -> react");
+      pet.reactToStroke(true);
+    }
   }
 }
 }  // namespace
