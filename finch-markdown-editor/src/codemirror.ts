@@ -2525,10 +2525,19 @@ function collectTableLines(view: EditorView): Set<number> {
  * recreated" but does not guard against it.
  *
  * CodeMirror only destroys dropped tiles after the new DOM is in place, so an
- * element that is still connected is by definition one that was reused. Adding
- * that check makes the stale destroy a no-op, and implementing `updateDOM`
- * lets a genuine pairing hand the mounted component to the incoming widget
- * instead of tearing it down and rebuilding it. */
+ * element that is still connected is by definition one that was reused. That
+ * single check makes the stale destroy a no-op.
+ *
+ * Deliberately NOT implemented here: `updateDOM`. Handing a rebuilt widget the
+ * element a previous instance is rendering into keeps a component whose props
+ * are frozen at the moment of the rebuild, and the package stops feeding that
+ * old description: `EditorState.field(tableField).tables` holds the *new*
+ * descriptions, and the selection is written into those. The visible table
+ * then keeps whatever selection state it had — a cell stays tinted and
+ * outlined, its editor stays mounted, while the document no longer has any
+ * table selection at all (reproduced by rewriting a table range with the text
+ * it already contains, which is exactly what `healBlankTableWidgets` does).
+ * A rebuilt widget must therefore mount its own component. */
 function hardenTableWidgetPrototype(view: EditorView): boolean {
   let widget: any = null;
   const visit = (set: any) => {
@@ -2554,26 +2563,6 @@ function hardenTableWidgetPrototype(view: EditorView): boolean {
     // would blank a table the user is looking at.
     if (dom?.isConnected) return;
     originalDestroy?.call(this, dom);
-  };
-
-  proto.updateDOM = function (dom: HTMLElement, _view: EditorView, previous: any): boolean {
-    // Never claim an element the package has already emptied, otherwise the
-    // blank state would be preserved instead of repaired.
-    if (!dom?.querySelector('.tbl-table-wrapper')) return false;
-    if (previous === this) { this.widgetElement = dom; return true; }
-    const mine = this.tableDescription;
-    const theirs = previous?.tableDescription;
-    if (!mine || !theirs) return false;
-    if (mine.from !== theirs.from || mine.to !== theirs.to) return false;
-    if (!mine.table?.text?.eq?.(theirs.table?.text)) return false;
-    // Take ownership of the mounted component so the outgoing instance can no
-    // longer tear it down.
-    this.widgetElement = dom;
-    this.destroyWidgetElement = previous.destroyWidgetElement;
-    this.height = previous.height;
-    previous.destroyWidgetElement = undefined;
-    previous.widgetElement = undefined;
-    return true;
   };
   return true;
 }
