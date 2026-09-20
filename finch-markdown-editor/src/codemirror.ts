@@ -448,28 +448,26 @@ const finchTheme = EditorView.theme({
     width: 'auto !important',
     maxWidth: '100%',
   },
-  // The selected cell's embedded editor must render at exactly the body
-  // size the surrounding table already shows. Its own root carries the
-  // copied theme base (a fixed 16px), which tracks neither the root
-  // editor's inline font-size (the toolbar font-size menu writes it there)
-  // nor the 0.9em body ratio — so `inherit` from the DOM position is the
-  // only value that stays correct across every menu size. The package's
-  // `--tbl-style-font-size: inherit` then cascades it down to the
-  // scroller/content/line elements unchanged.
-  '.tbl-cell-editor .cm-editor .cm-line': {
-    fontSize: '0.9rem',
-    fontFamily: 'var(--md-editor-font-family, var(--finch-font-mono))',
-  },
-  // Keep the selected cell's editable text at the same body size: with the
-  // 0.9em chain gone, `inherit` tracks the root editor's inline font-size
-  // (the menu tier) through the DOM, matching the static cells exactly.
-  // An earlier 0.9em here compensated for the old double-scaling chain.
-  // '.tbl-cell-editor .cm-editor .cm-content': {
-  //   fontSize: '0.8rem',
-  // },
-  '.tbl-cell-view': {
-    fontSize: '0.9rem',
-    fontFamily: 'var(--md-editor-font-family, var(--finch-font-mono))',
+  // Cell text must track the toolbar's font-size tier exactly like body text
+  // does, and the two elements that could break that chain are both roots:
+  //
+  // · A static cell is rendered by the table package with
+  //   `font-size: var(--tbl-style-font-size)`, whose default is `inherit`, so
+  //   it follows the editor root's inline tier on its own. Hardcoding a size
+  //   here — `0.9rem`, measured against the *document* root rather than the
+  //   editor's tier — pinned every cell to 14.4px at all three tiers.
+  // · The cell's inline editor is a second CodeMirror instance, and it is
+  //   created with the root editor's theme classes, so the theme's `&` base
+  //   size (a flat 16px) applies to it and nothing inside it can inherit the
+  //   tier. Inherit from the DOM position instead: the cell it sits in already
+  //   renders at the tier size, and the package's own rules cascade it down to
+  //   the scroller/content/line unchanged.
+  //
+  // The font family needs no rule either: the table package reads it from
+  // `--tbl-style-font-family`, which `finchTableStyle` points at
+  // `--md-editor-font-family`.
+  '.tbl-cell-editor .cm-editor': {
+    fontSize: 'inherit',
   },
   // The rendered in-cell preview is an extra sibling of the package's own
   // `.tbl-cell-view` (see installStaticTableCellPreview), so the package's
@@ -3303,7 +3301,11 @@ function installStaticTableCellPreview(root: HTMLElement): () => void {
         return;
       }
       if (preview) {
-        if (view.dataset.mdPreviewSource === source) return;
+        // Re-assert the markup when it drifted: the preview is editable (so
+        // the browser can put a caret in it), and a stray keystroke must not
+        // survive — the package's own view behaves the same way, because its
+        // text is rewritten from the model on every render.
+        if (view.dataset.mdPreviewSource === source && preview.innerHTML === html) return;
         view.dataset.mdPreviewSource = source;
         preview.innerHTML = html;
         return;
@@ -3312,6 +3314,16 @@ function installStaticTableCellPreview(root: HTMLElement): () => void {
       const rendered = document.createElement('div');
       rendered.className = 'tbl-cell-view';
       rendered.setAttribute(CELL_PREVIEW_ATTR, 'true');
+      // Mirror the package's own cell view on the two points it is load-bearing
+      // for: the browser needs somewhere editable to drop the caret, and the
+      // package resolves a click/caret back to a cell by walking up to the
+      // nearest `data-component="CellView"`. With neither, a click on a
+      // rendered cell landed on an inert div and was discarded
+      // (`preventDefault` in the package's pointerdown), so the cell could not
+      // be selected or edited at all — only cells without Markdown, which keep
+      // the package's own element, still responded.
+      rendered.setAttribute('contenteditable', '');
+      rendered.setAttribute('data-component', 'CellView');
       rendered.innerHTML = html;
       view.after(rendered);
     });
