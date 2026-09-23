@@ -95,7 +95,8 @@
     }
   },
   "error": {
-    "notInstalled": "Ego Browser 未安装"
+    "notInstalled": "Ego Browser 未安装",
+    "launchTimeout": "Ego Lite 已启动但还没就绪，请稍等片刻再试。"
   },
   "progress": {
     "launching": "正在唤醒 Ego 浏览器…|给浏览器泡杯咖啡…|Ego 正在伸懒腰…",

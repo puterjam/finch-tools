@@ -95,7 +95,8 @@
     }
   },
   "error": {
-    "notInstalled": "Ego Browser is not installed"
+    "notInstalled": "Ego Browser is not installed",
+    "launchTimeout": "Ego Lite was launched but is not ready yet. Wait a moment and try again."
   },
   "progress": {
     "launching": "Waking up Ego Browser…|Pouring a coffee for the browser…|Ego is stretching…",
