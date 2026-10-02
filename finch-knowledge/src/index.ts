@@ -21,6 +21,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 export { KnowledgeStore, vectorize, chunkText, DEFAULT_TAG, engineForExtension, ACCEPTED } from './store.js';
 export { highlightTerms, snippetParts, snippetText } from './snippet.js';
 export { openInPreview, openListedDocument, previewRoute } from './preview.js';
+export { inScope, UNCLASSIFIED } from './scope.js';
 export { UploadReceiver } from './uploads.js';
 export { importFromWorkspace, expandImportTargets, MAX_BATCH_FILES } from './tool-import.js';
 export { BackupGate } from './backup-gate.js';
@@ -319,10 +320,14 @@ export function activate(ctx: finch.MiniToolContext): void {
   };
   const supported = new Set(['ready', 'page', 'locate', 'tags', 'tagCreate', 'tagRename', 'tagDelete', 'tagToggle', 'tagReorder', 'uploadStart', 'uploadChunk', 'uploadFinish', 'uploadAbort', 'delete', 'search', 'reveal', 'backup', 'sync', 'library', 'libraryAction', 'libraryReveal', 'environment', 'environmentInstall', 'environmentHelp']);
 
-  async function broadcast(): Promise<void> {
+  /**
+   * Tells every open page what changed. `change` describes a change that concerns a single row, so
+   * a page can patch that row instead of reloading the list under the user.
+   */
+  async function broadcast(change?: { kind: 'tagToggle'; documentId: string; tags: string[] }): Promise<void> {
     composerAction.notifyUpdate();
     const tags = await state.store.tags();
-    for (const panel of panels) void panel.postMessage({ type: 'changed', tags }).catch(() => {});
+    for (const panel of panels) void panel.postMessage({ type: 'changed', tags, ...(change ? { change } : {}) }).catch(() => {});
   }
   async function handle(panel: finch.AppPanel, raw: unknown): Promise<void> {
     const message = raw as ViewRequest;
@@ -433,14 +438,18 @@ export function activate(ctx: finch.MiniToolContext): void {
           // because that row is what "no category" means.
           const id = String(message.id ?? '');
           const tagId = String(message.tagId ?? DEFAULT_TAG);
-          await gate.write(async () => {
-            if (tagId === DEFAULT_TAG) return state.store.setTags(id, []);
-            const doc = await state.store.document(id);
-            if (!doc) throw new Error('Document no longer exists.');
-            return doc.tags.includes(tagId) ? state.store.removeTag(id, tagId) : state.store.addTag(id, tagId);
+          const updated = await gate.write(async () => {
+            if (tagId === DEFAULT_TAG) await state.store.setTags(id, []);
+            else {
+              const doc = await state.store.document(id);
+              if (!doc) throw new Error('Document no longer exists.');
+              await (doc.tags.includes(tagId) ? state.store.removeTag(id, tagId) : state.store.addTag(id, tagId));
+            }
+            // The page patches this one row from the reply, so it has to carry the outcome.
+            return (await state.store.document(id))?.tags ?? [];
           });
-          await reply({ type: 'changedTag' });
-          await broadcast();
+          await reply({ type: 'changedTag', id, tags: updated });
+          await broadcast({ kind: 'tagToggle', documentId: id, tags: updated });
           break;
         }
         case 'tagReorder': {

@@ -3,6 +3,7 @@ import { Archive, Check, Circle, CircleAlert, CircleCheck, createElement, Ellips
 import type { IconNode } from 'lucide';
 import { highlightTerms, snippetParts } from './snippet.js';
 import { openListedDocument, previewRoute } from './preview.js';
+import { inScope } from './scope.js';
 
 type Bridge = finch.WebviewBridgeApi;
 declare global { interface Window { finch: Bridge } }
@@ -12,7 +13,7 @@ interface Match { document_id: string; name: string; path: string; tag_id: strin
 interface LibraryInfo { root: string; isDefault: boolean; documents: number; tags: number; unavailable: string | null }
 interface EnvironmentStep { id: string; status: 'pending' | 'running' | 'ready' | 'failed'; optional?: boolean; message?: string; percent?: number; detail?: string; error?: string }
 interface EnvironmentState { running: boolean; ready: boolean; usable: boolean; steps: EnvironmentStep[]; startedAt?: number; finishedAt?: number }
-interface Reply { type: string; requestId?: string; tags?: Tag[]; tag?: Tag; documents?: Document[]; total?: number; offset?: number; focusId?: string; matches?: Match[]; error?: string; message?: string; unchanged?: number; backupDirectory?: string; path?: string; count?: number; missing?: number; verified?: { before: { documents: number; tags: number }; after: { documents: number; tags: number }; missing: number }; library?: LibraryInfo; mode?: string; previousRoot?: string; environment?: EnvironmentState; sessionId?: string; names?: string[]; sync?: { updated: string[]; removed: string[]; unchanged: number; unreachable: string[]; failed: Array<{ name: string; reason: string }> } }
+interface Reply { type: string; requestId?: string; tags?: Tag[]; tag?: Tag; documents?: Document[]; total?: number; offset?: number; focusId?: string; matches?: Match[]; error?: string; message?: string; unchanged?: number; backupDirectory?: string; path?: string; count?: number; missing?: number; verified?: { before: { documents: number; tags: number }; after: { documents: number; tags: number }; missing: number }; library?: LibraryInfo; mode?: string; previousRoot?: string; environment?: EnvironmentState; sessionId?: string; names?: string[]; change?: { kind?: string; documentId?: string; tags?: string[] }; sync?: { updated: string[]; removed: string[]; unchanged: number; unreachable: string[]; failed: Array<{ name: string; reason: string }> } }
 type Copy = Record<string, string>;
 const english: Copy = {
   heading: 'Your knowledge, within reach.', intro: 'Index on this device. AI answers may send retrieved passages to your selected model.',
@@ -250,11 +251,15 @@ function resetPage(): void {
   renderDocs();
   page(0);
 }
-function applyTags(next: Tag[]): void {
+/**
+ * Adopts a fresh tag list. `list: false` skips the list rebuild, for a change that patches a
+ * single row instead — the left column still needs its new counts either way.
+ */
+function applyTags(next: Tag[], list = true): void {
   tags = next;
   if (selectedTag !== null && selectedTag !== DEFAULT_TAG && !tags.some((tag) => tag.id === selectedTag)) selectedTag = null;
   renderTags();
-  renderDocs();
+  if (list) renderDocs();
 }
 function finishTagRename(id: string, previous: string, next?: string, focusChoice = true): void {
   if (inlineTagEditing !== id) return;
@@ -474,6 +479,72 @@ function openDocument(doc: Document): void {
   const reveal = () => request('reveal', { id: doc.id });
   if (!openListedDocument(bridge, doc.name, doc.path, reveal)) reveal();
 }
+/**
+ * One row of the list. Building a row is separate from rendering the list because re-filing a
+ * document rebuilds exactly one: the rest of the list, and the scroll position with it, stays put.
+ */
+function buildRow(doc: Document): HTMLElement {
+  const row = node('div', 'doc'); row.dataset.id = doc.id;
+  const fileIcon = node('span', 'doc-icon');
+  const glyph = node('img', 'doc-icon-image') as HTMLImageElement;
+  glyph.src = new URL(`../icons/${iconForFile(doc.name)}`, location.href).href;
+  glyph.alt = '';
+  fileIcon.append(glyph);
+  row.append(fileIcon);
+  row.append(node('span', 'doc-title', doc.name));
+  // One line: the categories show as badges (a file may carry several), re-filing lives in the
+  // row menu. Unclassified is not a tag but the absence of one, so it gets a dashed badge.
+  const shown = doc.tags.slice(0, MAX_ROW_BADGES);
+  if (!shown.length) {
+    const badge = node('span', 'doc-tag unclassified', tagName(DEFAULT_TAG));
+    badge.setAttribute('title', tr('move'));
+    row.append(badge);
+  } else {
+    for (const tagId of shown) row.append(node('span', 'doc-tag', tagName(tagId)));
+    if (doc.tags.length > shown.length) {
+      const rest = node('span', 'doc-tag more', `+${doc.tags.length - shown.length}`);
+      rest.setAttribute('title', doc.tags.slice(MAX_ROW_BADGES).map((tagId) => tagName(tagId)).join(' · '));
+      row.append(rest);
+    }
+  }
+  const added = new Date(doc.added_at).toLocaleDateString();
+  const indexed = new Date(doc.indexed_at).toLocaleDateString();
+  // The row keeps only the size of the material; when it was indexed lives in the row menu.
+  row.append(node('span', 'doc-status', `${doc.chunks} ${tr('chunk')}`));
+  // Everything the shortened row no longer shows stays one hover away, full path included.
+  const external = !/[/\\]imports[/\\]/.test(doc.path);
+  row.setAttribute('title', [
+    external ? tr('externalSource', { path: doc.path }) : doc.path,
+    `${doc.chunks} ${tr('chunk')}`, tr('added', { date: added }), tr('updated', { date: indexed }),
+  ].join('\n'));
+
+  // The row itself performs the same action as its own first button, so the pointer cursor is
+  // not a lie: that button is the eye for the file types Finch can show, and the folder for the
+  // ones that leave Finch. Anything that lands on a button keeps its own job.
+  row.addEventListener('click', (event) => {
+    if ((event.target as HTMLElement | null)?.closest('.doc-tools')) return;
+    openDocument(doc);
+  });
+  const tools = node('div', 'doc-tools');
+  const previewable = previewRoute(doc.name) !== 'external';
+  const primary = previewable ? icon(Eye, tr('preview')) : icon(FolderOpen, tr('reveal'));
+  primary.addEventListener('click', () => openDocument(doc));
+  const more = icon(EllipsisVertical, tr('menu'));
+  more.setAttribute('aria-haspopup', 'menu');
+  more.addEventListener('click', (event) => {
+    event.stopPropagation();
+    openRowMenu(doc, more);
+  });
+  // A right-click asks for this row's menu wherever the pointer happens to be — that is where a
+  // context menu belongs. The ⋯ button stays the anchor, so an open menu still tracks the row.
+  row.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    openRowMenu(doc, more, { x: event.clientX, y: event.clientY });
+  });
+  tools.append(primary, more);
+  row.append(tools);
+  return row;
+}
 function renderDocs(focusId?: string): void {
   // Rows are rebuilt here, so a menu whose document is gone has to close — but one whose document
   // is still listed keeps its place, which is what makes ticking several categories possible.
@@ -484,62 +555,7 @@ function renderDocs(focusId?: string): void {
   byId('count').textContent = tr('totalFiles', { count: total });
   const target = byId('documents'); target.replaceChildren();
   if (!docs.length) target.append(node('div', 'empty', tr('empty')));
-  for (const doc of docs) {
-    const row = node('div', 'doc'); row.dataset.id = doc.id;
-    const fileIcon = node('span', 'doc-icon');
-    const glyph = node('img', 'doc-icon-image') as HTMLImageElement;
-    glyph.src = new URL(`../icons/${iconForFile(doc.name)}`, location.href).href;
-    glyph.alt = '';
-    fileIcon.append(glyph);
-    row.append(fileIcon);
-    row.append(node('span', 'doc-title', doc.name));
-    // One line: the categories show as badges (a file may carry several), re-filing lives in the
-    // row menu. Unclassified is not a tag but the absence of one, so it gets a dashed badge.
-    const shown = doc.tags.slice(0, MAX_ROW_BADGES);
-    if (!shown.length) {
-      const badge = node('span', 'doc-tag unclassified', tagName(DEFAULT_TAG));
-      badge.setAttribute('title', tr('move'));
-      row.append(badge);
-    } else {
-      for (const tagId of shown) row.append(node('span', 'doc-tag', tagName(tagId)));
-      if (doc.tags.length > shown.length) {
-        const rest = node('span', 'doc-tag more', `+${doc.tags.length - shown.length}`);
-        rest.setAttribute('title', doc.tags.slice(MAX_ROW_BADGES).map((tagId) => tagName(tagId)).join(' · '));
-        row.append(rest);
-      }
-    }
-    const added = new Date(doc.added_at).toLocaleDateString();
-    const indexed = new Date(doc.indexed_at).toLocaleDateString();
-    // The row keeps only the size of the material; when it was indexed lives in the row menu.
-    row.append(node('span', 'doc-status', `${doc.chunks} ${tr('chunk')}`));
-    // Everything the shortened row no longer shows stays one hover away, full path included.
-    const external = !/[/\\]imports[/\\]/.test(doc.path);
-    row.setAttribute('title', [
-      external ? tr('externalSource', { path: doc.path }) : doc.path,
-      `${doc.chunks} ${tr('chunk')}`, tr('added', { date: added }), tr('updated', { date: indexed }),
-    ].join('\n'));
-
-    // The row itself performs the same action as its own first button, so the pointer cursor is
-    // not a lie: that button is the eye for the file types Finch can show, and the folder for the
-    // ones that leave Finch. Anything that lands on a button keeps its own job.
-    row.addEventListener('click', (event) => {
-      if ((event.target as HTMLElement | null)?.closest('.doc-tools')) return;
-      openDocument(doc);
-    });
-    const tools = node('div', 'doc-tools');
-    const previewable = previewRoute(doc.name) !== 'external';
-    const primary = previewable ? icon(Eye, tr('preview')) : icon(FolderOpen, tr('reveal'));
-    primary.addEventListener('click', () => openDocument(doc));
-    const more = icon(EllipsisVertical, tr('menu'));
-    more.setAttribute('aria-haspopup', 'menu');
-    more.addEventListener('click', (event) => {
-      event.stopPropagation();
-      openRowMenu(doc, more);
-    });
-    tools.append(primary, more);
-    row.append(tools);
-    target.append(row);
-  }
+  for (const doc of docs) target.append(buildRow(doc));
   if (survivor) restoreRowMenu(survivor, rowMenuFlyoutOpen);
   // Only carry a tail line while rows remain; a fully shown list needs no dangling footer.
   byId('list-end').textContent = docs.length < total ? tr('loaded', { shown: docs.length, total }) : '';
@@ -555,9 +571,49 @@ function renderDocs(focusId?: string): void {
   }
 }
 
+/**
+ * Applies one re-filing to the list already on screen: only the row that changed is rebuilt, so the
+ * scroll position and every other row survive, and a row that no longer belongs to the tag being
+ * viewed leaves with the count following it. Reloading the page instead is what made ticking a
+ * category look like a full refresh, which is the whole reason this patch exists.
+ *
+ * Returns false when the document is not on screen at all, so the caller can reload instead.
+ */
+function patchTagToggle(documentId: string, nextTags: string[]): boolean {
+  const index = docs.findIndex((doc) => doc.id === documentId);
+  if (index === -1) return false;
+  const row = byId('documents').querySelector<HTMLElement>(`.doc[data-id="${documentId}"]`);
+  const menuWasHere = rowMenuDoc?.id === documentId;
+  const flyoutWasOpen = rowMenuFlyoutOpen;
+  if (!inScope(nextTags, selectedTag)) {
+    docs.splice(index, 1);
+    total = Math.max(0, total - 1);
+    if (menuWasHere) closeRowMenu();
+    row?.remove();
+    // The last row leaving brings the empty-library hint back, which only a full render draws.
+    if (!docs.length) { renderDocs(); return true; }
+    byId('count').textContent = tr('totalFiles', { count: total });
+    byId('list-end').textContent = docs.length < total ? tr('loaded', { shown: docs.length, total }) : '';
+    return true;
+  }
+  const updated: Document = { ...docs[index], tags: nextTags };
+  docs[index] = updated;
+  // A document can be listed without being drawn (a page the user has not scrolled to); the rest
+  // of the list is then already correct, so there is nothing to replace.
+  if (!row) return true;
+  row.replaceWith(buildRow(updated));
+  // The menu is anchored to a button inside the row that has just been rebuilt.
+  if (menuWasHere) restoreRowMenu(updated, flyoutWasOpen);
+  return true;
+}
 /** One menu is shared by every row and positioned in viewport coordinates. */
 let rowMenuDoc: Document | null = null;
 let rowMenuAnchor: HTMLElement | null = null;
+/**
+ * Where the menu was put when a right-click asked for it. Kept so re-anchoring it after a row is
+ * rebuilt leaves it under the pointer the user put it at, instead of jumping to the ⋯ button.
+ */
+let rowMenuBox: AnchorBox | null = null;
 
 /** Hides the popup but remembers the row, so a refresh that empties the list can restore it. */
 function hideRowMenu(): void {
@@ -600,7 +656,7 @@ function restoreRowMenu(doc: Document, flyoutWasOpen: boolean): void {
   fillRowSubmenu(doc);
   row.classList.add('menu-open');
   anchor.setAttribute('aria-expanded', 'true');
-  placeMenu(byId('row-menu') as HTMLElement, anchor.getBoundingClientRect());
+  placeMenu(byId('row-menu') as HTMLElement, rowMenuBox ?? anchor.getBoundingClientRect());
   if (flyoutWasOpen) {
     byId('row-classify').setAttribute('aria-expanded', 'true');
     placeMenu(byId('row-submenu') as HTMLElement, byId('row-classify').getBoundingClientRect(), 'left');
@@ -608,8 +664,11 @@ function restoreRowMenu(doc: Document, flyoutWasOpen: boolean): void {
 }
 function menuOpenFor(element: HTMLElement): boolean { return !element.hidden; }
 
+/** What a popup needs to know about its anchor: a real element's box, or a point on screen. */
+interface AnchorBox { top: number; bottom: number; left: number; right: number; width: number; height: number }
+
 /** Keeps a popup on screen, stacked beside the anchor on the requested side. */
-function placeMenu(menu: HTMLElement, anchor: DOMRect, side: 'below' | 'left' | 'right' = 'below'): void {
+function placeMenu(menu: HTMLElement, anchor: AnchorBox, side: 'below' | 'left' | 'right' = 'below'): void {
   menu.hidden = false;
   const box = menu.getBoundingClientRect();
   const gap = 4;
@@ -660,9 +719,13 @@ function fillRowSubmenu(doc: Document): void {
     submenu.append(note);
   }
 }
-function openRowMenu(doc: Document, anchor: HTMLElement): void {
+/**
+ * Opens the shared row menu for one document. `at` places it at a point — a right-click — instead
+ * of beside the anchor, and re-opening an already open menu is then a request, not a toggle.
+ */
+function openRowMenu(doc: Document, anchor: HTMLElement, at?: { x: number; y: number }): void {
   const menu = byId('row-menu') as HTMLElement;
-  if (rowMenuAnchor === anchor && menuOpenFor(menu)) { closeRowMenu(); return; }
+  if (!at && rowMenuAnchor === anchor && menuOpenFor(menu)) { closeRowMenu(); return; }
   closeRowMenu();
   rowMenuDoc = doc;
   rowMenuAnchor = anchor;
@@ -671,7 +734,8 @@ function openRowMenu(doc: Document, anchor: HTMLElement): void {
   fillRowSubmenu(doc);
   anchor.setAttribute('aria-expanded', 'true');
   anchorRow()?.classList.add('menu-open');
-  placeMenu(menu, anchor.getBoundingClientRect());
+  rowMenuBox = at ? { top: at.y, bottom: at.y, left: at.x, right: at.x, width: 0, height: 0 } : null;
+  placeMenu(menu, rowMenuBox ?? anchor.getBoundingClientRect());
 }
 function openRowSubmenu(): void {
   const submenu = byId('row-submenu') as HTMLElement;
@@ -1076,6 +1140,16 @@ if (bridge) {
       return;
     }
     if (data.type === 'changed') {
+      // Re-filing one document patches that single row: the list keeps its scroll position and
+      // never blanks. Everything else the backend reports — an import, a deletion, a tag rename —
+      // still reloads it, because a row can have appeared or disappeared anywhere.
+      if (data.change?.kind === 'tagToggle') {
+        applyTags(data.tags ?? [], false);
+        if (patchTagToggle(String(data.change.documentId ?? ''), data.change.tags ?? [])) {
+          if ((byId('search-dialog') as HTMLDialogElement).open) queueSearch();
+          return;
+        }
+      }
       applyTags(data.tags ?? []);
       resetPage();
       if ((byId('search-dialog') as HTMLDialogElement).open) queueSearch();
