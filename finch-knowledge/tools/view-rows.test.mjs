@@ -28,7 +28,7 @@ test('re-filing patches one row instead of reloading the list', async () => {
   // one — and the patch itself only ever replaces that single row.
   assert.match(view, /for \(const doc of docs\) target\.append\(buildRow\(doc\)\);/);
   assert.match(view, /row\.replaceWith\(buildRow\(updated\)\);/);
-  assert.match(view, /function patchTagToggle\(documentId: string, nextTags: string\[\]\): boolean \{/);
+  assert.match(view, /function patchTagToggle\(documentId: string, nextTags: string\[\]\): void \{/);
   assert.match(view, /if \(!inScope\(nextTags, selectedTag\)\) \{/);
 
   // A patched row must not reload the list: the tag-toggle branch has to return before the
@@ -39,7 +39,8 @@ test('re-filing patches one row instead of reloading the list', async () => {
   const reload = block.indexOf('resetPage();');
   assert.ok(patch !== -1 && reload !== -1 && patch < reload, 'the tag toggle is handled before the reload');
   assert.match(block, /applyTags\(data\.tags \?\? \[\], false\);/, 'the left column updates without rebuilding the list');
-  assert.match(block, /if \(patchTagToggle\(String\(data\.change\.documentId \?\? ''\), data\.change\.tags \?\? \[\]\)\) \{/);
+  assert.match(block, /patchTagToggle\(String\(data\.change\.documentId \?\? ''\), data\.change\.tags \?\? \[\]\);/);
+  assert.match(block.slice(patch, reload), /return;/, 'even an offscreen toggle returns before the full reload');
 
   // The row the page patches needs to know what the toggle produced, so the backend reports the
   // document's new tags rather than just "something changed".

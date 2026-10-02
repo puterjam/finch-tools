@@ -725,8 +725,11 @@ export function activate(ctx: finch.MiniToolContext): void {
           const tag = await findTag(typeof input.tag === 'string' ? input.tag : '');
           const id = typeof input.documentId === 'string' ? input.documentId : '';
           const removing = action === 'untag_document';
-          await gate.write(() => (removing ? state.store.removeTag(id, tag.id) : state.store.addTag(id, tag.id)));
-          await broadcast();
+          const updated = await gate.write(async () => {
+            await (removing ? state.store.removeTag(id, tag.id) : state.store.addTag(id, tag.id));
+            return (await state.store.document(id))?.tags ?? [];
+          });
+          await broadcast({ kind: 'tagToggle', documentId: id, tags: updated });
           return result(t(removing ? 'tool.documentUntagged' : 'tool.documentTagged', { id, tag: tag.name }));
         }
         if (action === 'sync') {

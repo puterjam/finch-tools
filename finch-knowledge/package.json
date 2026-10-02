@@ -1,6 +1,6 @@
 {
   "name": "finch-knowledge",
-  "version": "0.25.0",
+  "version": "0.25.1",
   "description": "Index local documents and images in LanceDB, then search them from Finch.",
   "author": {
     "name": "PuterJam",

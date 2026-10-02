@@ -577,34 +577,37 @@ function renderDocs(focusId?: string): void {
  * viewed leaves with the count following it. Reloading the page instead is what made ticking a
  * category look like a full refresh, which is the whole reason this patch exists.
  *
- * Returns false when the document is not on screen at all, so the caller can reload instead.
+ * A document outside the loaded window needs no DOM update. It must never trigger a full reload:
+ * another toggle can arrive after an earlier one already removed the row from the current scope.
  */
-function patchTagToggle(documentId: string, nextTags: string[]): boolean {
+function patchTagToggle(documentId: string, nextTags: string[]): void {
   const index = docs.findIndex((doc) => doc.id === documentId);
-  if (index === -1) return false;
+  if (index === -1) return;
   const row = byId('documents').querySelector<HTMLElement>(`.doc[data-id="${documentId}"]`);
   const menuWasHere = rowMenuDoc?.id === documentId;
   const flyoutWasOpen = rowMenuFlyoutOpen;
   if (!inScope(nextTags, selectedTag)) {
     docs.splice(index, 1);
     total = Math.max(0, total - 1);
+    // The loaded window now ends one catalogue position earlier; using the old offset would
+    // skip the first unseen document when infinite scrolling fetches its next page.
+    nextOffset = Math.max(beforeOffset, nextOffset - 1);
     if (menuWasHere) closeRowMenu();
     row?.remove();
     // The last row leaving brings the empty-library hint back, which only a full render draws.
-    if (!docs.length) { renderDocs(); return true; }
+    if (!docs.length) { renderDocs(); return; }
     byId('count').textContent = tr('totalFiles', { count: total });
     byId('list-end').textContent = docs.length < total ? tr('loaded', { shown: docs.length, total }) : '';
-    return true;
+    return;
   }
   const updated: Document = { ...docs[index], tags: nextTags };
   docs[index] = updated;
   // A document can be listed without being drawn (a page the user has not scrolled to); the rest
   // of the list is then already correct, so there is nothing to replace.
-  if (!row) return true;
+  if (!row) return;
   row.replaceWith(buildRow(updated));
   // The menu is anchored to a button inside the row that has just been rebuilt.
   if (menuWasHere) restoreRowMenu(updated, flyoutWasOpen);
-  return true;
 }
 /** One menu is shared by every row and positioned in viewport coordinates. */
 let rowMenuDoc: Document | null = null;
@@ -653,13 +656,17 @@ function restoreRowMenu(doc: Document, flyoutWasOpen: boolean): void {
   rowMenuDoc = doc;
   rowMenuAnchor = anchor;
   byId('row-menu-note').textContent = tr('updated', { date: new Date(doc.indexed_at).toLocaleDateString() });
+  const submenu = byId('row-submenu');
+  const submenuScroll = submenu.scrollTop;
   fillRowSubmenu(doc);
   row.classList.add('menu-open');
   anchor.setAttribute('aria-expanded', 'true');
   placeMenu(byId('row-menu') as HTMLElement, rowMenuBox ?? anchor.getBoundingClientRect());
   if (flyoutWasOpen) {
     byId('row-classify').setAttribute('aria-expanded', 'true');
-    placeMenu(byId('row-submenu') as HTMLElement, byId('row-classify').getBoundingClientRect(), 'left');
+    placeMenu(submenu, byId('row-classify').getBoundingClientRect(), 'left');
+    // Re-ticking must preserve the user's place, not jump back to the first selected category.
+    submenu.scrollTop = submenuScroll;
   }
 }
 function menuOpenFor(element: HTMLElement): boolean { return !element.hidden; }
@@ -724,6 +731,7 @@ function fillRowSubmenu(doc: Document): void {
  * of beside the anchor, and re-opening an already open menu is then a request, not a toggle.
  */
 function openRowMenu(doc: Document, anchor: HTMLElement, at?: { x: number; y: number }): void {
+  setMenu(false);
   const menu = byId('row-menu') as HTMLElement;
   if (!at && rowMenuAnchor === anchor && menuOpenFor(menu)) { closeRowMenu(); return; }
   closeRowMenu();
@@ -737,6 +745,16 @@ function openRowMenu(doc: Document, anchor: HTMLElement, at?: { x: number; y: nu
   rowMenuBox = at ? { top: at.y, bottom: at.y, left: at.x, right: at.x, width: 0, height: 0 } : null;
   placeMenu(menu, rowMenuBox ?? anchor.getBoundingClientRect());
 }
+/** Scroll only the flyout, never the document list or page that its row belongs to. */
+function scrollToCheckedCategory(submenu: HTMLElement): void {
+  submenu.scrollTop = 0;
+  const checked = submenu.querySelector<HTMLElement>('[aria-checked="true"]');
+  if (!checked) return;
+  const menuBox = submenu.getBoundingClientRect();
+  const checkedBox = checked.getBoundingClientRect();
+  const middle = checkedBox.top - menuBox.top - submenu.clientTop + checkedBox.height / 2;
+  submenu.scrollTop = Math.max(0, Math.min(submenu.scrollHeight - submenu.clientHeight, middle - submenu.clientHeight / 2));
+}
 function openRowSubmenu(): void {
   const submenu = byId('row-submenu') as HTMLElement;
   if (menuOpenFor(submenu)) return;
@@ -744,6 +762,8 @@ function openRowSubmenu(): void {
   const item = byId('row-classify');
   item.setAttribute('aria-expanded', 'true');
   placeMenu(submenu, item.getBoundingClientRect(), 'left');
+  // The flyout must be visible before measuring its viewport and selected row.
+  scrollToCheckedCategory(submenu);
 }
 function closeRowSubmenu(): void {
   rowMenuFlyoutOpen = false;
@@ -963,6 +983,7 @@ ${tr('libraryNote')}` : libraryDefault ? `${tr('libraryDefault')}
 ${tr('libraryNote')}` : tr('libraryNote');
 }
 function setMenu(open: boolean): void {
+  if (open) closeRowMenu();
   (byId('library-menu') as HTMLElement).hidden = !open;
   byId('library-menu-button').setAttribute('aria-expanded', String(open));
 }
@@ -1145,10 +1166,14 @@ if (bridge) {
       // still reloads it, because a row can have appeared or disappeared anywhere.
       if (data.change?.kind === 'tagToggle') {
         applyTags(data.tags ?? [], false);
-        if (patchTagToggle(String(data.change.documentId ?? ''), data.change.tags ?? [])) {
-          if ((byId('search-dialog') as HTMLDialogElement).open) queueSearch();
-          return;
-        }
+        patchTagToggle(String(data.change.documentId ?? ''), data.change.tags ?? []);
+        // Catalogue counts also cover changes outside the loaded window. All sources keeps its
+        // total: adding/removing a tag cannot add/remove a document (nor may multi-tag counts be summed).
+        if (selectedTag !== null) total = tags.find((tag) => tag.id === selectedTag)?.count ?? total;
+        byId('count').textContent = tr('totalFiles', { count: total });
+        byId('list-end').textContent = docs.length < total ? tr('loaded', { shown: docs.length, total }) : '';
+        if ((byId('search-dialog') as HTMLDialogElement).open) queueSearch();
+        return;
       }
       applyTags(data.tags ?? []);
       resetPage();
