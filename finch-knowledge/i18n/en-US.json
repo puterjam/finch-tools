@@ -119,7 +119,7 @@
     "remove": "Remove",
     "removeTitle": "Remove this source?",
     "removeMessage": "This deletes its index and managed copy, not the original file.",
-    "reveal": "Show in file manager",
+    "preview": "Open in the built-in preview",
     "locate": "Locate in file list",
     "move": "Move to tag",
     "menuReveal": "Open in file manager",

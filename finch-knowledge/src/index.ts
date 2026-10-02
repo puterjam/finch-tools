@@ -20,6 +20,7 @@ export { createKnowledgeComposer } from './composer.js';
 import { mkdir, writeFile } from 'node:fs/promises';
 export { KnowledgeStore, vectorize, chunkText, DEFAULT_TAG, engineForExtension } from './store.js';
 export { highlightTerms, snippetParts, snippetText } from './snippet.js';
+export { openInPreview } from './preview.js';
 export { UploadReceiver } from './uploads.js';
 export { importFromWorkspace, expandImportTargets, MAX_BATCH_FILES } from './tool-import.js';
 export { BackupGate } from './backup-gate.js';
