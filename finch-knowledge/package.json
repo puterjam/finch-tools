@@ -1,0 +1,44 @@
+{
+  "name": "finch-knowledge",
+  "version": "0.24.1",
+  "description": "Index local documents and images in LanceDB, then search them from Finch.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-knowledge"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-knowledge#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test tools/*.test.mjs",
+    "prepublishOnly": "npm run typecheck && npm test && npx @finchtoys/minitools doctor ."
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.3.15",
+    "@lancedb/lancedb": "0.39.0",
+    "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
+    "lucide": "^1.48.0",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "i18n/",
+    "fonts/",
+    "icons/",
+    "icon.png",
+    "README.md",
+    "finch.json"
+  ]
+}

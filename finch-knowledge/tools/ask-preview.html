@@ -1,0 +1,46 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Knowledge menu test fixture</title></head><body>
+<script>
+// Development-only fixture. Never included in the published package.
+const bootstrap = `
+window.__requests = [];
+window.finch = {
+  onMessage(handler) { window.__receive = handler; },
+  postMessage(message) {
+    window.__requests.push(message);
+    queueMicrotask(() => {
+      if (message.type === 'ready') {
+        window.__receive({ type: 'finch:env', locale: 'zh-CN', view: 'appView' });
+        window.__receive({ type: 'tags', requestId: message.requestId, tags: [
+          { id: 'default', name: 'Unclassified', count: 0 },
+          { id: 'design', name: '设计资料', count: 3 }
+        ], library: { root: '/fixture/library', isDefault: false, unavailable: null },
+        environment: { running: false, ready: true, usable: true, steps: [] } });
+      } else if (message.type === 'page') {
+        window.__receive({ type: 'page', requestId: message.requestId, total: 3, offset: 0,
+          documents: ['界面规范.md', '交互设计.pdf', '资料整理笔记.md'].map((name, i) => ({
+            id: 'fixture-' + i, name, path: '/fixture/' + name, tags: ['design'], chunks: i + 3,
+            added_at: 1790900000000, indexed_at: 1790900000000
+          })) });
+      } else if (message.type === 'ask') {
+        window.__receive({ type: 'asked', requestId: message.requestId });
+      }
+    });
+  },
+  ui: { toast: async () => ({ action: 'dismissed' }), confirm: async () => ({ confirmed: false }) }
+};
+document.documentElement.style.setProperty('--finch-bg-main', '#191919');
+document.documentElement.style.setProperty('--finch-bg-elevated', '#232323');
+document.documentElement.style.setProperty('--finch-bg-hover', '#303030');
+document.documentElement.style.setProperty('--finch-border', '#3b3b3b');
+document.documentElement.style.setProperty('--finch-text-primary', '#ededed');
+document.documentElement.style.setProperty('--finch-text-secondary', '#aaaaaa');
+document.documentElement.style.setProperty('--finch-text-tertiary', '#999999');
+document.documentElement.style.setProperty('--finch-accent', '#8c75e8');
+`;
+fetch('../dist/view.html').then(response => response.text()).then(html => {
+  html = html.replace('<head>', '<head><base href="/dist/">')
+    .replace('<script src="./view.js" defer>', '<script>' + bootstrap + '<\/script><script src="./view.js" defer>');
+  document.open(); document.write(html); document.close();
+});
+</script>
+</body></html>

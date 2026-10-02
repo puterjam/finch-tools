@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en" class="booting">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Knowledge Base</title>
+  <style>html.booting{visibility:hidden;background:var(--finch-bg-main,Canvas)}</style>
+  <link rel="stylesheet" href="./view.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div class="masthead-copy">
+        <h1 id="heading">Your knowledge, within reach.</h1>
+        <p id="intro">Index on this device. AI answers may send retrieved passages to your selected model.</p>
+      </div>
+      <div class="masthead-tools">
+        <!-- The browse entry is an icon: it opens a pane, so it does not have to shout. -->
+        <button type="button" id="browse" class="ghost-icon" aria-label="Browse passages" title="Browse passages"><span data-icon="search"></span></button>
+      </div>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar" aria-label="Sources and tags">
+        <div class="sidebar-scroll">
+          <section class="side-section sidebar-head">
+            <button type="button" id="add" class="primary"><span data-icon="plus"></span><span id="add-label">Add files</span></button>
+            <input id="file-input" type="file" multiple accept=".md,.markdown,.txt,.doc,.docx,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff" hidden>
+            <p class="drop-hint" id="drop-hint">Or drop files here · Added to the selected tag.</p>
+          </section>
+          <section class="side-section tags-section">
+            <div class="section-title"><span id="tags-title">TAGS</span><button type="button" id="new-tag" class="plain-icon" aria-label="New tag" title="New tag"><span data-icon="plus"></span></button></div>
+            <div id="tags" class="tag-list"></div>
+          </section>
+        </div>
+        <div class="sidebar-footer" id="library-footer">
+          <div class="library-row">
+            <button type="button" id="library-reveal" class="library-location">
+              <span class="library-location-icon" data-icon="hard-drive"></span>
+              <span class="library-location-path" id="library-path" dir="ltr"></span>
+            </button>
+            <button type="button" id="library-menu-button" class="plain-icon menu-trigger" aria-haspopup="true" aria-expanded="false" aria-controls="library-menu"><span data-icon="ellipsis-vertical"></span></button>
+          </div>
+          <div class="activity" id="activity" hidden><span class="activity-fill" id="activity-fill"></span></div>
+          <div id="library-menu" class="menu" role="menu" hidden>
+            <p class="menu-caption" id="library-note">The library can live in any folder you pick, including a synced or NAS directory. Engines stay on this device.</p>
+            <button type="button" id="library-location" class="menu-item" role="menuitem"><span data-icon="folder-open"></span><span id="library-location-label">Choose location…</span></button>
+            <div class="menu-separator" role="separator"></div>
+            <button type="button" id="backup" class="menu-item" role="menuitem"><span data-icon="archive"></span><span id="backup-label">Back up to a folder</span></button>
+            <button type="button" id="sync" class="menu-item" role="menuitem"><span data-icon="folder-sync"></span><span id="sync-label">Refresh changed sources</span></button>
+            <div class="menu-separator" role="separator"></div>
+            <button type="button" id="library-environment" class="menu-item" role="menuitem"><span data-icon="refresh-cw"></span><span id="library-environment-label">Update runtime</span><span class="menu-detail" id="library-environment-detail"></span></button>
+          </div>
+        </div>
+      </aside>
+      <section class="library" aria-labelledby="library-title">
+        <div class="library-head">
+          <div class="library-head-copy"><h2 id="library-title">All sources</h2></div>
+          <div class="library-head-tools">
+            <span class="count" id="count">0</span>
+            <span class="select-pill sort-pill">
+              <label class="sr-only" for="sort" id="sort-label">Sort by</label>
+              <span class="select-pill-sizer" id="sort-sizer">Last indexed</span>
+              <select id="sort" class="sort-select"><option value="updated">Last indexed</option><option value="added">Date added</option><option value="name">File name</option></select>
+            </span>
+          </div>
+        </div>
+        <div id="documents-scroll" class="documents-scroll" tabindex="0"><div id="documents" class="documents"></div><div id="list-end" class="list-end"></div></div>
+      </section>
+    </div>
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+  </main>
+  <section id="onboard" class="onboard" hidden aria-labelledby="onboard-title">
+    <div class="onboard-card">
+      <h1 id="onboard-title">Preparing the knowledge engine</h1>
+      <p class="onboard-intro" id="onboard-intro">The first run installs three local engines. This is a one-time download.</p>
+      <ul class="onboard-steps" id="onboard-steps"></ul>
+      <!-- Choosing where the library lives belongs to the first run too, so it is a sibling of the
+           engine rows and reads the same way: state icon, title, detail, action on the right. -->
+      <div class="onboard-step onboard-library" id="onboard-library-row">
+        <span class="onboard-step-icon" id="onboard-library-icon"></span>
+        <div class="onboard-step-content">
+          <div class="onboard-step-title">
+            <span class="onboard-step-name" id="onboard-library-title">Library location</span>
+            <span class="onboard-step-status" id="onboard-library-status"></span>
+          </div>
+          <div class="onboard-step-detail onboard-library-path" id="onboard-library-path" dir="ltr"></div>
+        </div>
+        <button type="button" id="onboard-library-action" class="outline"><span data-icon="folder-open"></span><span id="onboard-library-action-label">Choose location…</span></button>
+      </div>
+      <p class="onboard-note" id="onboard-note"></p>
+      <div class="onboard-actions">
+        <button type="button" id="onboard-retry" class="small-primary" hidden>Retry</button>
+        <button type="button" id="onboard-help" class="outline" hidden>Ask the assistant to fix it</button>
+      </div>
+    </div>
+  </section>
+  <dialog id="search-dialog" aria-label="Search your own sources"><label class="sr-only" for="query" id="search-label">Search your own sources</label><div class="search-field"><span data-icon="search"></span><input id="query" type="search" autocomplete="off" maxlength="500" placeholder="Type to search passages…"></div><div id="matches" class="matches" role="listbox"></div></dialog>
+  <!-- One menu serves every row; it is positioned in viewport coordinates so the scrolling
+       list can never clip it. The category list is its second level. -->
+  <div id="row-menu" class="menu row-menu" role="menu" hidden>
+    <p class="menu-caption" id="row-menu-note"></p>
+    <button type="button" id="row-open" class="menu-item" role="menuitem"><span data-icon="folder-open"></span><span id="row-open-label">Open in file manager</span></button>
+    <button type="button" id="row-classify" class="menu-item has-submenu" role="menuitem" aria-haspopup="menu" aria-expanded="false"><span data-icon="tag"></span><span id="row-classify-label">Set category</span><span class="menu-caret" aria-hidden="true">›</span></button>
+    <div class="menu-separator" role="separator"></div>
+    <button type="button" id="row-remove" class="menu-item menu-danger" role="menuitem"><span data-icon="trash"></span><span id="row-remove-label">Remove</span></button>
+  </div>
+  <div id="row-submenu" class="menu row-menu row-submenu" role="menu" hidden></div>
+  <script src="./view.js" defer></script>
+</body>
+</html>
