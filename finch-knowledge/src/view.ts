@@ -2,7 +2,7 @@ import type * as finch from 'finch';
 import { Archive, Check, Circle, CircleAlert, CircleCheck, createElement, EllipsisVertical, Eye, Files, FolderInput, FolderOpen, FolderPlus, FolderSync, HardDrive, Loader, PenLine, Plus, RefreshCw, Search, Tag as TagIcon, Trash2, X } from 'lucide';
 import type { IconNode } from 'lucide';
 import { highlightTerms, snippetParts } from './snippet.js';
-import { openInPreview } from './preview.js';
+import { openListedDocument, previewRoute } from './preview.js';
 
 type Bridge = finch.WebviewBridgeApi;
 declare global { interface Window { finch: Bridge } }
@@ -22,7 +22,7 @@ const english: Copy = {
   all: 'All sources', unclassified: 'Unclassified', librarySubtitle: 'Browse and organize your local material.', totalFiles: '{count} files', sortLabel: 'Sort by', sortUpdated: 'Last indexed', sortAdded: 'Date added', sortName: 'File name',
   searchLabel: 'Search your own sources', searchPlaceholderIn: 'Search in {tag}…',
   empty: 'No files in this view. Add some on the left.', emptyMatches: 'No matching passages.', searchHint: 'Type a word or phrase to inspect indexed passages.', loading: 'Loading…', loaded: 'Showing {shown} of {total}',
-  remove: 'Remove', removeTitle: 'Remove this source?', removeMessage: 'This deletes its index and managed copy, not the original file.', preview: 'Preview', locate: 'Locate in file list', move: 'Move to tag',
+  remove: 'Remove', removeTitle: 'Remove this source?', removeMessage: 'This deletes its index and managed copy, not the original file.', reveal: 'Show in file manager', preview: 'Preview', locate: 'Locate in file list', move: 'Move to tag',
   menuReveal: 'Open in file manager', menuClassify: 'Set category',
   tagDeleteTitle: 'Delete this tag?', tagDeleteMessage: 'Documents carrying this tag lose it and keep their other tags; one that had no other tag moves to Unclassified.', tagPlaceholder: 'New tag · Enter', tagHint: 'Enter to create · Esc to cancel', chunk: 'passages', added: 'Added {date}', updated: 'Indexed {date}',
   complete: 'Indexed {count} file(s).', completeUnchanged: 'Indexed {count} file(s); {unchanged} unchanged.', failed: 'Failed: {details}', unavailable: 'Finch bridge is unavailable.',
@@ -466,12 +466,13 @@ function updateSortSizer(): void {
   byId('sort-sizer').textContent = select.selectedOptions[0]?.textContent ?? '';
 }
 /**
- * The row's primary action: Finch's built-in preview, falling back to revealing the managed copy
- * in the file manager when this host has no preview, or when it refuses this kind of file.
+ * The row's primary action, routed by type: Markdown and text open in Finch's document preview,
+ * an image in its dedicated image viewer, and anything else — PDF, Word — externally in the file
+ * manager, which is also where the first two land when the host cannot preview them.
  */
 function openDocument(doc: Document): void {
   const reveal = () => request('reveal', { id: doc.id });
-  if (!openInPreview(bridge, doc.path, reveal)) reveal();
+  if (!openListedDocument(bridge, doc.name, doc.path, reveal)) reveal();
 }
 function renderDocs(focusId?: string): void {
   // Rows are rebuilt here, so a menu whose document is gone has to close — but one whose document
@@ -518,24 +519,24 @@ function renderDocs(focusId?: string): void {
       `${doc.chunks} ${tr('chunk')}`, tr('added', { date: added }), tr('updated', { date: indexed }),
     ].join('\n'));
 
-    // The row itself performs the same action as its own first button — the eye, which previews a
-    // file in Finch's built-in viewer — so the pointer cursor is not a lie. Locating the managed
-    // copy on disk moved into the row menu when the row click became a preview. Anything that
-    // lands on a button keeps its own job.
+    // The row itself performs the same action as its own first button, so the pointer cursor is
+    // not a lie: that button is the eye for the file types Finch can show, and the folder for the
+    // ones that leave Finch. Anything that lands on a button keeps its own job.
     row.addEventListener('click', (event) => {
       if ((event.target as HTMLElement | null)?.closest('.doc-tools')) return;
       openDocument(doc);
     });
     const tools = node('div', 'doc-tools');
-    const preview = icon(Eye, tr('preview'));
-    preview.addEventListener('click', () => openDocument(doc));
+    const previewable = previewRoute(doc.name) !== 'external';
+    const primary = previewable ? icon(Eye, tr('preview')) : icon(FolderOpen, tr('reveal'));
+    primary.addEventListener('click', () => openDocument(doc));
     const more = icon(EllipsisVertical, tr('menu'));
     more.setAttribute('aria-haspopup', 'menu');
     more.addEventListener('click', (event) => {
       event.stopPropagation();
       openRowMenu(doc, more);
     });
-    tools.append(preview, more);
+    tools.append(primary, more);
     row.append(tools);
     target.append(row);
   }

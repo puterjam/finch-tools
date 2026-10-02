@@ -120,6 +120,7 @@
     "remove": "移除",
     "removeTitle": "移除这份资料？",
     "removeMessage": "将删除索引和托管副本，不会删除原文件。",
+    "reveal": "在文件管理器中定位副本",
     "preview": "用内置预览打开",
     "locate": "在资料列表中定位",
     "move": "更换标签",

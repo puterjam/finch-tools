@@ -18,9 +18,9 @@ import { fetchArticle, normalizeUrl, ArticleUnreachableError } from './article.j
 import { createKnowledgeComposer } from './composer.js';
 export { createKnowledgeComposer } from './composer.js';
 import { mkdir, writeFile } from 'node:fs/promises';
-export { KnowledgeStore, vectorize, chunkText, DEFAULT_TAG, engineForExtension } from './store.js';
+export { KnowledgeStore, vectorize, chunkText, DEFAULT_TAG, engineForExtension, ACCEPTED } from './store.js';
 export { highlightTerms, snippetParts, snippetText } from './snippet.js';
-export { openInPreview } from './preview.js';
+export { openInPreview, openListedDocument, previewRoute } from './preview.js';
 export { UploadReceiver } from './uploads.js';
 export { importFromWorkspace, expandImportTargets, MAX_BATCH_FILES } from './tool-import.js';
 export { BackupGate } from './backup-gate.js';
