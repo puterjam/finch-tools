@@ -1,6 +1,7 @@
 import type * as finch from 'finch';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
+import { parseAnnotations, type GalleryAnnotations } from './gallery-model';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 /**
@@ -461,6 +462,7 @@ export interface GalleryRecord {
   masked: boolean;
   /** Free-form user note, edited from the gallery page. */
   note: string;
+  annotations?: GalleryAnnotations;
 }
 
 async function loadGallery(ctx: finch.MiniToolContext): Promise<GalleryRecord[]> {
@@ -481,10 +483,20 @@ async function saveGallery(ctx: finch.MiniToolContext, records: GalleryRecord[])
   await fs.rename(tmp, file);
 }
 
+/** Serialize read-modify-write transactions, not just the final rename: an
+ * autosave and a generation must never overwrite each other's gallery data. */
+const galleryWrites = new WeakMap<finch.MiniToolContext, Promise<void>>();
+function mutateGallery(ctx: finch.MiniToolContext, mutate: (records: GalleryRecord[]) => GalleryRecord[]): Promise<void> {
+  const next = (galleryWrites.get(ctx) ?? Promise.resolve()).catch(() => {}).then(async () => {
+    await saveGallery(ctx, mutate(await loadGallery(ctx)));
+  });
+  galleryWrites.set(ctx, next);
+  return next;
+}
+
 /** Newest first, capped — a lost record never loses the image file itself. */
 async function addToGallery(ctx: finch.MiniToolContext, records: GalleryRecord[]): Promise<void> {
-  const existing = await loadGallery(ctx);
-  await saveGallery(ctx, [...records, ...existing].slice(0, GALLERY_LIMIT));
+  await mutateGallery(ctx, (existing) => [...records, ...existing].slice(0, GALLERY_LIMIT));
 }
 
 /**
@@ -539,8 +551,7 @@ async function buildPanelEnv(ctx: finch.MiniToolContext, panel: finch.AppPanel):
   return {
     view: panel.view ?? '',
     sessionId: panel.sessionId ?? '',
-    // `finch:env.locale` only arrives for the appView scope, so thread the
-    // locale through our own payload to cover the right-side Panel too.
+    // Fallback for older hosts; the page prefers repeatable finch:env signals.
     locale: ctx.i18n.locale,
   };
 }
@@ -560,7 +571,7 @@ async function broadcastGallery(ctx: finch.MiniToolContext): Promise<void> {
     try {
       await panel.postMessage({ type: 'gallery', data });
     } catch {
-      livePanels.delete(panel);
+      // Navigation is transient. Only onDidDispose removes a panel handle.
     }
   }
 }
@@ -585,6 +596,11 @@ async function handlePanelMessage(
     const filePath = typeof msg.filePath === 'string' ? msg.filePath : '';
     if (!filePath) return;
     try {
+      const records = await loadGallery(ctx);
+      if (!records.some((record) => record.filePath === filePath)) {
+        await panel.postMessage({ type: 'imageData', filePath, error: 'unreadable' });
+        return;
+      }
       const info = await fs.stat(filePath);
       if (info.size > MAX_EMBED_BYTES) {
         await panel.postMessage({ type: 'imageData', filePath, error: 'too-large' });
@@ -616,22 +632,45 @@ async function handlePanelMessage(
   if (type === 'saveNote') {
     const id = String(msg.id ?? '');
     const note = typeof msg.note === 'string' ? msg.note : '';
-    const records = await loadGallery(ctx);
-    const record = records.find((item) => item.id === id);
-    if (!record) return;
-    record.note = note;
-    await saveGallery(ctx, records);
+    await mutateGallery(ctx, (records) => {
+      const record = records.find((item) => item.id === id);
+      if (record) record.note = note.slice(0, 8000);
+      return records;
+    });
     await panel.postMessage({ type: 'noteSaved', id });
+    return;
+  }
+
+  if (type === 'saveAnnotations') {
+    const id = String(msg.id ?? '');
+    const annotations = parseAnnotations(msg.annotations);
+    if (!annotations) {
+      await panel.postMessage({ type: 'panelError', id, requestId: msg.requestId, error: 'invalid-annotations' });
+      return;
+    }
+    let found = false;
+    await mutateGallery(ctx, (records) => {
+      const record = records.find((item) => item.id === id);
+      if (record) {
+        found = true;
+        record.annotations = annotations;
+        record.note = typeof msg.note === 'string' ? msg.note.slice(0, 8000) : record.note;
+      }
+      return records;
+    });
+    await panel.postMessage({ type: found ? 'annotationsSaved' : 'panelError', id, requestId: msg.requestId, ...(!found ? { error: 'not-found' } : {}) });
     return;
   }
 
   if (type === 'deleteRecord') {
     const id = String(msg.id ?? '');
     const deleteFile = msg.deleteFile === true;
-    const records = await loadGallery(ctx);
-    const target = records.find((item) => item.id === id);
+    let target: GalleryRecord | undefined;
+    await mutateGallery(ctx, (records) => {
+      target = records.find((item) => item.id === id);
+      return records.filter((item) => item.id !== id);
+    });
     if (!target) return;
-    await saveGallery(ctx, records.filter((item) => item.id !== id));
     let fileDeleteError = '';
     if (deleteFile) {
       await fs.rm(target.filePath, { force: true }).catch((err: unknown) => {
@@ -1188,7 +1227,11 @@ export function activate(ctx: finch.MiniToolContext): void {
       livePanels.add(panel);
       ctx.subscriptions.push(
         panel.onDidReceiveMessage((message) => {
-          void handlePanelMessage(ctx, panel, (message ?? {}) as Record<string, unknown>);
+          const msg = (message ?? {}) as Record<string, unknown>;
+          void handlePanelMessage(ctx, panel, msg).catch((error: unknown) => {
+            ctx.logger.warn(`gallery message failed: ${error instanceof Error ? error.message : String(error)}`);
+            void panel.postMessage({ type: 'panelError', id: msg.id, requestId: msg.requestId }).catch(() => {});
+          });
         }),
       );
       ctx.subscriptions.push(

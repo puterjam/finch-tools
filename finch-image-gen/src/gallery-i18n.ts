@@ -1,0 +1,63 @@
+/** Page copy stays local to the bundle; the backend has its own ctx.i18n catalog. */
+const en = {
+  title: 'Image gallery', count: '{n} images', 'tab.all': 'All', 'tab.current': 'This session',
+  'empty.title': 'No images yet', 'empty.current': 'No images in this session',
+  'empty.hint': 'Ask your assistant for an image. Every generation will be collected here.',
+  'card.preview': 'Preview image', 'card.edit': 'Edit image', 'card.remove': 'Remove from gallery',
+  'remove.title': 'Remove this image?', 'remove.body': 'Only the gallery entry is removed. The original file stays on your computer.',
+  'remove.confirm': 'Remove', cancel: 'Cancel', removed: 'Removed from gallery',
+  'image.loading': 'Loading image…', 'image.failed': 'Could not load the image. Return to the gallery and try again.',
+  'image.large': 'This image is too large to attach. Open the original preview instead.',
+  'editor.title': 'Edit image', 'editor.back': 'Back to gallery', 'editor.draw': 'Annotate', 'editor.comment': 'Add comment',
+  'editor.viewHint': 'Draw a line or click to add a comment.',
+  'editor.penHint': 'Drag to draw. The original file will not be changed.',
+  'editor.commentHint': 'Click on the image to place a comment. You can add several.',
+  'editor.comments': 'Comments · {n}', 'editor.addComment': 'Place another comment',
+  'editor.commentPlaceholder': 'What should change here?', 'editor.commentLabel': 'Comment {n}',
+  'editor.removeComment': 'Remove comment {n}', 'editor.limit': 'Up to 50 comments and 100 strokes per image.',
+  'editor.undo': 'Undo last annotation', 'editor.clear': 'Clear annotations', 'editor.clearTitle': 'Clear these annotations?',
+  'editor.clearBody': 'Remove the lines and comments from this draft. The original image is kept.',
+  'editor.overall': 'Overall instructions (optional)', 'editor.insertOriginal': 'Attach original', 'editor.insert': 'Attach edits',
+  'editor.preparing': 'Preparing…', 'editor.inserting': 'Attaching…', 'editor.inserted': 'Attached to the input box',
+  'editor.insertFailed': 'Could not attach the image. Your annotations are kept; try again.',
+  'editor.saved': 'Saved', 'editor.saving': 'Saving…', 'editor.saveFailed': 'Not saved — try again before closing',
+  'editor.scopeHint': 'To attach edits, open Image 2.5 in a session’s right-side panel or on Home.',
+  'editor.annotationLabel': 'Image edits · {name}',
+  'editor.commentsText': 'Comments on the numbered pins (positions are percentages of the original image):',
+  'editor.commentText': '{n}. ({x}%, {y}%): {text}', 'editor.linesText': '{n} freehand annotation(s) appear in red on the attached preview.',
+  'editor.reminder': 'Use image_gen_create to edit the ORIGINAL image at {path} (reference_image_paths). The attached preview is evidence of the requested edits, not a new original. Red strokes and numbered pins are instructions only; do not reproduce them in the output. Follow every user comment and preserve the rest of the image. Do not upgrade quality or resolution unless requested.',
+};
+type CopyKey = keyof typeof en;
+const zh: Record<CopyKey, string> = {
+  title: '图片库', count: '共 {n} 张', 'tab.all': '全部', 'tab.current': '本会话',
+  'empty.title': '还没有图片', 'empty.current': '本会话还没有图片',
+  'empty.hint': '让助手生成一张图，每次生成的结果都会收在这里。',
+  'card.preview': '预览图片', 'card.edit': '编辑图片', 'card.remove': '从图库移除',
+  'remove.title': '移除这张图片？', 'remove.body': '只移除图库记录，原始文件仍保留在电脑上。',
+  'remove.confirm': '移除', cancel: '取消', removed: '已从图库移除',
+  'image.loading': '正在加载图片…', 'image.failed': '图片加载失败，请返回图库后重试。',
+  'image.large': '图片过大，暂时无法作为附件插入，可以先打开原图预览。',
+  'editor.title': '编辑图片', 'editor.back': '返回图库', 'editor.draw': '标注', 'editor.comment': '添加评论',
+  'editor.viewHint': '画线标注，或点击图片添加评论。',
+  'editor.penHint': '在图上拖动画线，不会改动原始文件。',
+  'editor.commentHint': '点击图片放置评论，可添加多条。',
+  'editor.comments': '评论 · {n}', 'editor.addComment': '再添加一条定位评论',
+  'editor.commentPlaceholder': '这里想怎么改？', 'editor.commentLabel': '评论 {n}',
+  'editor.removeComment': '移除评论 {n}', 'editor.limit': '每张图片最多添加 50 条评论、100 笔标注。',
+  'editor.undo': '撤销上一条标注', 'editor.clear': '清除标注', 'editor.clearTitle': '清除这些标注？',
+  'editor.clearBody': '清除当前草稿中的画线和评论，原图不会改变。',
+  'editor.overall': '整体修改说明（选填）', 'editor.insertOriginal': '插入原图', 'editor.insert': '插入修改要求',
+  'editor.preparing': '正在准备…', 'editor.inserting': '正在插入…', 'editor.inserted': '已插入到输入框',
+  'editor.insertFailed': '插入失败，标注已保留，请重试。',
+  'editor.saved': '已保存', 'editor.saving': '保存中…', 'editor.saveFailed': '未保存，请先重试再关闭',
+  'editor.scopeHint': '需要插入到输入框时，请在会话右侧面板或首页打开 Image 2.5。',
+  'editor.annotationLabel': '图片修改 · {name}',
+  'editor.commentsText': '图片编号位置的评论（坐标为相对原图的百分比）：',
+  'editor.commentText': '{n}. （{x}%, {y}%）：{text}', 'editor.linesText': '附件中有 {n} 笔红色画线标注。',
+  'editor.reminder': '请调用 image_gen_create 编辑原始图片：{path}（放入 reference_image_paths）。附件预览用于说明修改要求，不是新的原图。红色画线和编号定位点仅为标注，不要画进生成结果。逐条执行用户评论，保留其他区域。除非用户要求，不要提高画质或尺寸。',
+};
+let language: 'zh' | 'en' = 'en';
+export function setLocale(locale: string): void { language = locale.toLowerCase().startsWith('zh') ? 'zh' : 'en'; }
+export function t(key: CopyKey, values: Record<string, string | number> = {}): string {
+  return (language === 'zh' ? zh[key] : en[key]).replace(/\{(\w+)\}/g, (all, name: string) => String(values[name] ?? all));
+}

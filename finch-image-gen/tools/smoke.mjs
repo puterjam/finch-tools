@@ -360,7 +360,10 @@ const base = { prompt: 'a red square' };
 
   const { panel, sent, handlers } = makePanel('appView', '');
   panelHandlers[0](panel);
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  // The push reads gallery.json, so wait for the message instead of one tick.
+  for (let i = 0; i < 200 && !sent.some((m) => m.type === 'gallery'); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
   const pushed = sent.find((message) => message.type === 'gallery');
   check('opening a panel pushes the gallery', !!pushed && Array.isArray(pushed.data) && pushed.data.length === gallery.length, JSON.stringify(sent.map((m) => m.type)));
   check('the push carries the view env', pushed.env.view === 'appView' && pushed.env.locale === 'en-US', JSON.stringify(pushed.env));
@@ -389,6 +392,26 @@ const base = { prompt: 'a red square' };
   const afterNote = JSON.parse(readFileSync(galleryFile, 'utf8')).find((item) => item.id === record.id);
   check('a note is persisted', afterNote?.note === 'warmer light please', afterNote?.note);
   check('note save is acknowledged', sent.some((m) => m.type === 'noteSaved' && m.id === record.id));
+
+  const annotations = {
+    version: 1,
+    strokes: [{ id: 'stroke-1', width: .004, points: [{ x: .1, y: .2 }, { x: .6, y: .7 }] }],
+    comments: [{ id: 'comment-1', x: .25, y: .4, text: 'warmer light' }, { id: 'comment-2', x: .8, y: .6, text: 'keep this shape' }],
+  };
+  await ask({ type: 'saveAnnotations', id: record.id, requestId: 'save-1', annotations, note: 'keep composition' }, 'annotationsSaved');
+  const savedAnnotations = JSON.parse(readFileSync(galleryFile, 'utf8')).find((item) => item.id === record.id);
+  check('freehand and multiple comments are persisted with normalized geometry', JSON.stringify(savedAnnotations.annotations) === JSON.stringify(annotations));
+  check('annotation save acknowledgements correlate to the draft', sent.some((m) => m.type === 'annotationsSaved' && m.requestId === 'save-1'));
+  const invalid = structuredClone(annotations);
+  invalid.comments[0].x = 500;
+  await ask({ type: 'saveAnnotations', id: record.id, annotations: invalid }, 'panelError');
+  check('pixel coordinates are rejected rather than persisted', JSON.parse(readFileSync(galleryFile, 'utf8')).find((item) => item.id === record.id).annotations.comments[0].x === .25);
+  await Promise.all([
+    ask({ type: 'saveAnnotations', id: record.id, annotations, note: 'concurrent save' }, 'annotationsSaved'),
+    run({ prompt: 'generated during annotation autosave' }),
+  ]);
+  const concurrent = JSON.parse(readFileSync(galleryFile, 'utf8'));
+  check('autosave and generation cannot overwrite each other', concurrent.some((item) => item.prompt === 'generated during annotation autosave') && concurrent.find((item) => item.id === record.id).note === 'concurrent save');
 
   await ask({ type: 'deleteRecord', id: record.id, deleteFile: false }, 'deleteResult');
   check('delete keeps the file when not asked to', JSON.parse(readFileSync(galleryFile, 'utf8')).every((item) => item.id !== record.id) && readFileSync(filePath).length > 0);

@@ -21,12 +21,12 @@ Generate and edit images with OpenAI's GPT Image models, right inside a Finch co
 
 Every generation lands in the gallery — open it from the **Image 2.5** entry in the left sidebar (full-screen App View), or from the **Image 2.5** panel inside a session.
 
-- **Masonry layout** — 2 to 5 columns depending on how wide the window is; click any picture for the built-in previewer.
-- **A badge on every card** shows what produced it: model · quality · actual pixel size. Small marks flag images made from reference images or with a mask.
-- **Search and filter** — search prompts, or narrow to the images from the session you are in.
-- **Annotate and send back** — open a card's pen tool, drag boxes on the picture, write a note per box plus an overall note, then attach it to the input box. The AI gets the file plus every box as "change this part", and edits it with `image_gen_create`.
-- **Attach without boxes** if you just want the picture plus a note.
-- **Notes stay with the image**, and removing a card can optionally delete the file too.
+- **Compact masonry** — cards never exceed 220px, with at most five columns. Narrow Panels reflow without stretching a lone image. Click the picture for the native preview.
+- **Less chrome** — format and pixel size at the top-left; hover for two lines of prompt over a bottom gradient, and edit/remove buttons at the top-right. Session filters sit below the title, like the Artifacts library.
+- **Edit in place** — the editor fills its Panel or App View. The image fits above a compact toolbar, with no fixed-width side panel.
+- **Draw and comment** — freehand red lines and multiple numbered comments placed by clicking the image. Add overall instructions, undo an annotation, or clear the draft.
+- **Attach edits** adds the marked preview and every comment to the input box, retaining the original file for AI editing. **Attach original** sends the unmarked image instead. Nothing is sent automatically.
+- **Drafts are saved**, and removing an image only removes its gallery entry — the original file is kept.
 
 The attach buttons need a Composer to write into, so they appear when the gallery is opened from a session panel or Home — from the sidebar App View there is no input box to attach to, and the gallery says so instead of showing a dead button.
 
@@ -97,12 +97,12 @@ Click the **settings** (gear) menu on the Image 2.5 card in Toolcase → **API B
 
 每张生成的图都会进图片库——从左侧边栏的 **Image 2.5** 入口打开（全屏 App View），或者在会话里打开 **Image 2.5** 面板。
 
-- **瀑布流布局**：按窗口宽度自动排 2 到 5 列；点任意图片用内置预览器放大看。
-- **每张图右下角都有角标**，写清它是用什么生成的：模型 · 画质 · 实际像素尺寸。用了参考图或遮罩的图另有小标记。
-- **搜索和筛选**：按提示词搜索，或者只看当前会话生成的图。
-- **标注后发回去改**：点卡片上的画笔，在图上拖出线框，每个框写一句说明，再加一句整体说明，然后插到输入框。AI 会拿到这张原图和每个框「改这一块」的要求，用 `image_gen_create` 继续改。
-- 只想给图加一句说明，也可以**只插入图片**、不画框。
-- **说明会一直跟着图片保存**；移除卡片时也可以选择连文件一起删。
+- **紧凑瀑布流**：每张卡片最大 220px，每排最多五列；窄面板自动重排，只有一张图也不会撑满整行。点击图片用内置预览器查看。
+- **轻量悬停信息**：格式与尺寸在左上角，悬停后底部渐变上显示最多两行提示词，右上角出现编辑、移除按钮。标题下方的筛选沿用成果库风格，不再提供搜索框。
+- **区域内全屏编辑**：填满当前 Panel 或 App View，图片自适应，工具栏在图片下方，不再被固定宽侧栏挤压。
+- **画线与多条评论**：自由画红线，点击图片放置编号评论，可逐条填写要求；也可以添加整体说明、撤销或清除标注。
+- **插入修改要求**：把带标注的预览图和所有评论附到输入框，AI 仍基于原始文件修改；**插入原图**则附上未标注的原图，不会自动发送消息。
+- **草稿自动保存**；移除图片只移除图库记录，原始文件仍保留。
 
 插入按钮需要一个能写入的输入框，所以从会话面板或首页打开图片库时才会出现；从左侧边栏的 App View 打开时没有输入框可插，图片库会直接说明原因，而不是摆一个按了没反应的按钮。
 
