@@ -623,29 +623,13 @@ function sessionsSupported(ctx: finch.MiniToolContext): boolean {
   }
 }
 
-/** The stored default size, falling back to the built-in one. */
-async function effectiveDefaultSize(ctx: finch.MiniToolContext): Promise<string> {
-  const stored = await ctx.storage.get<string>(SIZE_STORAGE_KEY);
-  return stored && checkSize(stored).ok ? stored.trim() : DEFAULT_SIZE;
-}
-
-/** One place writes the size, so a change from any surface reaches the others. */
+/** Writes the Composer menu's default size: the one place that stores it. */
 async function storeDefaultSize(ctx: finch.MiniToolContext, size: string): Promise<string | null> {
   const check = checkSize(size);
   if (!check.ok) return null;
   if (check.size === DEFAULT_SIZE) await ctx.storage.delete(SIZE_STORAGE_KEY);
   else await ctx.storage.set(SIZE_STORAGE_KEY, check.size);
   return check.size;
-}
-
-async function broadcastDefaultSize(ctx: finch.MiniToolContext, size: string): Promise<void> {
-  for (const panel of livePanels) {
-    try {
-      await panel.postMessage({ type: 'defaultSize', size });
-    } catch {
-      // A panel mid-navigation just misses this update.
-    }
-  }
 }
 
 /**
@@ -677,8 +661,6 @@ async function buildPanelEnv(ctx: finch.MiniToolContext, panel: finch.AppPanel):
     // Fallback for older hosts; the page prefers repeatable finch:env signals.
     locale: ctx.i18n.locale,
     canSend: sessionsSupported(ctx),
-    // The gallery shows the same size the Composer menu writes.
-    defaultSize: await effectiveDefaultSize(ctx),
   };
 }
 
@@ -914,15 +896,6 @@ async function handlePanelMessage(
     pendingPrompts.set(scope, { name: typeof msg.name === 'string' ? msg.name : '', text: text.slice(0, 8000) });
     composerMenu?.notifyUpdate();
     await panel.postMessage({ type: 'promptStaged', id: msg.id });
-    return;
-  }
-
-  if (type === 'setDefaultSize') {
-    const requested = typeof msg.size === 'string' ? msg.size.trim() : '';
-    const stored = await storeDefaultSize(ctx, requested);
-    if (stored === null) return;
-    composerMenu?.notifyUpdate();
-    await broadcastDefaultSize(ctx, stored);
     return;
   }
 
@@ -1397,8 +1370,6 @@ export function activate(ctx: finch.MiniToolContext): void {
           const stored = await storeDefaultSize(ctx, chosen);
           if (stored === null) return;
           composerMenu?.notifyUpdate();
-          // The gallery shows the same value, so tell any open panel too.
-          await broadcastDefaultSize(ctx, stored);
           return;
         }
       },

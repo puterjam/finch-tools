@@ -251,23 +251,30 @@ async function runEditorTests() {
   });
   assert(sizeMenu.above, 'The size menu opens above its toolbar button');
   await page.screenshot({ path: join(root, 'node_modules/.ui-editor-size.png') });
-  assert.equal(sizeMenu.ratios.join('|'), '1:1|3:4|9:16|4:3|16:9|', `The size menu offers the aspect presets (${sizeMenu.ratios.join('|')})`);
-  assert.equal(sizeMenu.checked, 1, 'Exactly one size is marked as current');
+  assert.equal(sizeMenu.ratios.join('|'), '1:1|3:4|9:16|4:3|16:9', `The size menu offers the aspect presets (${sizeMenu.ratios.join('|')})`);
+  assert.equal(sizeMenu.checked, 0, 'No size is claimed before the request says one');
+  // The size belongs to this edit: picking one writes it into the instructions,
+  // the text that reaches the input box, instead of changing a global default.
   await page.locator('#sizeMenuList .menu-row').nth(4).click();
   await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
-  const chosen = await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'setDefaultSize').at(-1));
-  assert(chosen && chosen.size === '1280x720', `Picking a size asks the extension to store it (${JSON.stringify(chosen)})`);
-  // The extension answers with the settled value, which marks the new row.
-  await page.evaluate(() => window.__host.emit({ type: 'defaultSize', size: '1280x720' }));
+  assert.equal(await page.locator('#instruction').inputValue(), '输出尺寸：16:9（1280x720）', 'Picking a size writes it into the instructions');
+  assert.equal(await page.evaluate(() => window.__host.messages.some((m) => m.type === 'setDefaultSize')), false, 'The gallery never writes the tool default');
+  await page.locator('#instruction').fill('把天空换成黄昏');
+  await page.locator('#toolSize').click();
+  await page.waitForFunction(() => !document.getElementById('sizeMenu').hidden);
+  await page.locator('#sizeMenuList .menu-row').nth(0).click();
+  await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
+  assert.equal(await page.locator('#instruction').inputValue(), '把天空换成黄昏\n输出尺寸：1:1（1024x1024）', 'A second pick replaces the size line and keeps the request');
   await page.locator('#toolSize').click();
   await page.waitForFunction(() => !document.getElementById('sizeMenu').hidden);
   const markedRow = await page.evaluate(() => {
     const rows = [...document.querySelectorAll('#sizeMenuList .menu-row')];
     return rows.find((row) => row.getAttribute('aria-checked') === 'true')?.textContent.trim() ?? '';
   });
-  assert(markedRow.includes('16:9'), `The chosen size is marked as current (${markedRow})`);
+  assert(markedRow.includes('1:1'), `The asked-for size is marked (${markedRow})`);
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
+  await page.locator('#instruction').fill('');
 
   // The field is a readable width with an explicit send button beside it.
   await page.setViewportSize({ width: 1000, height: 800 }); await settle();
@@ -538,6 +545,35 @@ async function runFailureAndThemeTests() {
     assert(Math.abs(imageCentre - stageCentre) <= 2, `${width}x${height}: the toolbar reserves no layout space`);
     assert(geometry.toolbar.bottom <= geometry.stage.bottom + 1 && geometry.toolbar.bottom > geometry.stage.bottom - 60, `${width}x${height}: the toolbar floats at the bottom of the stage`);
     assert(geometry.toolbar.right <= width, `${width}x${height}: the toolbar fits the width`);
+    // The capsule is one row: a second line under the tools reads as broken,
+    // especially when the row still has room left over.
+    const capsule = await page.evaluate(() => {
+      const bar = document.getElementById('toolbar');
+      // Hidden tools (nothing to undo) have no box and must not count as a row.
+      const tools = [...bar.querySelectorAll('.tool')].filter((tool) => tool.getBoundingClientRect().width > 0);
+      const box = (node) => { const r = node.getBoundingClientRect(); return { t: Math.round(r.top), h: Math.round(r.height), w: Math.round(r.width) }; };
+      return {
+        height: Math.round(bar.getBoundingClientRect().height),
+        width: Math.round(bar.getBoundingClientRect().width),
+        tools: tools.map((tool) => `${tool.id}${JSON.stringify(box(tool))}`),
+        rows: new Set(tools.map((tool) => Math.round(tool.getBoundingClientRect().top))).size,
+      };
+    });
+    assert.equal(capsule.rows, 1, `${width}x${height}: every tool stays on one row (${JSON.stringify(capsule)})`);
+    assert(capsule.height <= 44, `${width}x${height}: the capsule is a single row tall (${capsule.height}px)`);
+    await page.locator('#toolSize').click();
+    await page.waitForFunction(() => !document.getElementById('sizeMenu').hidden);
+    const rows = await page.evaluate(() => {
+      const menu = document.getElementById('sizeMenu').getBoundingClientRect();
+      const boxes = [...document.querySelectorAll('#sizeMenuList .menu-row')].map((row) => Math.round(row.getBoundingClientRect().width));
+      const ratios = [...document.querySelectorAll('#sizeMenuList .menu-ratio')].map((node) => Math.round(node.getBoundingClientRect().right));
+      return { menu: Math.round(menu.width), boxes, ratios };
+    });
+    assert(new Set(rows.boxes).size === 1, `${width}x${height}: every menu row is the same width (${JSON.stringify(rows)})`);
+    assert(new Set(rows.ratios).size === 1, `${width}x${height}: the ratios line up on the right (${JSON.stringify(rows.ratios)})`);
+    assert(rows.boxes[0] <= rows.menu, `${width}x${height}: rows stay inside the menu (${JSON.stringify(rows)})`);
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
     if (geometry.image.height >= geometry.stage.height - 2) {
       assert(geometry.toolbar.y < geometry.image.bottom, `${width}x${height}: a full-height image sits under the capsule`);
     }

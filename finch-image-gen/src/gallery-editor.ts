@@ -16,14 +16,13 @@ const MAX_COMMENTS = 50;
 const MAX_POINTS = 20000;
 const POPOVER_WIDTH = 232;
 
-/** Same aspect presets the Composer menu writes, so both surfaces agree. */
+/** The aspect presets the Composer menu also writes into the request. */
 const SIZE_OPTIONS = [
   { size: '1024x1024', ratio: '1:1', icon: 'square', label: 'size.square' },
   { size: '768x1024', ratio: '3:4', icon: 'rectangle-vertical', label: 'size.portrait' },
   { size: '720x1280', ratio: '9:16', icon: 'rectangle-vertical', label: 'size.story' },
   { size: '1024x768', ratio: '4:3', icon: 'rectangle-horizontal', label: 'size.landscape' },
   { size: '1280x720', ratio: '16:9', icon: 'rectangle-horizontal', label: 'size.wide' },
-  { size: 'auto', ratio: '', icon: 'image-upscale', label: 'size.auto' },
 ] as const;
 
 /** A route within the webview, with image-relative geometry and prebuilt evidence. */
@@ -53,8 +52,8 @@ export class GalleryEditor {
   private pendingSave = '';
   private prepareFrame = 0;
   private dirty = false;
-  /** The default output size, mirrored from the extension so both agree. */
-  private outputSize = '1024x1024';
+  /** The size this edit asks for, written into the instructions. */
+  private requested = '';
   private readonly image = el<HTMLImageElement>('editorImage');
   private readonly surface = el('imageSurface');
   private readonly stage = el('stage');
@@ -125,11 +124,23 @@ export class GalleryEditor {
     if (this.item) this.controls();
   }
 
-  /** The extension owns the value; this only mirrors what every surface shows. */
-  setOutputSize(size: string): void {
-    if (typeof size !== 'string' || !size.trim()) return;
-    this.outputSize = size.trim();
-    if (!el('sizeMenu').hidden) this.openSizeMenu();
+  /**
+   * The size belongs to this edit request, not to the tool's global defaults:
+   * picking one writes a line into the instructions, which is what the model
+   * reads and what ends up in the input box. One size line at a time.
+   */
+  private pickSize(size: string, ratio: string): void {
+    const prefix = t('size.promptPrefix');
+    const line = `${prefix}${t('size.promptValue', { ratio, size })}`;
+    const field = el<HTMLTextAreaElement>('instruction');
+    const kept = this.instruction.split('\n').filter((row) => !row.trim().startsWith(prefix.trim()));
+    const next = [...kept.filter((row) => row.trim() !== ''), line].join('\n').slice(0, 8000);
+    this.instruction = next;
+    field.value = next;
+    this.grow(field);
+    this.requested = size;
+    this.changed(false);
+    this.closeSizeMenu();
   }
 
   private openSizeMenu(): void {
@@ -142,10 +153,10 @@ export class GalleryEditor {
       row.type = 'button';
       row.className = 'menu-row';
       row.setAttribute('role', 'menuitemradio');
-      row.setAttribute('aria-checked', String(option.size === this.outputSize));
+      row.setAttribute('aria-checked', String(option.size === this.requested));
       row.innerHTML = `<span>${icon(option.icon)}</span><span>${escapeText(t(option.label))}</span>` +
-        (option.ratio ? `<span class="menu-ratio">${option.ratio}</span>` : '');
-      row.onclick = () => { this.pickSize(option.size); };
+        `<span class="menu-ratio">${option.ratio}</span>`;
+      row.onclick = () => { this.pickSize(option.size, option.ratio); };
       list.append(row);
     });
     menu.hidden = false;
@@ -169,13 +180,6 @@ export class GalleryEditor {
     const top = between(anchor.top - stage.top - height - 6, 6, Math.max(6, stage.height - height - 6));
     menu.style.left = `${left}px`;
     menu.style.top = `${top}px`;
-  }
-
-  private pickSize(size: string): void {
-    // Optimistic: the extension validates and broadcasts the settled value back.
-    this.outputSize = size;
-    this.closeSizeMenu();
-    this.api?.postMessage({ type: 'setDefaultSize', size });
   }
 
   async open(item: GalleryItem): Promise<void> {

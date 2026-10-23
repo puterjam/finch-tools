@@ -101,7 +101,6 @@ function applyEnv(env: Record<string, unknown>): void {
   if (!view && sessionId) view = 'session';
   if (typeof env.locale === 'string') setLocale(env.locale);
   if (typeof env.canSend === 'boolean') canSend = env.canSend;
-  if (typeof env.defaultSize === 'string' && env.defaultSize) editor.setOutputSize(env.defaultSize);
   if (!pickedFilter) filter = view === 'session' && sessionId ? 'current' : 'all';
   if (view !== 'session' || !sessionId) filter = 'all';
   // A card action depends on the surface, and cards are cached: a scope change
@@ -133,9 +132,6 @@ api?.onMessage((raw) => {
     editor.onSaved(message);
   } else if (message.type === 'annotationSendResult') {
     editor.onSendResult(message);
-  } else if (message.type === 'defaultSize' && typeof message.size === 'string') {
-    // The extension is the source of truth; mirror whatever it settled on.
-    editor.setOutputSize(message.size);
   } else if (message.type === 'editImage' && typeof message.id === 'string') {
     openEditorFor(message.id);
   } else if (message.type === 'adjustResult' && typeof message.error === 'string') {
