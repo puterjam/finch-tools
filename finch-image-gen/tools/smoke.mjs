@@ -51,7 +51,7 @@ function makeCtx(storagePath) {
   const composer = {};
   const panelHandlers = [];
   const previews = [];
-  const menus = { composer: {}, settings: null };
+  const menus = { composer: {}, settings: null, notifyUpdates: 0 };
   // App View cannot attach to a Composer, so it sends into a Session instead.
   const sessions = { created: 0, sent: [], opened: [] };
   // Icons only render when the pack is registered at runtime, not merely declared.
@@ -116,6 +116,7 @@ function makeCtx(storagePath) {
     composerActions: {
       register(id, handlers) {
         menus.composer[id] = handlers;
+        return { dispose() {}, notifyUpdate() { menus.notifyUpdates += 1; } };
       },
     },
     settingsMenu: {
@@ -562,6 +563,51 @@ panelSent = sent;
   await ask({ type: 'sendToSession', id: targetId, evidence, text: 'x' }, 'annotationSendResult');
   check('hosts without session support say so', replies().at(-1)?.error === 'unsupported');
   ctx.api.supports = supports;
+}
+
+// 13 — the instructions reach the input box as an editable draft. A page can
+// only attach contexts, so the text is parked for the Composer action to fill.
+{
+  const composerMenu = menus.composer['image-gen-settings'];
+  const scoped = { sessionId: 'sess-1', spaceId: '', surface: 'session', cwd: '/tmp' };
+  const sessionPanel = makePanel('session', 'sess-1');
+  panelHandlers[0](sessionPanel.panel);
+  for (let i = 0; i < 200 && !sessionPanel.sent.some((m) => m.type === 'gallery'); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  const stage = async (message) => {
+    const before = sessionPanel.sent.length;
+    await sessionPanel.handlers[0](message);
+    for (let i = 0; i < 200; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (sessionPanel.sent.slice(before).some((item) => item.type === 'promptStaged')) return;
+    }
+  };
+
+  const before = await composerMenu.getMenu(scoped);
+  check('no fill row until an edit is staged', !before.some((item) => item.id === 'fill-prompt'), before.map((item) => item.id).join(','));
+  check('no badge without a staged prompt', (await composerMenu.getBadge(scoped)) === undefined);
+
+  await stage({ type: 'stagePrompt', id: 'x', name: 'picture.png', text: '把这里换成暖光\n原图：/gallery/picture-0.png' });
+  const staged = await composerMenu.getMenu(scoped);
+  check('a staged edit shows the fill row first', staged[0]?.id === 'fill-prompt', staged.map((item) => item.id).join(','));
+  check('the fill row names the image', staged[0]?.description === 'picture.png', staged[0]?.description);
+  check('a staged edit lights the badge', (await composerMenu.getBadge(scoped))?.text === '1' && (await composerMenu.getBadge(scoped))?.active === true);
+  check('another session is unaffected', (await composerMenu.getBadge({ ...scoped, sessionId: 'other' })) === undefined);
+  check('staging refreshes the toolbar', menus.notifyUpdates > 0);
+
+  const fills = [];
+  await composerMenu.execute(scoped, 'fill-prompt', { composer: { fill: async (text, options) => { fills.push({ text, options }); } } });
+  check('the row fills the input box as an editable draft', fills.length === 1 && fills[0].text.includes('把这里换成暖光') && fills[0].text.includes('/gallery/picture-0.png'), JSON.stringify(fills));
+  check('the text is appended, not overwriting the user’s draft', fills[0]?.options?.mode === 'append', JSON.stringify(fills[0]?.options));
+  const after = await composerMenu.getMenu(scoped);
+  check('the row clears once filled', !after.some((item) => item.id === 'fill-prompt') && (await composerMenu.getBadge(scoped)) === undefined, after.map((item) => item.id).join(','));
+  await composerMenu.execute(scoped, 'fill-prompt', { composer: { fill: async () => { throw new Error('should not fill twice'); } } });
+  check('a redundant fill is a no-op', fills.length === 1);
+
+  // Home has no session id, so its draft is keyed by Space instead of being lost.
+  await ask({ type: 'stagePrompt', id: 'y', name: 'home.png', text: 'home prompt' }, 'promptStaged');
+  check('the Home draft is staged per-composer', (await composerMenu.getBadge({ sessionId: undefined, spaceId: '', surface: 'home', cwd: '/tmp' }))?.text === '1');
 }
 
 rmSync(storagePath, { recursive: true, force: true });

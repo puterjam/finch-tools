@@ -28,6 +28,8 @@ export class GalleryEditor {
   private revision = 0;
   private preparedRevision = -1;
   private annotated: AnnotationDraft | null = null;
+  /** Image-only attachment: the instructions travel separately as an editable draft. */
+  private attachment: AnnotationDraft | null = null;
   private loaded = false;
   private busy = false;
   private pendingSend = '';
@@ -505,11 +507,20 @@ export class GalleryEditor {
       const evidence = canvas.toDataURL('image/png').split(',')[1];
       if (evidence.length > 24 * 1024 * 1024) throw new Error(t('editor.sendTooLarge'));
       const text = this.instructionText();
+      const image = { name: `${name.replace(/\.[^.]+$/, '')}-annotated.png`, mimeType: 'image/png', content: evidence };
       this.annotated = {
         type: 'annotation', label: t('editor.annotationLabel', { name }),
         note: text || undefined, promptText: text || undefined,
         reminder: t('editor.reminder', { path: this.item.filePath }),
-        image: { name: `${name.replace(/\.[^.]+$/, '')}-annotated.png`, mimeType: 'image/png', content: evidence },
+        image,
+      };
+      // Inside a Composer the instructions go into the input as an editable
+      // prompt instead, so the chip stays a plain image attachment — but the
+      // reminder still carries them, in case the user never pulls them across.
+      this.attachment = {
+        type: 'annotation', label: name,
+        reminder: `${t('editor.reminder', { path: this.item.filePath })}\n\n${text}`,
+        image,
       };
       this.preparedRevision = this.revision;
       this.controls();
@@ -549,12 +560,15 @@ export class GalleryEditor {
       if (composer) {
         // Invoke addContexts straight from this click: it needs the trusted
         // gesture, so nothing may be awaited before it.
-        const result = await this.api.composer.addContexts([this.annotated!]);
+        const result = await this.api.composer.addContexts([this.attachment ?? this.annotated!]);
         if (this.item !== item) return;
         if (result.added < 1) throw new Error(t('editor.failed'));
+        // The page cannot type into the input, so the instructions wait for the
+        // toolbar button, which fills them as an editable draft.
+        this.api.postMessage({ type: 'stagePrompt', id: item.id, name: item.name, text: this.sessionText() });
         this.flushSave();
         this.close();
-        notice(t('editor.attached'));
+        notice(t('editor.attachedStaged'));
         return;
       }
       this.attempt += 1;

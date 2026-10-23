@@ -307,9 +307,17 @@ async function runEditorTests() {
   assert.equal(context.type, 'annotation');
   assert.equal(context.image.mimeType, 'image/png');
   assert(context.image.content.length > 100 && !context.image.content.startsWith('data:'));
-  assert(context.note.includes('把这里换成暖光') && context.note.includes('保留这个轮廓') && context.note.includes('保持构图'));
+  // Inside a Composer the instructions become an editable prompt instead of a
+  // chip annotation, so the attachment itself stays clean…
+  assert(context.note === undefined && context.promptText === undefined, 'The chip stays a plain image attachment');
+  // …while the reminder still carries them, so nothing is lost if the user
+  // never pulls the prompt across.
+  assert(context.reminder.includes('把这里换成暖光') && context.reminder.includes('保留这个轮廓') && context.reminder.includes('保持构图'), 'The instructions still travel with the attachment');
   assert(context.reminder.includes('/gallery/picture-0.png'), 'The source path is retained for reference_image_paths');
-  const movedPercent = /（(\d+)%, (\d+)%）/.exec(context.note) ?? /\((\d+)%, (\d+)%\)/.exec(context.note);
+  const staged = await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'stagePrompt').at(-1));
+  assert(staged && staged.name === 'picture-0.png', `The instructions are staged for the toolbar to fill ${JSON.stringify(staged)?.slice(0, 90)}`);
+  assert(staged.text.includes('/gallery/picture-0.png') && staged.text.includes('把这里换成暖光') && staged.text.includes('保持构图'), 'The staged prompt is the same text the user can edit');
+  const movedPercent = /（(\d+)%, (\d+)%）/.exec(staged.text) ?? /\((\d+)%, (\d+)%\)/.exec(staged.text);
   assert(movedPercent && Number(movedPercent[1]) > 40, `The dragged comment reports its new position (${movedPercent?.[1]}%)`);
   const marked = await page.evaluate(async (content) => {
     const image = new Image(); image.src = `data:image/png;base64,${content}`; await image.decode();

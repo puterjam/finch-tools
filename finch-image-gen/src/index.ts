@@ -562,6 +562,19 @@ export function readImageSize(buf: Buffer, format: string): { width: number; hei
 
 const livePanels = new Set<finch.AppPanel>();
 
+/**
+ * Instruction text the gallery produced, waiting for the user to pull it into
+ * the Composer input. A page can only attach contexts, so the text is parked
+ * here and `actions.composer.fill()` delivers it as an editable draft.
+ */
+const pendingPrompts = new Map<string, { name: string; text: string }>();
+let composerMenu: (finch.Disposable & { notifyUpdate(): void }) | undefined;
+
+/** The Composer a panel writes into: a Session's draft, or Home's. */
+function composerScopeId(sessionId: string | undefined, spaceId: string | undefined): string {
+  return sessionId && sessionId.trim() ? `session:${sessionId}` : `home:${spaceId ?? ''}`;
+}
+
 /** Sessions are only reachable when the host exposes them and the permission is granted. */
 function sessionsSupported(ctx: finch.MiniToolContext): boolean {
   try {
@@ -791,6 +804,16 @@ async function handlePanelMessage(
       }
     }
     await reply(result);
+    return;
+  }
+
+  if (type === 'stagePrompt') {
+    const text = typeof msg.text === 'string' ? msg.text.trim() : '';
+    const scope = composerScopeId(panel.sessionId, panel.spaceId);
+    if (!text) return;
+    pendingPrompts.set(scope, { name: typeof msg.name === 'string' ? msg.name : '', text: text.slice(0, 8000) });
+    composerMenu?.notifyUpdate();
+    await panel.postMessage({ type: 'promptStaged', id: msg.id });
     return;
   }
 
@@ -1141,16 +1164,39 @@ export function activate(ctx: finch.MiniToolContext): void {
     }),
   );
 
-  ctx.subscriptions.push(
-    ctx.composerActions.register('image-gen-settings', {
-      async getMenu() {
+  // Kept so a staged prompt can light up the button badge.
+  composerMenu = ctx.composerActions.register('image-gen-settings', {
+      /**
+       * A page cannot put text into the Composer (the page bridge only exposes
+       * `addContexts`), but a Composer action can: `actions.composer.fill()`
+       * writes an *editable* draft. So the gallery attaches the marked image and
+       * parks the instruction text here until the user pulls it into the input.
+       */
+      async getBadge(actionCtx: finch.ComposerActionContext) {
+        return pendingPrompts.has(composerScopeId(actionCtx.sessionId, actionCtx.spaceId))
+          ? { text: '1', active: true }
+          : undefined;
+      },
+      async getMenu(actionCtx: finch.ComposerActionContext) {
         const storedModel = await ctx.storage.get<string>(MODEL_STORAGE_KEY);
         const effectiveModel = storedModel && storedModel.trim() ? storedModel.trim() : DEFAULT_MODEL;
         const storedQuality = await ctx.storage.get<string>(QUALITY_STORAGE_KEY);
         const effectiveQuality = storedQuality && storedQuality.trim() ? storedQuality.trim() : DEFAULT_QUALITY;
         const storedSize = await ctx.storage.get<string>(SIZE_STORAGE_KEY);
         const effectiveSize = storedSize && checkSize(storedSize).ok ? storedSize.trim() : DEFAULT_SIZE;
+        const pending = pendingPrompts.get(composerScopeId(actionCtx.sessionId, actionCtx.spaceId));
         return [
+          ...(pending
+            ? [
+                {
+                  id: 'fill-prompt',
+                  label: t('menu.fillPrompt'),
+                  iconName: 'message-circle',
+                  description: pending.name,
+                  hoverText: t('menu.fillPrompt.hint'),
+                },
+              ]
+            : []),
           {
             id: 'set-model',
             label: t('menu.model'),
@@ -1174,7 +1220,19 @@ export function activate(ctx: finch.MiniToolContext): void {
           },
         ];
       },
-      async execute(_actionCtx, itemId) {
+      async execute(actionCtx, itemId, actions) {
+        if (itemId === 'fill-prompt') {
+          const scope = composerScopeId(actionCtx.sessionId, actionCtx.spaceId);
+          const pending = pendingPrompts.get(scope);
+          if (!pending) return;
+          // `fill` writes an editable draft, so the user can still reword the
+          // instructions before sending.
+          await actions.composer.fill(pending.text, { mode: 'append' });
+          pendingPrompts.delete(scope);
+          composerMenu?.notifyUpdate();
+          return;
+        }
+
         if (itemId === 'set-size') {
           const stored = await ctx.storage.get<string>(SIZE_STORAGE_KEY);
           const current = stored && checkSize(stored).ok ? stored.trim() : DEFAULT_SIZE;
@@ -1273,10 +1331,10 @@ export function activate(ctx: finch.MiniToolContext): void {
           await ctx.storage.set(QUALITY_STORAGE_KEY, value);
           return;
         }
-
       },
-    }),
-  );
+    });
+
+  ctx.subscriptions.push(composerMenu);
 
   // The endpoint is setup, not a knob you flip between generations, so the key
   // and the base URL live in the Toolcase / container settings menu.
