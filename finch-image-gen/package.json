@@ -1,6 +1,6 @@
 {
   "name": "finch-image-gen",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Generate and edit images with OpenAI GPT Image 2.5 (or an OpenAI-compatible relay): text-to-image, image-to-image, masked edits, transparent backgrounds and custom sizes, right inside Finch.",
   "author": {
     "name": "PuterJam",
@@ -49,6 +49,18 @@
     ],
     "contributes": {
       "tools": true,
+      "iconPacks": [
+        {
+          "id": "image-gen-icons",
+          "label": "Image Gen Icons"
+        }
+      ],
+      "icons": {
+        "gallery": {
+          "description": "Stacked pictures (appPanel and appView icon)",
+          "svg": "./icons/gallery.svg"
+        }
+      },
       "composerActions": [
         {
           "id": "image-gen-settings",
@@ -57,7 +69,7 @@
         }
       ],
       "appPanel": {
-        "icon": "images",
+        "icon": "ext:gallery",
         "viewType": "image-gen.gallery",
         "instanceMode": "single",
         "showInLauncher": true,
@@ -67,7 +79,7 @@
         }
       },
       "appView": {
-        "icon": "images",
+        "icon": "ext:gallery",
         "description": "Browse every image you generated, with the model, quality and size it was made with.",
         "source": {
           "type": "local",
@@ -93,6 +105,7 @@
   "files": [
     "dist/",
     "i18n/",
+    "icons/",
     "icon.png",
     "README.md"
   ]
