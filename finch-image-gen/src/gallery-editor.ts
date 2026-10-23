@@ -5,6 +5,7 @@ import { t } from './gallery-i18n';
 
 type Mode = 'view' | 'pen' | 'comment';
 type AnnotationDraft = Extract<finch.ComposerContextDraft, { type: 'annotation' }>;
+type ImageRegionDraft = Extract<finch.ComposerContextDraft, { type: 'image-region' }>;
 const clone = (data: GalleryAnnotations): GalleryAnnotations => structuredClone(data);
 const uid = (): string => crypto.randomUUID();
 /** Keeps the floating bubble inside the stage. */
@@ -39,8 +40,8 @@ export class GalleryEditor {
   private revision = 0;
   private preparedRevision = -1;
   private annotated: AnnotationDraft | null = null;
-  /** Image-only attachment: the instructions travel separately as an editable draft. */
-  private attachment: AnnotationDraft | null = null;
+  /** What a Composer gets: the picture itself, with the request as its note. */
+  private attachment: ImageRegionDraft | null = null;
   private loaded = false;
   private busy = false;
   private pendingSend = '';
@@ -533,23 +534,51 @@ export class GalleryEditor {
     node.style.height = `${Math.min(96, Math.max(34, node.scrollHeight))}px`;
   }
 
-  private instructionText(): string {
-    const lines = this.instruction.trim() ? [this.instruction.trim()] : [];
-    if (this.data.strokes.length) lines.push(t('editor.linesText', { n: this.data.strokes.length }));
+  /**
+   * A pin is a point; give it a small box so the region is a mark on the picture
+   * rather than a zero-sized one, and keep the coordinates normalized.
+   */
+  private regionFor(comment: { x: number; y: number; text: string }): { x: number; y: number; width: number; height: number; note?: string } {
+    const size = .04;
+    return {
+      x: clamp(comment.x - size / 2),
+      y: clamp(comment.y - size / 2),
+      width: Math.min(size, 1 - clamp(comment.x - size / 2)),
+      height: Math.min(size, 1 - clamp(comment.y - size / 2)),
+      note: comment.text.trim() || undefined,
+    };
+  }
+
+  /**
+   * Everything the model needs, in the order a person reads it: what the user
+   * typed, each pin with its percentage, then where the original file is. This
+   * is the attachment note, so it stays readable in the Composer hover card.
+   */
+  private requestText(): string {
+    const parts: string[] = [];
+    const body = this.instruction.trim();
+    if (body) parts.push(body);
     if (this.data.comments.length) {
-      lines.push(t('editor.commentsText'));
+      parts.push(t('editor.commentsText'));
       this.data.comments.forEach((comment, index) => {
-        lines.push(t('editor.commentText', { n: index + 1, x: Math.round(comment.x * 100), y: Math.round(comment.y * 100), text: comment.text.trim() }));
+        parts.push(t('editor.commentText', { n: index + 1, x: Math.round(comment.x * 100), y: Math.round(comment.y * 100), text: comment.text.trim() }));
       });
     }
-    return lines.join('\n');
+    if (this.data.strokes.length) parts.push(t('editor.linesText', { n: this.data.strokes.length }));
+    parts.push(t('editor.reminder', { path: this.item?.filePath ?? '' }));
+    return parts.join('\n');
+  }
+
+  private sessionText(): string {
+    return [this.requestText(), t('editor.attachOrder')].join('\n\n');
   }
 
   /**
    * Flatten strokes and pins once, before the click: the Composer protocol has no
-   * freehand path type, so the evidence image carries the marks while
-   * `annotation.reminder` keeps the ORIGINAL file address intact. Nothing is sent
-   * automatically and the original file is never overwritten.
+   * freehand path type, so the evidence image carries the marks while the request
+   * text — comment by comment, with percentages and the original file path —
+   * travels as the attachment's note. Nothing is sent automatically and the
+   * original file is never overwritten.
    */
   private prepare(): void {
     if (!this.loaded || !this.item || this.stroke) return;
@@ -586,36 +615,34 @@ export class GalleryEditor {
       });
       const evidence = canvas.toDataURL('image/png').split(',')[1];
       if (evidence.length > 24 * 1024 * 1024) throw new Error(t('editor.sendTooLarge'));
-      const text = this.instructionText();
+      const text = this.requestText();
       const image = { name: `${name.replace(/\.[^.]+$/, '')}-annotated.png`, mimeType: 'image/png', content: evidence };
       this.annotated = {
         type: 'annotation', label: t('editor.annotationLabel', { name }),
-        note: text || undefined, promptText: text || undefined,
+        note: text, promptText: text,
         reminder: t('editor.reminder', { path: this.item.filePath }),
         image,
       };
-      // Inside a Composer the instructions go into the input as an editable
-      // prompt instead, so the chip stays a plain image attachment — but the
-      // reminder still carries them, in case the user never pulls them across.
+      /**
+       * In a Composer the picture goes in as a plain image attachment rather
+       * than an annotation token: the pins become its regions and the request
+       * becomes its note, so the user sees what they asked for on hover and the
+       * model receives it with the picture.
+       */
       this.attachment = {
-        type: 'annotation', label: name,
-        reminder: `${t('editor.reminder', { path: this.item.filePath })}\n\n${text}`,
-        image,
+        type: 'image-region',
+        name: `${name.replace(/\.[^.]+$/, '')}-annotated.png`,
+        displayName: name,
+        mimeType: 'image/png',
+        content: evidence,
+        regions: this.data.comments.map((comment) => this.regionFor(comment)),
+        note: text,
       };
       this.preparedRevision = this.revision;
       this.controls();
     } catch (error) {
       notice(error instanceof Error ? error.message : t('editor.failed'));
     }
-  }
-
-  private sessionText(): string {
-    const parts: string[] = [];
-    const body = this.instructionText();
-    if (body) parts.push(body);
-    parts.push(t('editor.reminder', { path: this.item?.filePath ?? '' }));
-    parts.push(t('editor.attachOrder'));
-    return parts.join('\n\n');
   }
 
   private readyEvidence(): string | null {
@@ -643,12 +670,9 @@ export class GalleryEditor {
         const result = await this.api.composer.addContexts([this.attachment ?? this.annotated!]);
         if (this.item !== item) return;
         if (result.added < 1) throw new Error(t('editor.failed'));
-        // The page cannot type into the input, so the instructions wait for the
-        // toolbar button, which fills them as an editable draft.
-        this.api.postMessage({ type: 'stagePrompt', id: item.id, name: item.name, text: this.sessionText() });
         this.flushSave();
         this.close();
-        notice(t('editor.attachedStaged'));
+        notice(t('editor.attached'));
         return;
       }
       this.attempt += 1;

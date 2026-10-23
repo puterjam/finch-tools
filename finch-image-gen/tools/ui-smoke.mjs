@@ -212,11 +212,11 @@ async function runGalleryTests() {
   await firstCard.locator('[data-act="insert"]').click();
   await page.waitForFunction(() => window.__host.contexts.length === 1);
   const attached = await page.evaluate(() => window.__host.contexts[0]);
-  assert.equal(attached.type, 'annotation');
-  assert.equal(attached.label, 'picture-0.png', 'The chip is named after the file');
-  assert(attached.image?.mimeType === 'image/png' && attached.image.content.length > 100 && !attached.image.content.startsWith('data:'), 'The attachment carries raw image bytes');
-  assert(attached.reminder.includes('/gallery/picture-0.png'), 'The original path still travels with the attachment');
-  assert(attached.note === undefined && attached.promptText === undefined, 'A quick insert is a plain image, not an edit');
+  assert.equal(attached.type, 'image-region', 'The picture is attached as an image, not a chip token');
+  assert.equal(attached.name, 'picture-0.png', 'The attachment is named after the file');
+  assert(attached.mimeType === 'image/png' && attached.content.length > 100 && !attached.content.startsWith('data:'), 'The attachment carries raw image bytes');
+  assert(attached.note.includes('/gallery/picture-0.png'), 'The original path stays visible in the note');
+  assert.equal(attached.regions.length, 0, 'A plain attach marks no regions');
   assert(await page.locator('#editor').isHidden(), 'Attaching never opens the editor');
   await page.screenshot({ path: join(root, 'node_modules/.ui-card-actions.png') });
   await page.evaluate(() => { window.__host.contexts.length = 0; });
@@ -459,25 +459,26 @@ async function runEditorTests() {
   assert.equal(await page.locator('.pin').count(), 2);
   await page.screenshot({ path: join(root, 'node_modules/.ui-editor-panel.png') });
   await page.waitForFunction(() => !document.getElementById('send').disabled);
-  assert.equal((await page.locator('#sendLabel').textContent()).trim(), '插入修改要求', 'A Composer scope offers attaching');
+  assert.equal((await page.locator('#sendLabel').textContent()).trim(), '插入图片和说明', 'A Composer scope offers attaching the picture with its request');
   await page.locator('#send').click();
   await page.waitForFunction(() => window.__host.contexts.length === 1);
   const context = await page.evaluate(() => window.__host.contexts[0]);
-  assert.equal(context.type, 'annotation');
-  assert.equal(context.image.mimeType, 'image/png');
-  assert(context.image.content.length > 100 && !context.image.content.startsWith('data:'));
-  // Inside a Composer the instructions become an editable prompt instead of a
-  // chip annotation, so the attachment itself stays clean…
-  assert(context.note === undefined && context.promptText === undefined, 'The chip stays a plain image attachment');
-  // …while the reminder still carries them, so nothing is lost if the user
-  // never pulls the prompt across.
-  assert(context.reminder.includes('把这里换成暖光') && context.reminder.includes('保留这个轮廓') && context.reminder.includes('保持构图'), 'The instructions still travel with the attachment');
-  assert(context.reminder.includes('/gallery/picture-0.png'), 'The source path is retained for reference_image_paths');
-  const staged = await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'stagePrompt').at(-1));
-  assert(staged && staged.name === 'picture-0.png', `The instructions are staged for the toolbar to fill ${JSON.stringify(staged)?.slice(0, 90)}`);
-  assert(staged.text.includes('/gallery/picture-0.png') && staged.text.includes('把这里换成暖光') && staged.text.includes('保持构图'), 'The staged prompt is the same text the user can edit');
-  const movedPercent = /（(\d+)%, (\d+)%）/.exec(staged.text) ?? /\((\d+)%, (\d+)%\)/.exec(staged.text);
-  assert(movedPercent && Number(movedPercent[1]) > 40, `The dragged comment reports its new position (${movedPercent?.[1]}%)`);
+  // The picture goes in as an image attachment, not an annotation token…
+  assert.equal(context.type, 'image-region');
+  assert.equal(context.mimeType, 'image/png');
+  assert.equal(context.displayName, 'picture-0.png', 'The attachment still reads as the picture the user knows');
+  assert(context.content.length > 100 && !context.content.startsWith('data:'));
+  // …and the request travels with it, on screen: the note lists every comment
+  // with its position, plus the instructions and the original path.
+  assert(context.note.includes('把这里换成暖光') && context.note.includes('保留这个轮廓') && context.note.includes('保持构图'), 'Every comment and the instruction are in the visible note');
+  assert(context.note.includes('/gallery/picture-0.png'), 'The source path is retained for reference_image_paths');
+  const notePercent = /（(\d+)%, (\d+)%）/.exec(context.note) ?? /\((\d+)%, (\d+)%\)/.exec(context.note);
+  assert(notePercent && Number(notePercent[1]) > 40, `The dragged comment reports its new position (${notePercent?.[1]}%)`);
+  // Each pin is also a region, so the picture itself shows where each comment is.
+  assert.equal(context.regions.length, 2, 'One region per comment');
+  assert(context.regions.every((region) => ['x', 'y', 'width', 'height'].every((key) => region[key] >= 0 && region[key] <= 1)), `Regions stay normalized (${JSON.stringify(context.regions[0])})`);
+  assert(context.regions.some((region) => region.note === '保留这个轮廓') && context.regions.some((region) => region.note === '把这里换成暖光'), 'Each region carries its own comment');
+  assert.equal(await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'stagePrompt').length), 0, 'Nothing is parked for a second click anymore');
   const marked = await page.evaluate(async (content) => {
     const image = new Image(); image.src = `data:image/png;base64,${content}`; await image.decode();
     const canvas = document.createElement('canvas'); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
@@ -486,7 +487,7 @@ async function runEditorTests() {
     let redPixels = 0;
     for (let i = 0; i < pixels.length; i += 4) if (pixels[i] > 210 && pixels[i + 1] < 130 && pixels[i + 2] < 130) redPixels++;
     return redPixels;
-  }, context.image.content);
+  }, context.content);
   assert(marked > 100, 'The attached evidence contains actual red pen/pin pixels');
   await openEditor();
   assert.equal(await page.locator('.pin').count(), 2, 'Multiple comments survive reopening');
@@ -499,7 +500,7 @@ async function runEditorTests() {
   await page.waitForFunction(() => !document.getElementById('send').disabled);
   await page.locator('#send').click();
   await page.waitForFunction(() => window.__host.contexts.length === 2);
-  assert.equal(await page.evaluate(() => window.__host.contexts[1].image.name), 'picture-0-annotated.png', 'A retry re-attaches the same marked preview');
+  assert.equal(await page.evaluate(() => window.__host.contexts[1].name), 'picture-0-annotated.png', 'A retry re-attaches the same marked preview');
   console.log('ok UI: narrow Panel pen + floating bubble comments, pin dragging, capture-loss recovery, single deliver button');
 
   await openEditor();
@@ -624,7 +625,7 @@ async function runEditorTests() {
   });
   await openEditor();
   assert(await page.locator('#send').isVisible());
-  assert.equal((await page.locator('#sendLabel').textContent()).trim(), '插入修改要求', 'A Composer scope attaches instead of sending');
+  assert.equal((await page.locator('#sendLabel').textContent()).trim(), '插入图片和说明', 'A Composer scope attaches instead of sending');
   await page.evaluate(() => {
     window.__host.view = 'session'; window.__host.sessionId = 'session-2';
     window.__host.emit({ type: 'finch:env', ...window.__host.env() });

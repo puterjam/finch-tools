@@ -348,10 +348,14 @@ function attachToComposer(record: GalleryItem): void {
   void api.composer
     .addContexts([
       {
-        type: 'annotation',
-        label: record.name,
-        reminder: t('insert.reminder', { path: record.filePath }),
-        image: { name: record.name, mimeType, content: dataUrl.slice(comma + 1) },
+        // A plain image attachment, not an annotation token: the user asked for
+        // the picture, and the note keeps the original path visible.
+        type: 'image-region',
+        name: record.name,
+        mimeType,
+        content: dataUrl.slice(comma + 1),
+        regions: [],
+        note: t('insert.reminder', { path: record.filePath }),
       },
     ])
     .then(() => notice(t('insert.done', { name: record.name })))

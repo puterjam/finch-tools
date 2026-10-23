@@ -29,7 +29,7 @@ Every generation lands in the gallery — open it from the **Image 2.5** entry i
 - **Draw and comment** — freehand red lines and any number of numbered comments. Click the picture to drop a comment, which opens a small bubble right there to type into; drag its pin to move the comment, Escape to close. The editor height never changes.
 - **Ask for a different shape while you edit** — the toolbar's **Size** tool writes the aspect into the instructions ("Output size: 16:9 (1280x720)"), so the request carries its own size instead of quietly changing the tool's defaults. One size line at a time, and it stays editable.
 - **Adjust from the App View** — the sidebar gallery browses; its cards hand an image back to the session that produced it. Click **Adjust** and Finch opens that session, with an already-open gallery panel dropping straight into the editor.
-- **A slim footer** — one instruction field and one button. Inside a session panel or on Home it attaches the marked image to the input box and parks your instructions; pull them into the input with the **Image 2.5** toolbar button, where they stay editable before you send. In a panel scope with no input box of its own, the same button **sends everything to a new chat** instead.
+- **A slim footer** — one instruction field and one button. Inside a session panel or on Home, **Attach image + request** puts the marked picture into the input box as a normal image attachment: the pins become its regions and your request becomes its note — every comment with its position, the overall instruction and the original file path — so it is all visible in the hover card and reaches the model with the picture. No second click, no parked text. A panel scope with no input box of its own sends everything to a new chat instead.
 - **Honest progress** — a long render shows Finch's image-generation animation with the requested pixel size as a badge, refreshed with elapsed time, and streaming previews report as they arrive. An `auto` size has no badge, because nobody knows the pixels yet.
 - **Drafts are saved**, and removing an image only removes its gallery entry — the original file is kept.
 
@@ -110,7 +110,7 @@ Click the **settings** (gear) menu on the Image 2.5 card in Toolcase → **API B
 - **画线与多条评论**：自由画红线，点击图片就地弹出小气泡输入评论；拖动编号点可以改位置，Esc 关闭。底部高度不会因此变化。
 - **编辑时顺手改画幅**：工具栏的**尺寸**按钮把想要的画幅写进修改说明（如「输出尺寸：16:9（1280x720）」），这次请求自带尺寸，不去改工具的默认值；同一时间只留一行，随时可改。
 - **在 App View 里调整**：侧边栏图库只管浏览，卡片会把图片交回生成它的会话。点**调整**就会打开对应会话，已经开着图片库面板的会话还会直接进入编辑。
-- **精简底栏**：一个说明输入框加一个按钮。在会话面板或首页会把带标注的图片作为附件插入，并把修改说明挂起；点输入框工具栏的 **Image 2.5** → 「把修改说明填入输入框」，说明就变成可编辑的正文，发送前还能改。在没有自有输入框的面板作用域里，同一个按钮会改成**发送到新会话**。
+- **精简底栏**：一个说明输入框加一个按钮。在会话面板或首页点**插入图片和说明**，带标注的图片会作为普通图片附件进入输入框——编号点变成它的 regions，你的要求变成它的 note（每条评论带坐标、整体说明、原图路径），悬停就能看到，也会随图片一起给到模型；不用再点第二次，也没有被挂起的文字。在没有自有输入框的面板作用域里，同一个按钮会改成**发送到新会话**。
 - **进度如实反馈**：出图期间显示 Finch 的生图动效，角标是本次请求的像素尺寸，并逐秒刷新已用时间；开了流式预览就逐张上报。尺寸是 `auto` 时不给角标，因为这时谁都不知道像素。
 - **草稿自动保存**；移除图片只移除图库记录，原始文件仍保留。
 

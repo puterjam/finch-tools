@@ -29,8 +29,6 @@
   "size.wide": "宽屏",
   "size.auto": "跟随模型",
   "size.auto.hint": "不指定尺寸，由模型决定。",
-  "menu.fillPrompt": "把修改说明填入输入框",
-  "menu.fillPrompt.hint": "把图库里刚插入那次的修改说明填进输入框，你可以再改；图片本身已经作为附件插入。",
   "menu.baseUrl": "API Base URL",
   "menu.baseUrl.hint": "修改 Image 2.5 使用的 OpenAI 兼容接口地址（例如代理/中转站）。当前：",
   "menu.current": "{value}",

@@ -29,8 +29,6 @@
   "size.wide": "Wide",
   "size.auto": "Model decides",
   "size.auto.hint": "Leave the size unspecified and let the model pick.",
-  "menu.fillPrompt": "Put the edit instructions in the input box",
-  "menu.fillPrompt.hint": "Fills the instructions from the gallery edit you just attached, as an editable draft. The image itself is already attached.",
   "menu.baseUrl": "API Base URL",
   "menu.baseUrl.hint": "Change the OpenAI-compatible API endpoint used by Image 2.5 (e.g. a proxy/relay). Currently:",
   "menu.current": "{value}",
