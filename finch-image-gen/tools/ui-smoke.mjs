@@ -174,11 +174,11 @@ async function runGalleryTests() {
   await page.waitForFunction(() => getComputedStyle(document.querySelector('.card .prompt-overlay')).opacity === '1');
   const hover = await page.locator('.card').first().evaluate((card) => {
     const c = card.getBoundingClientRect(); const a = card.querySelector('.card-actions').getBoundingClientRect();
-    const b = card.querySelector('.badges').getBoundingClientRect();
-    return { lineClamp: getComputedStyle(card.querySelector('.prompt')).webkitLineClamp, actionsTop: a.top - c.top, actionsRight: c.right - a.right, badgeLeft: b.left - c.left };
+    return { lineClamp: getComputedStyle(card.querySelector('.prompt')).webkitLineClamp, actionsTop: a.top - c.top, actionsRight: c.right - a.right };
   });
   assert.equal(hover.lineClamp, '2');
-  assert(hover.actionsTop < 10 && hover.actionsRight < 10 && hover.badgeLeft < 10);
+  assert(hover.actionsTop < 10 && hover.actionsRight < 10);
+  assert.equal(await page.locator('.card .badges, .card .badge').count(), 0, 'Cards carry no format/size pills');
   const card = await page.locator('.card').first().boundingBox();
   await page.mouse.click(card.x + card.width / 2, card.y + card.height / 2);
   assert.equal(await page.evaluate(() => window.__host.previews.length), 1, 'Click opens the native preview');
@@ -193,7 +193,7 @@ async function runGalleryTests() {
   await settle();
   await page.waitForFunction(() => [...document.querySelectorAll('.card')].slice(0, 5).every((card) => card.querySelector('img').naturalWidth > 0 && !card.querySelector('.image-placeholder')));
   await page.screenshot({ path: join(root, 'node_modules/.ui-gallery-wide.png'), fullPage: true });
-  console.log('ok UI: hover overlay, top-left metadata, top-right actions, native preview, single-card cap');
+  console.log('ok UI: hover overlay, top-right actions, native preview, single-card cap');
 }
 
 async function openEditor() {
@@ -307,6 +307,7 @@ async function runEditorTests() {
   });
   await settle();
   assert.equal(await page.locator('#inkLayer path').count(), 2, 'A stroke interrupted by capture loss is kept, not discarded');
+  assert.equal(await page.locator('#imageSurface').evaluate((node) => getComputedStyle(node).boxShadow), 'none', 'The picture frame has no shadow');
 
   await page.locator('#toolComment').click();
   let rect = await page.locator('#imageSurface').boundingBox();

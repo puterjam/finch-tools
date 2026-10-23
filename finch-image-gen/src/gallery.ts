@@ -204,11 +204,7 @@ function buildCard(record: GalleryItem): HTMLElement {
   card.setAttribute('aria-label', `${t('card.preview')} · ${record.name}`);
   const { width, height } = imageDimensions(record);
   card.style.aspectRatio = `${width} / ${height}`;
-  card.innerHTML = `<span class="image-placeholder">${icon('image')}</span><img alt="" draggable="false"><div class="badges"></div><div class="card-actions"></div><div class="prompt-overlay"><div class="prompt"></div></div>`;
-  const badges = card.querySelector<HTMLElement>('.badges')!;
-  const format = String(record.format || record.name.split('.').pop() || 'png').toUpperCase();
-  badges.append(textNode('span', format, 'badge'), textNode('span', `${width}×${height}`, 'badge'));
-  badges.title = `${record.model} · ${record.quality} · ${format} · ${width}×${height}`;
+  card.innerHTML = `<span class="image-placeholder">${icon('image')}</span><img alt="" draggable="false"><div class="card-actions"></div><div class="prompt-overlay"><div class="prompt"></div></div>`;
   const actions = card.querySelector<HTMLElement>('.card-actions')!;
   if (editableHere()) {
     const edit = document.createElement('button'); edit.className = 'card-action'; edit.dataset.act = 'edit'; edit.innerHTML = icon('pencil-line');
