@@ -6,7 +6,7 @@ Mini tools that extend [Finch](https://finchwork.app/) with focused, user-facing
 
 - [`finch-anydoc`](./finch-anydoc/) — lets Finch read Word, Excel, PowerPoint, OpenDocument, RTF, EPUB, CSV and PDF files as clean Markdown, with outlines and paging for long documents.
 - [`finch-ocr`](./finch-ocr/) — recognizes text in images and screenshots with a local, fully offline OCR engine; no API key, no cloud upload.
-- [`finch-image-gen`](./finch-image-gen/) — generates and edits images with OpenAI GPT Image 2.5 (or any OpenAI-compatible relay): text-to-image, image-to-image, masked edits, transparent cut-outs and custom sizes.
+- [`finch-image-gen`](./finch-image-gen/) — generates and edits images with OpenAI GPT Image 2.5 (or any OpenAI-compatible relay): text-to-image, image-to-image, masked edits, transparent cut-outs and custom sizes, plus a masonry gallery you can annotate and send back for another pass.
 - [`finch-knowledge`](./finch-knowledge/) — indexes local documents and OCR images in LanceDB and lets Finch search sourced passages from a dedicated App View.
 - [`finch-ego-lite`](./finch-ego-lite/) — lets Finch browse the web in isolated [Ego Lite](https://lite.ego.app/) task spaces while users follow, inspect, and take over its pages.
 - [`finch-helper`](./finch-helper/) — an assistant that answers questions about Finch usage, features and mini tool development from the official documentation knowledge base.
@@ -28,7 +28,7 @@ Mini tools that extend [Finch](https://finchwork.app/) with focused, user-facing
 
 - [`finch-anydoc`](./finch-anydoc/)：让 Finch 把 Word、Excel、PPT、OpenDocument、RTF、EPUB、CSV 和 PDF 读成干净的 Markdown，长文档支持大纲与分页。
 - [`finch-ocr`](./finch-ocr/)：用本地离线 OCR 引擎识别图片和截图里的文字，不需要 API Key，图片也不会上传云端。
-- [`finch-image-gen`](./finch-image-gen/)：用 OpenAI GPT Image 2.5（或任意兼容 OpenAI 接口的中转站）生成和编辑图片，支持文生图、图生图、遮罩局部编辑、透明底抠图与自定义尺寸。
+- [`finch-image-gen`](./finch-image-gen/)：用 OpenAI GPT Image 2.5（或任意兼容 OpenAI 接口的中转站）生成和编辑图片，支持文生图、图生图、遮罩局部编辑、透明底抠图与自定义尺寸，另带一个可标注、可发回去继续改的瀑布流图片库。
 - [`finch-knowledge`](./finch-knowledge/)：在 App View 中为本地文档和 OCR 图片建立 LanceDB 索引，供 Finch 检索带来源的资料片段。
 - [`finch-ego-lite`](./finch-ego-lite/)：让 Finch 在独立的 [Ego Lite](https://lite.ego.app/) 任务空间中浏览网页，用户可以查看、接管并关闭 Agent 的页面。
 - [`finch-helper`](./finch-helper/)：一个基于官方文档知识库回答 Finch 用法、功能与小程序开发问题的助手。

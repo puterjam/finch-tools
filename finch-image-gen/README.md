@@ -12,8 +12,23 @@ Generate and edit images with OpenAI's GPT Image models, right inside a Finch co
 - **Quality you control** — from a cheap `low` draft up to `max` detail, so a quick idea doesn't cost what a final asset costs.
 - **Live previews** — for a slow, high-quality render it can stream low-resolution previews while it works, so you can bail early instead of waiting two minutes for a miss.
 - **Two models to pick from** — Sunburst when editing precision matters, Flare for fast everyday generation.
+- **Cheap by default** — unless you ask for better, it stays on Flare + `low` + `1024x1024`, the cheapest combination.
+- **Every image is kept** — a masonry gallery collects your generations, and you can send any of them straight back for another pass.
 - Every generated image is saved to a local file. Finch reports the file path back in the chat, so you can immediately ask to send it over WeChat, attach it to the composer, or open it.
 - **Custom / relay endpoint** — by default it talks to `https://api.openai.com/v1`, but you can point it at any OpenAI-compatible proxy or relay ("中转站") instead, either permanently or for a single request.
+
+## Image gallery
+
+Every generation lands in the gallery — open it from the **Image Gen** entry in the left sidebar (full-screen App View), or from the **Image Gen** panel inside a session.
+
+- **Masonry layout** — 2 to 5 columns depending on how wide the window is; click any picture for the built-in previewer.
+- **A badge on every card** shows what produced it: model · quality · actual pixel size. Small marks flag images made from reference images or with a mask.
+- **Search and filter** — search prompts, or narrow to the images from the session you are in.
+- **Annotate and send back** — open a card's pen tool, drag boxes on the picture, write a note per box plus an overall note, then attach it to the input box. The AI gets the file plus every box as "change this part", and edits it with `image_gen_create`.
+- **Attach without boxes** if you just want the picture plus a note.
+- **Notes stay with the image**, and removing a card can optionally delete the file too.
+
+The attach buttons need a Composer to write into, so they appear when the gallery is opened from a session panel or Home — from the sidebar App View there is no input box to attach to, and the gallery says so instead of showing a dead button.
 
 ## Setup
 
@@ -73,8 +88,23 @@ Click the **Image Gen settings** button (gear icon) in the Composer toolbar → 
 - **画质可调**：从便宜快速的 `low` 草稿到细节拉满的 `max`，随手一试不用花成品的钱。
 - **实时预览**：慢的高质量单图可以边生成边返回低分辨率预览，不满意能提前停，不用干等两分钟。
 - **两个模型可选**：Sunburst 擅长精修编辑，Flare 适合日常快速生成。
+- **默认最省**：不特意要求更好，就一直用 Flare + `low` + `1024x1024` 这个最便宜的组合。
+- **生成的图都留着**：瀑布流图片库会收好你的每一张图，随时挑一张发回去继续改。
 - 每张生成的图片都会保存为本地文件，Finch 会在对话中返回文件路径，之后可以直接要求通过微信发送、放进输入框附件，或打开查看。
 - **自定义/中转接口**：默认请求 `https://api.openai.com/v1`，也可以换成任意兼容 OpenAI 接口格式的代理/中转站，可以永久生效也可以只用一次。
+
+## 图片库
+
+每张生成的图都会进图片库——从左侧边栏的 **Image Gen** 入口打开（全屏 App View），或者在会话里打开 **Image Gen** 面板。
+
+- **瀑布流布局**：按窗口宽度自动排 2 到 5 列；点任意图片用内置预览器放大看。
+- **每张图右下角都有角标**，写清它是用什么生成的：模型 · 画质 · 实际像素尺寸。用了参考图或遮罩的图另有小标记。
+- **搜索和筛选**：按提示词搜索，或者只看当前会话生成的图。
+- **标注后发回去改**：点卡片上的画笔，在图上拖出线框，每个框写一句说明，再加一句整体说明，然后插到输入框。AI 会拿到这张原图和每个框「改这一块」的要求，用 `image_gen_create` 继续改。
+- 只想给图加一句说明，也可以**只插入图片**、不画框。
+- **说明会一直跟着图片保存**；移除卡片时也可以选择连文件一起删。
+
+插入按钮需要一个能写入的输入框，所以从会话面板或首页打开图片库时才会出现；从左侧边栏的 App View 打开时没有输入框可插，图片库会直接说明原因，而不是摆一个按了没反应的按钮。
 
 ## 使用前配置
 

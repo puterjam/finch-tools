@@ -3,8 +3,15 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
-const DEFAULT_MODEL = 'gpt-image-2.5-sunburst';
-const DEFAULT_QUALITY = 'auto';
+/**
+ * Defaults are the cheapest combination, on purpose: Flare is the fast/cheap
+ * everyday model, `low` + 1024x1024 is the draft tier. Anything better costs
+ * real money and time, so it has to be asked for — the system prompt says the
+ * same thing so the agent does not "helpfully" render at max quality.
+ */
+const DEFAULT_MODEL = 'gpt-image-2.5-flare';
+const DEFAULT_QUALITY = 'low';
+const DEFAULT_SIZE = '1024x1024';
 
 const BASE_URL_STORAGE_KEY = 'baseUrl';
 const API_KEY_STORAGE_KEY = 'openaiApiKey';
@@ -17,8 +24,8 @@ const QUALITY_STORAGE_KEY = 'defaultQuality';
  * expanded, never guessed at.
  */
 const MODEL_CHOICES: Array<{ id: string; label: string }> = [
+  { id: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare — cheapest, everyday generation (default)' },
   { id: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst — editing precision' },
-  { id: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare — fast everyday generation' },
   { id: 'gpt-image-2', label: 'GPT Image 2 — previous generation' },
   { id: 'gpt-image-1.5', label: 'GPT Image 1.5 — legacy' },
 ];
@@ -28,14 +35,17 @@ const MODEL_ALIASES: Record<string, string> = {
   'gpt-image-sunburst': 'gpt-image-2.5-sunburst',
   flare: 'gpt-image-2.5-flare',
   'gpt-image-flare': 'gpt-image-2.5-flare',
-  'gpt-image-2.5': 'gpt-image-2.5-sunburst',
   'gpt-image-2.5-sun': 'gpt-image-2.5-sunburst',
+  'gpt-image-2.5-fl': 'gpt-image-2.5-flare',
 };
 
 /** Resolve a user/AI-supplied model name to a concrete model id. */
 export function resolveModel(raw: unknown, fallback: string = DEFAULT_MODEL): string {
   const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
   if (!value) return fallback;
+  // "gpt-image-2.5" on its own does not name a variant — honour whatever the
+  // user configured rather than silently picking one of the two.
+  if (value === 'gpt-image-2.5') return fallback;
   return MODEL_ALIASES[value] ?? value;
 }
 
@@ -66,7 +76,7 @@ export type SizeCheck = { ok: true; size: string } | { ok: false; error: string 
  * constraints; validate locally so the caller gets an actionable message
  * instead of an opaque 400 from the API.
  */
-export function checkSize(raw: unknown, fallback = 'auto'): SizeCheck {
+export function checkSize(raw: unknown, fallback = DEFAULT_SIZE): SizeCheck {
   const value = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
   if (!value) return { ok: true, size: fallback };
   if (value === 'auto') return { ok: true, size: 'auto' };
@@ -362,14 +372,21 @@ async function callGenerateStreaming(
 
 // ── saving ───────────────────────────────────────────────────────────────────
 
+export interface SavedImage {
+  filePath: string;
+  width: number;
+  height: number;
+  bytes: number;
+}
+
 async function saveImages(
   items: OpenAiImageItem[],
   outDir: string,
   namePrefix: string,
   extension: string,
-): Promise<string[]> {
+): Promise<SavedImage[]> {
   await fs.mkdir(outDir, { recursive: true });
-  const saved: string[] = [];
+  const saved: SavedImage[] = [];
   const stamp = Date.now();
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
@@ -385,7 +402,8 @@ async function saveImages(
     }
     const filePath = path.join(outDir, `${namePrefix}-${stamp}-${i + 1}.${extension}`);
     await fs.writeFile(filePath, buf);
-    saved.push(filePath);
+    const { width, height } = readImageSize(buf, extension);
+    saved.push({ filePath, width, height, bytes: buf.length });
   }
   return saved;
 }
@@ -412,6 +430,216 @@ async function withHeartbeat<T>(
     return await work;
   } finally {
     clearInterval(timer);
+  }
+}
+
+// ── gallery ──────────────────────────────────────────────────────────────────
+
+const GALLERY_FILE = 'gallery.json';
+const GALLERY_LIMIT = 2000;
+/** Above this we refuse to ship bytes across the panel bridge. */
+const MAX_EMBED_BYTES = 12 * 1024 * 1024;
+
+export interface GalleryRecord {
+  id: string;
+  filePath: string;
+  name: string;
+  prompt: string;
+  model: string;
+  /** What was requested (`auto` or `WxH`); `width`/`height` are what came back. */
+  size: string;
+  quality: string;
+  format: string;
+  width: number;
+  height: number;
+  bytes: number;
+  createdAt: number;
+  sessionId: string;
+  spaceId: string;
+  references: string[];
+  masked: boolean;
+  /** Free-form user note, edited from the gallery page. */
+  note: string;
+}
+
+async function loadGallery(ctx: finch.MiniToolContext): Promise<GalleryRecord[]> {
+  try {
+    const raw = await fs.readFile(path.join(ctx.storagePath, GALLERY_FILE), 'utf8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as GalleryRecord[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveGallery(ctx: finch.MiniToolContext, records: GalleryRecord[]): Promise<void> {
+  const file = path.join(ctx.storagePath, GALLERY_FILE);
+  const tmp = `${file}.tmp`;
+  await fs.mkdir(ctx.storagePath, { recursive: true });
+  await fs.writeFile(tmp, JSON.stringify(records), 'utf8');
+  await fs.rename(tmp, file);
+}
+
+/** Newest first, capped — a lost record never loses the image file itself. */
+async function addToGallery(ctx: finch.MiniToolContext, records: GalleryRecord[]): Promise<void> {
+  const existing = await loadGallery(ctx);
+  await saveGallery(ctx, [...records, ...existing].slice(0, GALLERY_LIMIT));
+}
+
+/**
+ * Read real pixel dimensions straight out of the file header. The gallery lays
+ * out a masonry column from the aspect ratio, so it needs the numbers before
+ * the picture has loaded — and `size: auto` means the request never told us.
+ */
+export function readImageSize(buf: Buffer, format: string): { width: number; height: number } {
+  try {
+    if (format === 'png' && buf.length > 24 && buf.readUInt32BE(0) === 0x89504e47) {
+      return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    }
+    if (format === 'jpeg' && buf.length > 16 && buf[0] === 0xff && buf[1] === 0xd8) {
+      let off = 2;
+      while (off + 9 < buf.length) {
+        if (buf[off] !== 0xff) {
+          off += 1;
+          continue;
+        }
+        const marker = buf[off + 1];
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { width: buf.readUInt16BE(off + 7), height: buf.readUInt16BE(off + 5) };
+        }
+        off += 2 + buf.readUInt16BE(off + 2);
+      }
+    }
+    if (format === 'webp' && buf.length > 30 && buf.toString('ascii', 0, 4) === 'RIFF') {
+      const tag = buf.toString('ascii', 8, 12);
+      if (tag === 'VP8X') {
+        return {
+          width: 1 + (buf[24] | (buf[25] << 8) | (buf[26] << 16)),
+          height: 1 + (buf[27] | (buf[28] << 8) | (buf[29] << 16)),
+        };
+      }
+      if (tag === 'VP8 ') {
+        return { width: buf.readUInt16LE(26) & 0x3fff, height: buf.readUInt16LE(28) & 0x3fff };
+      }
+      if (tag === 'VP8L') {
+        const bits = buf.readUInt32LE(17);
+        return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+      }
+    }
+  } catch {
+    // fall through — an unknown size just means the card sizes itself on load
+  }
+  return { width: 0, height: 0 };
+}
+
+const livePanels = new Set<finch.AppPanel>();
+
+async function buildPanelEnv(ctx: finch.MiniToolContext, panel: finch.AppPanel): Promise<Record<string, unknown>> {
+  return {
+    view: panel.view ?? '',
+    sessionId: panel.sessionId ?? '',
+    // `finch:env.locale` only arrives for the appView scope, so thread the
+    // locale through our own payload to cover the right-side Panel too.
+    locale: ctx.i18n.locale,
+  };
+}
+
+async function sendGallery(ctx: finch.MiniToolContext, panel: finch.AppPanel): Promise<void> {
+  await panel.postMessage({
+    type: 'gallery',
+    data: await loadGallery(ctx),
+    env: await buildPanelEnv(ctx, panel),
+  });
+}
+
+async function broadcastGallery(ctx: finch.MiniToolContext): Promise<void> {
+  if (!livePanels.size) return;
+  const data = await loadGallery(ctx);
+  for (const panel of livePanels) {
+    try {
+      await panel.postMessage({ type: 'gallery', data });
+    } catch {
+      livePanels.delete(panel);
+    }
+  }
+}
+
+function imageMime(filePath: string): string {
+  return mimeForPath(filePath);
+}
+
+async function handlePanelMessage(
+  ctx: finch.MiniToolContext,
+  panel: finch.AppPanel,
+  msg: Record<string, unknown>,
+): Promise<void> {
+  const type = String(msg?.type ?? '');
+
+  if (type === 'requestGallery') {
+    await sendGallery(ctx, panel);
+    return;
+  }
+
+  if (type === 'requestImage') {
+    const filePath = typeof msg.filePath === 'string' ? msg.filePath : '';
+    if (!filePath) return;
+    try {
+      const info = await fs.stat(filePath);
+      if (info.size > MAX_EMBED_BYTES) {
+        await panel.postMessage({ type: 'imageData', filePath, error: 'too-large' });
+        return;
+      }
+      const buf = await fs.readFile(filePath);
+      await panel.postMessage({
+        type: 'imageData',
+        filePath,
+        dataUrl: `data:${imageMime(filePath)};base64,${buf.toString('base64')}`,
+      });
+    } catch {
+      await panel.postMessage({ type: 'imageData', filePath, error: 'unreadable' });
+    }
+    return;
+  }
+
+  if (type === 'openPreview') {
+    const filePath = typeof msg.filePath === 'string' ? msg.filePath : '';
+    if (!filePath) return;
+    try {
+      await ctx.ui.openFilePreview(filePath);
+    } catch (err) {
+      ctx.logger.warn(`openFilePreview failed for ${filePath}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return;
+  }
+
+  if (type === 'saveNote') {
+    const id = String(msg.id ?? '');
+    const note = typeof msg.note === 'string' ? msg.note : '';
+    const records = await loadGallery(ctx);
+    const record = records.find((item) => item.id === id);
+    if (!record) return;
+    record.note = note;
+    await saveGallery(ctx, records);
+    await panel.postMessage({ type: 'noteSaved', id });
+    return;
+  }
+
+  if (type === 'deleteRecord') {
+    const id = String(msg.id ?? '');
+    const deleteFile = msg.deleteFile === true;
+    const records = await loadGallery(ctx);
+    const target = records.find((item) => item.id === id);
+    if (!target) return;
+    await saveGallery(ctx, records.filter((item) => item.id !== id));
+    let fileDeleteError = '';
+    if (deleteFile) {
+      await fs.rm(target.filePath, { force: true }).catch((err: unknown) => {
+        fileDeleteError = err instanceof Error ? err.message : String(err);
+      });
+    }
+    await panel.postMessage({ type: 'deleteResult', id, deleteFile, fileDeleteError });
+    await broadcastGallery(ctx);
+    return;
   }
 }
 
@@ -658,8 +886,36 @@ export function activate(ctx: finch.MiniToolContext): void {
           }
 
           exec.progress.report({ stage: 'saving', message: t('progress.saving') });
-          const savedPaths = await saveImages(items, outDir, namePrefix, EXT_BY_FORMAT[format]);
+          const saved = await saveImages(items, outDir, namePrefix, EXT_BY_FORMAT[format]);
+          const savedPaths = saved.map((item) => item.filePath);
           if (stream) await fs.rm(previewDir, { recursive: true, force: true });
+
+          // Everything the gallery badge and a later "edit this again" need has
+          // to be captured here — the file alone cannot tell you what produced it.
+          const createdAt = Date.now();
+          await addToGallery(
+            ctx,
+            saved.map((item, index) => ({
+              id: `${createdAt}-${index + 1}`,
+              filePath: item.filePath,
+              name: path.basename(item.filePath),
+              prompt,
+              model,
+              size,
+              quality,
+              format,
+              width: item.width,
+              height: item.height,
+              bytes: item.bytes,
+              createdAt,
+              sessionId: exec.sessionId ?? '',
+              spaceId: exec.spaceId ?? '',
+              references: refPaths,
+              masked: !!maskPath,
+              note: '',
+            })),
+          );
+          await broadcastGallery(ctx);
 
           const notes = [
             `model: ${model}`,
@@ -855,6 +1111,28 @@ export function activate(ctx: finch.MiniToolContext): void {
           await ctx.storage.set(BASE_URL_STORAGE_KEY, normalizeBaseUrl(value));
         }
       },
+    }),
+  );
+
+  // One listener covers both surfaces: the right-side Panel App and the
+  // application-level App View page (which never calls createPanel itself, so
+  // this is the only place its AppPanel handle is reachable).
+  ctx.subscriptions.push(
+    ctx.ui.onDidOpenPanel((panel) => {
+      livePanels.add(panel);
+      ctx.subscriptions.push(
+        panel.onDidReceiveMessage((message) => {
+          void handlePanelMessage(ctx, panel, (message ?? {}) as Record<string, unknown>);
+        }),
+      );
+      ctx.subscriptions.push(
+        panel.onDidDispose(() => {
+          livePanels.delete(panel);
+        }),
+      );
+      void sendGallery(ctx, panel).catch((err: unknown) => {
+        ctx.logger.warn(`panel gallery push failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
     }),
   );
 

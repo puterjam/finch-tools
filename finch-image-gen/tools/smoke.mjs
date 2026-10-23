@@ -19,7 +19,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activate, checkSize, formatApiError, resolveModel } from '../dist/index.js';
+import { activate, checkSize, formatApiError, readImageSize, resolveModel } from '../dist/index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -45,6 +45,8 @@ function makeCtx(storagePath) {
   const store = new Map();
   const registered = {};
   const composer = {};
+  const panelHandlers = [];
+  const previews = [];
   const ctx = {
     storagePath,
     subscriptions: { push() {} },
@@ -82,9 +84,17 @@ function makeCtx(storagePath) {
         composer[id] = handlers;
       },
     },
-    ui: { async showModalDialog() { return { action: 'dismissed' }; } },
+    ui: {
+      async showModalDialog() { return { action: 'dismissed' }; },
+      onDidOpenPanel(handler) {
+        panelHandlers.push(handler);
+      },
+      async openFilePreview(filePath) {
+        previews.push(filePath);
+      },
+    },
   };
-  return { ctx, registered, composer, store };
+  return { ctx, registered, composer, store, panelHandlers, previews };
 }
 
 function makeExec() {
@@ -93,6 +103,8 @@ function makeExec() {
     reports,
     exec: {
       signal: undefined,
+      sessionId: 'sess-1',
+      spaceId: '',
       storage: {
         async get() { return null; },
         async set() {},
@@ -158,11 +170,25 @@ globalThis.fetch = async (url, init) => {
 // ── run ──────────────────────────────────────────────────────────────────────
 
 const storagePath = mkdtempSync(join(tmpdir(), 'image-gen-smoke-'));
-const { ctx, registered, store } = makeCtx(storagePath);
+const { ctx, registered, store, panelHandlers, previews } = makeCtx(storagePath);
 activate(ctx);
 
 const tool = registered.image_gen_create;
 check('tool image_gen_create is registered', !!tool);
+
+/** Stand in for a gallery webview so the panel bridge can be driven end to end. */
+function makePanel(view = 'appView', sessionId = '') {
+  const sent = [];
+  const handlers = [];
+  const panel = {
+    view,
+    sessionId,
+    async postMessage(message) { sent.push(message); },
+    onDidReceiveMessage(handler) { handlers.push(handler); return { dispose() {} }; },
+    onDidDispose() { return { dispose() {} }; },
+  };
+  return { panel, sent, handlers };
+}
 
 async function run(input, reply) {
   calls = [];
@@ -174,14 +200,14 @@ async function run(input, reply) {
 
 const base = { prompt: 'a red square' };
 
-// 1 — defaults: only the broadly supported knobs are sent.
+// 1 — defaults: the cheapest combination, and only the broadly supported knobs.
 {
   const { call, text } = await run(base);
-  check('default model is gpt-image-2.5-sunburst', call.json.model === 'gpt-image-2.5-sunburst', call.json.model);
-  check('default size/quality are auto', call.json.size === 'auto' && call.json.quality === 'auto');
+  check('default model is the cheap gpt-image-2.5-flare', call.json.model === 'gpt-image-2.5-flare', call.json.model);
+  check('default size/quality are the cheap 1024x1024 / low', call.json.size === '1024x1024' && call.json.quality === 'low', `${call.json.size} ${call.json.quality}`);
   check('optional knobs stay omitted', call.json.background === undefined && call.json.output_format === undefined && call.json.moderation === undefined);
   check('hits /images/generations', call.url.endsWith('/v1/images/generations'), call.url);
-  check('result lists a saved file', text.includes('.png') && text.includes('model: gpt-image-2.5-sunburst'), text.slice(0, 120));
+  check('result lists a saved file', text.includes('.png') && text.includes('model: gpt-image-2.5-flare'), text.slice(0, 120));
 }
 
 // 2 — stored defaults from the settings menu win over the built-in default.
@@ -307,7 +333,73 @@ const base = { prompt: 'a red square' };
   check('non-ascii output_name falls back to the default prefix', named.text.split('\n').pop().includes('/image-gen-'), named.text.split('\n').pop());
   const named2 = await run({ ...base, output_name: 'coffee poster v2' });
   check('output_name is sanitized to a safe prefix', named2.text.split('\n').pop().includes('/coffee-poster-v2-'), named2.text.split('\n').pop());
-  check('resolveModel keeps unknown ids verbatim', resolveModel('gpt-image-2') === 'gpt-image-2' && resolveModel('') === 'gpt-image-2.5-sunburst');
+  check('resolveModel keeps unknown ids verbatim', resolveModel('gpt-image-2') === 'gpt-image-2' && resolveModel('') === 'gpt-image-2.5-flare');
+  check('bare gpt-image-.5 alias maps to the fallback model', resolveModel('gpt-image-2.5') === 'gpt-image-2.5-flare', resolveModel('gpt-image-2.5'));
+}
+
+// 9 — the gallery: what gets recorded, and the panel bridge.
+{
+  const galleryFile = join(storagePath, 'gallery.json');
+  const fresh = await run({ prompt: 'a blue circle', quality: 'medium', size: '1536x1024' });
+  const filePath = fresh.text.split('\n').pop().trim();
+  const gallery = JSON.parse(readFileSync(galleryFile, 'utf8'));
+  const record = gallery.find((item) => item.filePath === filePath);
+  check('generation is recorded in gallery.json', !!record, galleryFile);
+  check('record carries the badge data', record.model === 'gpt-image-2.5-flare' && record.quality === 'medium' && record.size === '1536x1024', JSON.stringify(record).slice(0, 160));
+  check('record carries the real pixel size', record.width === 1 && record.height === 1, `${record.width}x${record.height}`);
+  check('record carries the session it came from', record.sessionId === 'sess-1' && record.prompt === 'a blue circle');
+  check('newest record is first', gallery[0].filePath === filePath);
+  check('readImageSize reads the PNG header', readImageSize(PNG_1PX, 'png').width === 1);
+  check('readImageSize shrugs at unknown formats', readImageSize(Buffer.from('nope'), 'png').width === 0);
+
+  const { panel, sent, handlers } = makePanel('appView', '');
+  panelHandlers[0](panel);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const pushed = sent.find((message) => message.type === 'gallery');
+  check('opening a panel pushes the gallery', !!pushed && Array.isArray(pushed.data) && pushed.data.length === gallery.length, JSON.stringify(sent.map((m) => m.type)));
+  check('the push carries the view env', pushed.env.view === 'appView' && pushed.env.locale === 'en-US', JSON.stringify(pushed.env));
+
+  // The host fires the panel message handler without awaiting it, so the smoke
+  // test has to wait for the reply it produces rather than for the call itself.
+  const ask = async (message, expect) => {
+    const before = sent.length;
+    await handlers[0](message);
+    for (let i = 0; i < 200; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (!expect || sent.slice(before).some((item) => item.type === expect)) return;
+    }
+  };
+
+  await ask({ type: 'requestImage', filePath }, 'imageData');
+  const imageMessage = sent.find((message) => message.type === 'imageData');
+  check('image bytes cross the bridge as a data URL', imageMessage?.dataUrl?.startsWith('data:image/png;base64,'), JSON.stringify(imageMessage).slice(0, 80));
+  await ask({ type: 'requestImage', filePath: join(storagePath, 'ghost.png') }, 'imageData');
+  check('unreadable image is reported, not thrown', sent.some((m) => m.type === 'imageData' && m.error === 'unreadable'));
+
+  await ask({ type: 'openPreview', filePath });
+  check('preview falls back to the host API', previews.includes(filePath), JSON.stringify(previews));
+
+  await ask({ type: 'saveNote', id: record.id, note: 'warmer light please' }, 'noteSaved');
+  const afterNote = JSON.parse(readFileSync(galleryFile, 'utf8')).find((item) => item.id === record.id);
+  check('a note is persisted', afterNote?.note === 'warmer light please', afterNote?.note);
+  check('note save is acknowledged', sent.some((m) => m.type === 'noteSaved' && m.id === record.id));
+
+  await ask({ type: 'deleteRecord', id: record.id, deleteFile: false }, 'deleteResult');
+  check('delete keeps the file when not asked to', JSON.parse(readFileSync(galleryFile, 'utf8')).every((item) => item.id !== record.id) && readFileSync(filePath).length > 0);
+
+  const doomed = await run({ prompt: 'doomed' });
+  const doomedPath = doomed.text.split('\n').pop().trim();
+  const doomedId = JSON.parse(readFileSync(galleryFile, 'utf8')).find((item) => item.filePath === doomedPath)?.id;
+  check('the next generation is recorded again', !!doomedId, doomedPath);
+  await ask({ type: 'deleteRecord', id: doomedId, deleteFile: true }, 'deleteResult');
+  let fileGone = false;
+  try { readFileSync(doomedPath); } catch { fileGone = true; }
+  check('delete removes the file when asked', fileGone);
+
+  // A live panel must hear about new generations without asking.
+  const before = sent.length;
+  await run({ prompt: 'pushed automatically' });
+  check('a new generation broadcasts to open panels', sent.slice(before).some((m) => m.type === 'gallery'));
 }
 
 rmSync(storagePath, { recursive: true, force: true });

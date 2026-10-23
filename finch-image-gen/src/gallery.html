@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Image Gallery</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  /* Finch injects --finch-* variables asynchronously on webview dom-ready,
+     so the page must be able to paint correctly before they arrive. Use real
+     literal fallbacks per colour scheme (a self-referencing var() fallback is
+     not a fallback at all). */
+  :root {
+    --gg-bg: var(--finch-bg-main, #f7f7f8);
+    --gg-elevated: var(--finch-bg-elevated, #ffffff);
+    --gg-hover: var(--finch-bg-hover, #eeeef0);
+    --gg-active: var(--finch-bg-active, #e4e4e7);
+    --gg-text: var(--finch-text-primary, #1a1a1a);
+    --gg-text-2: var(--finch-text-secondary, #666666);
+    --gg-text-3: var(--finch-text-tertiary, #999999);
+    --gg-border: var(--finch-border, #e5e5e7);
+    --gg-accent: var(--finch-accent, #3b82f6);
+    --gg-gap: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --gg-bg: var(--finch-bg-main, #17171a);
+      --gg-elevated: var(--finch-bg-elevated, #232328);
+      --gg-hover: var(--finch-bg-hover, #2c2c32);
+      --gg-active: var(--finch-bg-active, #34343b);
+      --gg-text: var(--finch-text-primary, #ececec);
+      --gg-text-2: var(--finch-text-secondary, #a3a3ab);
+      --gg-text-3: var(--finch-text-tertiary, #7d7d85);
+      --gg-border: var(--finch-border, #34343b);
+      --gg-accent: var(--finch-accent, #5b9bf5);
+    }
+  }
+
+  body {
+    font-family: var(--finch-font-body, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+    background: var(--gg-bg);
+    color: var(--gg-text);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #app { padding: 16px 16px 64px; max-width: 1600px; margin: 0 auto; }
+
+  /* ── Header ── */
+  .header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .header h1 { font-size: 15px; font-weight: 600; letter-spacing: .01em; }
+  .header .count { font-size: 12px; color: var(--gg-text-3); }
+  .spacer { flex: 1; }
+
+  .search {
+    position: relative; display: flex; align-items: center;
+    background: var(--gg-elevated); border: 1px solid var(--gg-border);
+    border-radius: 7px; padding: 0 8px; height: 28px; min-width: 180px;
+  }
+  .search svg { width: 14px; height: 14px; color: var(--gg-text-3); flex: none; }
+  .search input {
+    border: 0; outline: 0; background: transparent; color: var(--gg-text);
+    font-size: 12px; padding: 0 6px; width: 100%; font-family: inherit;
+  }
+
+  .tabs { display: flex; gap: 4px; background: var(--gg-elevated); border: 1px solid var(--gg-border); border-radius: 7px; padding: 2px; }
+  .tab {
+    border: 0; background: transparent; color: var(--gg-text-2); font-size: 12px;
+    font-family: inherit; padding: 4px 9px; border-radius: 5px; cursor: pointer;
+  }
+  .tab:hover { background: var(--gg-hover); }
+  .tab.active { background: var(--gg-active); color: var(--gg-text); }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px;
+    border: 1px solid var(--gg-border); border-radius: 7px; background: var(--gg-elevated);
+    color: var(--gg-text); font-size: 12px; font-family: inherit; cursor: pointer;
+  }
+  .btn:hover { background: var(--gg-hover); }
+  .btn.primary { background: var(--gg-accent); border-color: var(--gg-accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.06); }
+  .btn.ghost { background: transparent; }
+  .btn.danger { color: #e5484d; }
+  .btn svg { width: 14px; height: 14px; }
+  .btn:disabled { opacity: .45; cursor: default; }
+
+  /* ── Masonry ── */
+  #grid { display: flex; gap: var(--gg-gap); align-items: flex-start; }
+  .col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--gg-gap); }
+
+  .card {
+    background: var(--gg-elevated); border: 1px solid var(--gg-border); border-radius: 10px;
+    overflow: hidden; cursor: zoom-in; position: relative;
+  }
+  .card:hover { border-color: var(--gg-accent); }
+  .thumb { position: relative; width: 100%; background: var(--gg-hover); overflow: hidden; }
+  .thumb img { display: block; width: 100%; height: auto; }
+  .thumb .ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--gg-text-3); }
+  .thumb .ph svg { width: 22px; height: 22px; opacity: .5; }
+
+  /* model / quality / size badge, bottom-right of the picture */
+  .badge {
+    position: absolute; right: 6px; bottom: 6px; max-width: calc(100% - 12px);
+    background: rgba(0,0,0,.62); color: #fff; font-size: 10px; line-height: 1.5;
+    padding: 2px 6px; border-radius: 5px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; backdrop-filter: blur(3px); font-variant-numeric: tabular-nums;
+  }
+  .badge .dot { opacity: .5; margin: 0 3px; }
+  .flag {
+    position: absolute; left: 6px; top: 6px; background: rgba(0,0,0,.55); color: #fff;
+    font-size: 10px; padding: 2px 5px; border-radius: 4px; display: flex; gap: 4px;
+  }
+  .flag svg { width: 11px; height: 11px; }
+
+  .meta { padding: 7px 8px 8px; }
+  .prompt {
+    font-size: 11.5px; line-height: 1.45; color: var(--gg-text);
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .sub { margin-top: 5px; font-size: 10.5px; color: var(--gg-text-3); display: flex; gap: 6px; align-items: center; }
+  .note-chip { color: var(--gg-accent); display: inline-flex; align-items: center; gap: 3px; }
+  .note-chip svg { width: 10px; height: 10px; }
+
+  .actions {
+    display: flex; gap: 4px; padding: 0 8px 8px; opacity: 0; transition: opacity .12s;
+  }
+  .card:hover .actions { opacity: 1; }
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    height: 24px; min-width: 24px; padding: 0 6px; border: 1px solid var(--gg-border);
+    border-radius: 6px; background: var(--gg-elevated); color: var(--gg-text-2);
+    cursor: pointer; font-size: 11px; font-family: inherit;
+  }
+  .icon-btn:hover { background: var(--gg-hover); color: var(--gg-text); }
+  .icon-btn svg { width: 13px; height: 13px; }
+  .icon-btn.danger:hover { color: #e5484d; border-color: #e5484d; }
+
+  /* ── Empty state ── */
+  .empty { text-align: center; padding: 72px 20px; color: var(--gg-text-3); }
+  .empty svg { width: 34px; height: 34px; opacity: .4; margin-bottom: 12px; }
+  .empty .title { font-size: 13px; color: var(--gg-text-2); margin-bottom: 4px; }
+  .empty .hint { font-size: 12px; line-height: 1.6; max-width: 380px; margin: 0 auto; }
+
+  /* ── Annotation overlay ── */
+  #overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none;
+    align-items: center; justify-content: center; padding: 20px; z-index: 50;
+  }
+  #overlay.open { display: flex; }
+  .sheet {
+    background: var(--gg-bg); border: 1px solid var(--gg-border); border-radius: 12px;
+    max-width: 1080px; width: 100%; max-height: 92vh; display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .sheet-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--gg-border); }
+  .sheet-head .title { font-size: 13px; font-weight: 600; }
+  .sheet-body { display: flex; gap: 14px; padding: 14px; overflow: auto; }
+  .canvas-wrap { position: relative; flex: 1 1 auto; min-width: 0; user-select: none; }
+  #annotCanvas { display: block; max-width: 100%; border-radius: 8px; cursor: crosshair; }
+  .box {
+    position: absolute; border: 2px solid var(--gg-accent); background: rgba(59,130,246,.12);
+    pointer-events: none; border-radius: 2px;
+  }
+  .box .tag {
+    position: absolute; top: -18px; left: -2px; background: var(--gg-accent); color: #fff;
+    font-size: 10px; padding: 1px 5px; border-radius: 3px; white-space: nowrap;
+  }
+  .side { width: 268px; flex: none; display: flex; flex-direction: column; gap: 10px; }
+  .side h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--gg-text-3); font-weight: 600; }
+  .region-row { display: flex; gap: 6px; align-items: flex-start; }
+  .region-row .num {
+    flex: none; width: 18px; height: 20px; border-radius: 4px; background: var(--gg-accent); color: #fff;
+    font-size: 10px; display: flex; align-items: center; justify-content: center;
+  }
+  .side textarea, .side input[type=text] {
+    width: 100%; border: 1px solid var(--gg-border); border-radius: 7px; background: var(--gg-elevated);
+    color: var(--gg-text); font-family: inherit; font-size: 12px; padding: 6px 8px; outline: 0; resize: vertical;
+  }
+  .side textarea:focus, .side input:focus { border-color: var(--gg-accent); }
+  .region-list { display: flex; flex-direction: column; gap: 6px; max-height: 190px; overflow: auto; }
+  .sheet-foot { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--gg-border); }
+  .tip { font-size: 11px; color: var(--gg-text-3); line-height: 1.5; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="header">
+    <h1 id="title">Gallery</h1>
+    <span class="count" id="count"></span>
+    <div class="spacer"></div>
+    <div class="search">
+      <span data-icon="search"></span>
+      <input id="search" type="text" autocomplete="off">
+    </div>
+    <div class="tabs" id="tabs"></div>
+  </div>
+  <div id="grid"></div>
+  <div id="empty" class="empty" style="display:none"></div>
+</div>
+
+<div id="overlay">
+  <div class="sheet">
+    <div class="sheet-head">
+      <span data-icon="pen-line" style="display:flex"></span>
+      <span class="title" id="sheetTitle"></span>
+      <div class="spacer"></div>
+      <button class="btn ghost" id="sheetClose"></button>
+    </div>
+    <div class="sheet-body">
+      <div class="canvas-wrap" id="canvasWrap">
+        <img id="annotCanvas" alt="">
+      </div>
+      <div class="side">
+        <div>
+          <h3 id="regionsHead"></h3>
+          <div class="tip" id="regionsHint" style="margin:4px 0 6px"></div>
+          <div class="region-list" id="regionList"></div>
+        </div>
+        <div>
+          <h3 id="noteHead"></h3>
+          <textarea id="noteBox" rows="4" style="margin-top:4px"></textarea>
+        </div>
+        <div class="tip" id="scopeTip"></div>
+      </div>
+    </div>
+    <div class="sheet-foot">
+      <button class="btn" id="btnSaveNote"></button>
+      <div class="spacer"></div>
+      <button class="btn" id="btnInsertImage"></button>
+      <button class="btn primary" id="btnInsertRegions"></button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── Icons (Lucide, https://lucide.dev — ISC licence) ─────────────────────
+  var ICON_PATHS = {
+    'search': '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    'image': '<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
+    'images': '<path d="M18 22a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2z"/><path d="M3 4a2 2 0 0 1 2-2h2"/><path d="M4 20a2 2 0 0 1-1-1.708V7a2 2 0 0 0-1 1.684"/>',
+    'pen-line': '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+    'square': '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+    'x': '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    'trash': '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+    'maximize': '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+    'message': '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    'sticky': '<path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11l5-5V5a2 2 0 0 0-2-2Z"/><path d="M15 21v-4a2 2 0 0 1 2-2h4"/>',
+    'layers': '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
+    'plus': '<path d="M5 12h14"/><path d="M12 5v14"/>',
+    'refresh': '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 22v-5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'
+  };
+  function iconSvg(name) {
+    var d = ICON_PATHS[name] || '';
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+  }
+
+  // ── i18n ─────────────────────────────────────────────────────────────────
+  var I18N = {
+    en: {
+      'title': 'Image gallery',
+      'count': '{n} images',
+      'tab.all': 'All',
+      'tab.current': 'This session',
+      'search': 'Search prompts…',
+      'empty.title': 'Nothing here yet',
+      'empty.hint': 'Ask your assistant to generate an image — every result lands here with the model, quality and size it was made with.',
+      'empty.noneMatch': 'No image matches that search.',
+      'card.preview': 'Preview',
+      'card.annotate': 'Annotate / send to chat',
+      'card.delete': 'Delete',
+      'card.refs': 'from {n} reference(s)',
+      'card.masked': 'masked',
+      'sheet.title': 'Annotate this image',
+      'sheet.close': 'Close',
+      'sheet.regions': 'Boxes',
+      'sheet.regionsHint': 'Drag on the image to draw a box. Each box can carry its own note.',
+      'sheet.regionsEmpty': 'No box yet — drag on the picture to add one.',
+      'sheet.note': 'Overall note',
+      'sheet.notePlaceholder': 'What should change? e.g. make the lighting warmer, drop the text in the corner',
+      'sheet.scopeSession': 'Inserting attaches the image to this session’s input box, so the AI can edit it with image_gen_create.',
+      'sheet.scopeHome': 'Inserting attaches the image to the Home input box, so the AI can edit it with image_gen_create.',
+      'sheet.scopeNone': 'Open this gallery from a session’s right-side panel to attach images to the input box.',
+      'sheet.saveNote': 'Save note',
+      'sheet.insertImage': 'Attach image',
+      'sheet.insertRegions': 'Attach with boxes',
+      'sheet.noBoxYet': 'Draw a box first, or use “Attach image”.',
+      'toast.inserted': 'Attached to the input box',
+      'toast.insertFailed': 'Could not attach it to the input box',
+      'toast.noteSaved': 'Note saved',
+      'toast.deleted': 'Removed from the gallery',
+      'toast.fileError': 'Removed, but the file could not be deleted',
+      'confirm.deleteTitle': 'Remove this image?',
+      'confirm.deleteBody': 'It disappears from the gallery. Tick the box below to delete the file from disk too.',
+      'confirm.deleteCheck': 'Also delete the file from disk',
+      'confirm.delete': 'Remove',
+      'confirm.cancel': 'Cancel',
+      'promptLabel': 'Original prompt'
+    },
+    zh: {
+      'title': '图片库',
+      'count': '共 {n} 张',
+      'tab.all': '全部',
+      'tab.current': '本会话',
+      'search': '搜索提示词…',
+      'empty.title': '还没有图片',
+      'empty.hint': '让助手生成一张图，结果就会出现在这里，并标出生成时用的模型、画质和尺寸。',
+      'empty.noneMatch': '没有匹配这张搜索的图片。',
+      'card.preview': '预览',
+      'card.annotate': '标注 / 发到对话',
+      'card.delete': '删除',
+      'card.refs': '参考 {n} 张图',
+      'card.masked': '遮罩编辑',
+      'sheet.title': '标注这张图',
+      'sheet.close': '关闭',
+      'sheet.regions': '线框',
+      'sheet.regionsHint': '在图上拖动即可画一个框，每个框都能单独写说明。',
+      'sheet.regionsEmpty': '还没有框——在图上拖一下就有了。',
+      'sheet.note': '整体说明',
+      'sheet.notePlaceholder': '想改什么？例如：光线再暖一点、去掉角落的字',
+      'sheet.scopeSession': '插入后会把这张图挂到本会话的输入框，AI 就能用 image_gen_create 基于它继续改。',
+      'sheet.scopeHome': '插入后会把这张图挂到首页输入框，AI 就能用 image_gen_create 基于它继续改。',
+      'sheet.scopeNone': '想把它插进输入框，请从会话右侧面板打开图片库。',
+      'sheet.saveNote': '保存说明',
+      'sheet.insertImage': '只插入图片',
+      'sheet.insertRegions': '带线框插入',
+      'sheet.noBoxYet': '先画一个框，或者选「只插入图片」。',
+      'toast.inserted': '已插入到输入框',
+      'toast.insertFailed': '没能插入到输入框',
+      'toast.noteSaved': '说明已保存',
+      'toast.deleted': '已从图片库移除',
+      'toast.fileError': '已移除，但文件没能删除',
+      'confirm.deleteTitle': '移除这张图片？',
+      'confirm.deleteBody': '它会从图片库里消失。勾选下面一项可以同时删除磁盘上的文件。',
+      'confirm.deleteCheck': '同时删除磁盘上的文件',
+      'confirm.delete': '移除',
+      'confirm.cancel': '取消',
+      'promptLabel': '原始提示词'
+    }
+  };
+
+  var lang = 'en';
+  function resolveLocale(locale) {
+    var value = String(locale || '').toLowerCase();
+    if (value.indexOf('zh') === 0) return value.indexOf('hk') > 0 || value.indexOf('tw') > 0 || value.indexOf('hant') > 0 ? 'zh' : 'zh';
+    return 'en';
+  }
+  function t(key, values) {
+    var dict = I18N[lang] || I18N.en;
+    var str = dict[key] || I18N.en[key] || key;
+    if (values) {
+      Object.keys(values).forEach(function (name) { str = str.split('{' + name + '}').join(String(values[name])); });
+    }
+    return str;
+  }
+
+  // ── State ────────────────────────────────────────────────────────────────
+  var records = [];
+  var filterMode = 'all';
+  var searchTerm = '';
+  var currentView = '';
+  var currentSessionId = '';
+  var userPickedTab = false;
+  // filePath → data URL, so scrolling back never re-reads the file.
+  var imageCache = Object.create(null);
+  var pendingImageRequests = Object.create(null);
+
+  var finchApi = window.finch;
+  if (finchApi && finchApi.onMessage) {
+    finchApi.onMessage(function (message) {
+      if (!message || typeof message !== 'object') return;
+      if (message.type === 'finch:env') {
+        currentView = message.view || '';
+        currentSessionId = message.sessionId || '';
+        if (message.locale) lang = resolveLocale(message.locale);
+        paintStatic();
+        render();
+        return;
+      }
+      if (message.type === 'gallery') {
+        records = Array.isArray(message.data) ? message.data : records;
+        if (message.env) {
+          if (message.env.view) currentView = message.env.view;
+          if (message.env.sessionId) currentSessionId = message.env.sessionId;
+          if (message.env.locale) lang = resolveLocale(message.env.locale);
+        }
+        if (currentView === 'session' && currentSessionId && !userPickedTab) filterMode = 'current';
+        paintStatic();
+        render();
+        return;
+      }
+      if (message.type === 'imageData') {
+        if (message.dataUrl) imageCache[message.filePath] = message.dataUrl;
+        pendingImageRequests[message.filePath] = false;
+        applyImage(message.filePath);
+        return;
+      }
+      if (message.type === 'noteSaved' || message.type === 'deleteResult') {
+        toast(message.fileDeleteError ? t('toast.fileError') : (message.type === 'noteSaved' ? t('toast.noteSaved') : t('toast.deleted')), message.fileDeleteError ? 'warning' : 'success');
+      }
+    });
+  }
+
+  function requestImage(filePath) {
+    if (imageCache[filePath] || pendingImageRequests[filePath]) return;
+    if (!finchApi || !finchApi.postMessage) return;
+    pendingImageRequests[filePath] = true;
+    finchApi.postMessage({ type: 'requestImage', filePath: filePath });
+  }
+
+  function toast(title, variant) {
+    if (finchApi && finchApi.ui && finchApi.ui.toast) {
+      finchApi.ui.toast({ title: title, variant: variant || 'default' }).catch(function () {});
+    }
+  }
+
+  // ── DOM ──────────────────────────────────────────────────────────────────
+  var gridEl = document.getElementById('grid');
+  var emptyEl = document.getElementById('empty');
+  var countEl = document.getElementById('count');
+  var tabsEl = document.getElementById('tabs');
+  var searchEl = document.getElementById('search');
+
+  function paintStatic() {
+    document.getElementById('title').textContent = t('title');
+    document.title = t('title');
+    searchEl.placeholder = t('search');
+    document.querySelectorAll('[data-icon]').forEach(function (node) {
+      node.innerHTML = iconSvg(node.getAttribute('data-icon'));
+    });
+    renderTabs();
+  }
+
+  function renderTabs() {
+    var showCurrent = currentView === 'session' && !!currentSessionId;
+    var keys = showCurrent ? ['all', 'current'] : ['all'];
+    tabsEl.innerHTML = keys.map(function (key) {
+      return '<button class="tab' + (filterMode === key ? ' active' : '') + '" data-tab="' + key + '">' + t('tab.' + key) + '</button>';
+    }).join('');
+    tabsEl.querySelectorAll('.tab').forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        userPickedTab = true;
+        filterMode = tab.getAttribute('data-tab');
+        render();
+      });
+    });
+  }
+
+  // ── Filtering ────────────────────────────────────────────────────────────
+  function visibleRecords() {
+    var term = searchTerm.trim().toLowerCase();
+    return records.filter(function (record) {
+      if (filterMode === 'current' && (!currentSessionId || record.sessionId !== currentSessionId)) return false;
+      if (!term) return true;
+      return (String(record.prompt || '') + ' ' + String(record.note || '') + ' ' + String(record.model || ''))
+        .toLowerCase().indexOf(term) >= 0;
+    });
+  }
+
+  /** Shorten `gpt-image-2.5-flare` to `flare` — the badge has ~20 characters of room. */
+  function shortModel(model) {
+    var value = String(model || '');
+    var match = /^gpt-image-(?:\d+(?:\.\d+)?)-(.+)$/.exec(value);
+    if (match) return match[1];
+    return value.replace(/^gpt-image-?/, '');
+  }
+
+  function badgeText(record) {
+    var dims = record.width && record.height
+      ? record.width + '×' + record.height
+      : String(record.size || '').replace('x', '×');
+    return [shortModel(record.model), record.quality, dims].filter(Boolean);
+  }
+
+  function formatWhen(createdAt) {
+    var date = new Date(createdAt);
+    if (!createdAt || isNaN(date.getTime())) return '';
+    var today = new Date();
+    var sameDay = date.toDateString() === today.toDateString();
+    var hh = ('0' + date.getHours()).slice(-2);
+    var mm = ('0' + date.getMinutes()).slice(-2);
+    if (sameDay) return hh + ':' + mm;
+    return (date.getMonth() + 1) + '/' + date.getDate() + ' ' + hh + ':' + mm;
+  }
+
+  // ── Masonry ──────────────────────────────────────────────────────────────
+  /** 2 columns at the narrowest, 5 at the widest; each column wants ≥240px. */
+  function columnCount(width) {
+    return Math.max(2, Math.min(5, Math.floor(width / 240)));
+  }
+
+  function render() {
+    var items = visibleRecords();
+    countEl.textContent = records.length ? t('count', { n: records.length }) : '';
+    gridEl.innerHTML = '';
+
+    if (!items.length) {
+      emptyEl.style.display = 'block';
+      emptyEl.innerHTML = '<div>' + iconSvg('images') + '</div>' +
+        '<div class="title">' + (searchTerm ? t('empty.noneMatch') : t('empty.title')) + '</div>' +
+        '<div class="hint">' + (searchTerm ? '' : t('empty.hint')) + '</div>';
+      return;
+    }
+    emptyEl.style.display = 'none';
+
+    var columns = [];
+    var heights = [];
+    var count = columnCount(gridEl.clientWidth || window.innerWidth || 900);
+    for (var i = 0; i < count; i++) { columns.push([]); heights.push(0); }
+
+    // Shortest-column packing, estimated from the stored pixel aspect ratio —
+    // the real dimensions are known before the bytes load, so nothing jumps.
+    items.forEach(function (record) {
+      var aspect = record.width && record.height ? record.height / record.width : 1;
+      var shortest = 0;
+      for (var c = 1; c < heights.length; c++) { if (heights[c] < heights[shortest]) shortest = c; }
+      columns[shortest].push(record);
+      heights[shortest] += aspect * 240 + 104;
+    });
+
+    columns.forEach(function (column) {
+      if (!column.length) return;
+      var colEl = document.createElement('div');
+      colEl.className = 'col';
+      column.forEach(function (record) { colEl.appendChild(buildCard(record)); });
+      gridEl.appendChild(colEl);
+    });
+  }
+
+  function buildCard(record) {
+    var card = document.createElement('div');
+    card.className = 'card';
+    card.setAttribute('data-path', record.filePath);
+
+    var aspect = record.width && record.height ? (record.height / record.width) : 1;
+    var badge = badgeText(record);
+    var flags = '';
+    if (record.references && record.references.length) {
+      flags += '<span title="' + escapeAttr(t('card.refs', { n: record.references.length })) + '">' + iconSvg('layers') + '</span>';
+    }
+    if (record.masked) flags += '<span>' + iconSvg('square') + '</span>';
+
+    card.innerHTML =
+      '<div class="thumb" style="aspect-ratio:' + (1 / Math.max(aspect, 0.05)) + '">' +
+        '<div class="ph">' + iconSvg('image') + '</div>' +
+        (badge ? '<div class="badge">' + badge.map(escapeHtml).join('<span class="dot">·</span>') + '</div>' : '') +
+        (flags ? '<div class="flag">' + flags + '</div>' : '') +
+      '</div>' +
+      '<div class="meta">' +
+        '<div class="prompt">' + escapeHtml(record.prompt || '') + '</div>' +
+        '<div class="sub"><span>' + escapeHtml(formatWhen(record.createdAt)) + '</span>' +
+          (record.note ? '<span class="note-chip">' + iconSvg('sticky') + '</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="actions">' +
+        '<button class="icon-btn" data-act="preview" title="' + escapeAttr(t('card.preview')) + '">' + iconSvg('maximize') + '</button>' +
+        '<button class="icon-btn" data-act="annotate" title="' + escapeAttr(t('card.annotate')) + '">' + iconSvg('pen-line') + '</button>' +
+        '<button class="icon-btn danger" data-act="delete" title="' + escapeAttr(t('card.delete')) + '">' + iconSvg('trash') + '</button>' +
+      '</div>';
+
+    var thumb = card.querySelector('.thumb');
+    card.addEventListener('click', function (event) {
+      var button = event.target.closest ? event.target.closest('[data-act]') : null;
+      if (button) {
+        event.stopPropagation();
+        var act = button.getAttribute('data-act');
+        if (act === 'preview') openPreview(record.filePath);
+        if (act === 'annotate') openAnnotator(record);
+        if (act === 'delete') removeRecord(record);
+        return;
+      }
+      openPreview(record.filePath);
+    });
+
+    if (imageCache[record.filePath]) {
+      slotImage(thumb, record.filePath);
+    } else {
+      requestImage(record.filePath);
+    }
+    return card;
+  }
+
+  function slotImage(thumb, filePath) {
+    var existing = thumb.querySelector('img');
+    if (existing) { existing.src = imageCache[filePath]; return; }
+    var img = document.createElement('img');
+    img.src = imageCache[filePath];
+    img.alt = '';
+    thumb.insertBefore(img, thumb.firstChild);
+    var placeholder = thumb.querySelector('.ph');
+    if (placeholder) placeholder.style.display = 'none';
+  }
+
+  function applyImage(filePath) {
+    if (!imageCache[filePath]) return;
+    document.querySelectorAll('.card[data-path="' + cssEscape(filePath) + '"]').forEach(function (card) {
+      slotImage(card.querySelector('.thumb'), filePath);
+    });
+  }
+
+  function cssEscape(value) {
+    return String(value).replace(/["\\]/g, '\\$&');
+  }
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>]/g, function (ch) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[ch]; });
+  }
+  function escapeAttr(value) { return escapeHtml(value).replace(/"/g, '&quot;'); }
+
+  // ── Preview ──────────────────────────────────────────────────────────────
+  function openPreview(filePath) {
+    if (finchApi && finchApi.appView && finchApi.appView.openPreview) {
+      finchApi.appView.openPreview(filePath).catch(function () {
+        if (finchApi.postMessage) finchApi.postMessage({ type: 'openPreview', filePath: filePath });
+      });
+      return;
+    }
+    if (finchApi && finchApi.postMessage) finchApi.postMessage({ type: 'openPreview', filePath: filePath });
+  }
+
+  function removeRecord(record) {
+    var run = async function () {
+      var confirmed = true;
+      var deleteFile = false;
+      if (finchApi && finchApi.ui && finchApi.ui.confirm) {
+        var result = await finchApi.ui.confirm({
+          title: t('confirm.deleteTitle'),
+          message: t('confirm.deleteBody') + '\n! ' + t('confirm.deleteCheck'),
+          confirmLabel: t('confirm.delete'),
+          cancelLabel: t('confirm.cancel'),
+          variant: 'danger',
+        });
+        confirmed = !!(result && result.confirmed);
+        // The native confirm has no checkbox, so the file itself is kept unless
+        // the user says otherwise through the message line above.
+        deleteFile = false;
+      }
+      if (!confirmed) return;
+      records = records.filter(function (item) { return item.id !== record.id; });
+      render();
+      if (finchApi && finchApi.postMessage) {
+        finchApi.postMessage({ type: 'deleteRecord', id: record.id, deleteFile: deleteFile });
+      }
+    };
+    run().catch(function () {});
+  }
+
+  // ── Image bytes on demand ────────────────────────────────────────────────
+  function ensureImage(filePath) {
+    if (imageCache[filePath]) return Promise.resolve(imageCache[filePath]);
+    return new Promise(function (resolve, reject) {
+      var waited = 0;
+      var timer = setInterval(function () {
+        waited += 100;
+        if (imageCache[filePath]) {
+          clearInterval(timer);
+          resolve(imageCache[filePath]);
+        } else if (waited > 10000) {
+          clearInterval(timer);
+          reject(new Error('image unavailable'));
+        }
+      }, 100);
+      requestImage(filePath);
+    });
+  }
+
+  function base64Of(dataUrl) {
+    var comma = String(dataUrl).indexOf(',');
+    return comma >= 0 ? String(dataUrl).slice(comma + 1) : String(dataUrl);
+  }
+
+  function mimeOf(record) {
+    var format = String(record.format || 'png').toLowerCase();
+    if (format === 'jpg' || format === 'jpeg') return 'image/jpeg';
+    if (format === 'webp') return 'image/webp';
+    return 'image/png';
+  }
+
+  // ── Annotation editor ────────────────────────────────────────────────────
+  var overlayEl = document.getElementById('overlay');
+  var canvasEl = document.getElementById('annotCanvas');
+  var wrapEl = document.getElementById('canvasWrap');
+  var regionListEl = document.getElementById('regionList');
+  var noteEl = document.getElementById('noteBox');
+
+  var editing = null;   // { record, regions: [{x,y,width,height,note}] } — normalised 0..1
+  var drag = null;
+
+  function canInsert() {
+    return !!(finchApi && finchApi.composer && finchApi.composer.addContexts &&
+      (currentView === 'session' || currentView === 'home'));
+  }
+
+  function openAnnotator(record) {
+    editing = { record: record, regions: [] };
+    document.getElementById('sheetTitle').textContent = t('sheet.title');
+    document.getElementById('sheetClose').innerHTML = iconSvg('x') + '<span>' + t('sheet.close') + '</span>';
+    document.getElementById('regionsHead').textContent = t('sheet.regions');
+    document.getElementById('regionsHint').textContent = t('sheet.regionsHint');
+    document.getElementById('noteHead').textContent = t('sheet.note');
+    noteEl.placeholder = t('sheet.notePlaceholder');
+    noteEl.value = record.note || '';
+    document.getElementById('btnSaveNote').innerHTML = iconSvg('sticky') + '<span>' + t('sheet.saveNote') + '</span>';
+    document.getElementById('btnInsertImage').innerHTML = iconSvg('image') + '<span>' + t('sheet.insertImage') + '</span>';
+    document.getElementById('btnInsertRegions').innerHTML = iconSvg('square') + '<span>' + t('sheet.insertRegions') + '</span>';
+    var scopeTip = document.getElementById('scopeTip');
+    scopeTip.textContent = canInsert()
+      ? (currentView === 'home' ? t('sheet.scopeHome') : t('sheet.scopeSession'))
+      : t('sheet.scopeNone');
+    document.getElementById('btnInsertImage').style.display = canInsert() ? '' : 'none';
+    document.getElementById('btnInsertRegions').style.display = canInsert() ? '' : 'none';
+
+    canvasEl.src = '';
+    renderRegions();
+    overlayEl.classList.add('open');
+    ensureImage(record.filePath).then(function (dataUrl) {
+      canvasEl.src = dataUrl;
+    }).catch(function () {
+      toast(t('toast.insertFailed'), 'warning');
+    });
+  }
+
+  function closeAnnotator() {
+    overlayEl.classList.remove('open');
+    editing = null;
+    drag = null;
+  }
+
+  function renderRegions() {
+    if (!editing) return;
+    // Boxes are positioned in percentages so they track the scaled picture.
+    wrapEl.querySelectorAll('.box').forEach(function (node) { node.remove(); });
+    editing.regions.forEach(function (region, index) {
+      var box = document.createElement('div');
+      box.className = 'box';
+      box.style.left = (region.x * 100) + '%';
+      box.style.top = (region.y * 100) + '%';
+      box.style.width = (region.width * 100) + '%';
+      box.style.height = (region.height * 100) + '%';
+      box.innerHTML = '<span class="tag">' + (index + 1) + '</span>';
+      wrapEl.appendChild(box);
+    });
+
+    if (!editing.regions.length) {
+      regionListEl.innerHTML = '<div class="tip">' + t('sheet.regionsEmpty') + '</div>';
+      return;
+    }
+    regionListEl.innerHTML = editing.regions.map(function (region, index) {
+      return '<div class="region-row"><span class="num">' + (index + 1) + '</span>' +
+        '<input type="text" data-region="' + index + '" value="' + escapeAttr(region.note || '') + '"></div>';
+    }).join('');
+    regionListEl.querySelectorAll('input[data-region]').forEach(function (input) {
+      input.addEventListener('input', function () {
+        editing.regions[Number(input.getAttribute('data-region'))].note = input.value;
+      });
+    });
+  }
+
+  function normalizedPoint(event) {
+    var rect = canvasEl.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    return {
+      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+    };
+  }
+
+  wrapEl.addEventListener('pointerdown', function (event) {
+    if (!editing || event.target !== canvasEl) return;
+    var point = normalizedPoint(event);
+    if (!point) return;
+    drag = { from: point, to: point };
+    wrapEl.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+
+  wrapEl.addEventListener('pointermove', function (event) {
+    if (!drag) return;
+    drag.to = normalizedPoint(event) || drag.to;
+    var ghost = wrapEl.querySelector('.box.dragging');
+    if (!ghost) {
+      ghost = document.createElement('div');
+      ghost.className = 'box dragging';
+      wrapEl.appendChild(ghost);
+    }
+    ghost.style.left = (Math.min(drag.from.x, drag.to.x) * 100) + '%';
+    ghost.style.top = (Math.min(drag.from.y, drag.to.y) * 100) + '%';
+    ghost.style.width = (Math.abs(drag.to.x - drag.from.x) * 100) + '%';
+    ghost.style.height = (Math.abs(drag.to.y - drag.from.y) * 100) + '%';
+  });
+
+  wrapEl.addEventListener('pointerup', function () {
+    if (!drag || !editing) { drag = null; return; }
+    var ghost = wrapEl.querySelector('.box.dragging');
+    if (ghost) ghost.remove();
+    var width = Math.abs(drag.to.x - drag.from.x);
+    var height = Math.abs(drag.to.y - drag.from.y);
+    if (width > 0.02 && height > 0.02) {
+      editing.regions.push({
+        x: Math.min(drag.from.x, drag.to.x),
+        y: Math.min(drag.from.y, drag.to.y),
+        width: width,
+        height: height,
+        note: '',
+      });
+      renderRegions();
+    }
+    drag = null;
+  });
+
+  function pixelRegions(record) {
+    var width = record.width || canvasEl.naturalWidth || 1024;
+    var height = record.height || canvasEl.naturalHeight || 1024;
+    return editing.regions.map(function (region) {
+      return {
+        x: Math.round(region.x * width),
+        y: Math.round(region.y * height),
+        width: Math.max(1, Math.round(region.width * width)),
+        height: Math.max(1, Math.round(region.height * height)),
+        note: region.note || undefined,
+      };
+    });
+  }
+
+  function editInstruction(record) {
+    return '请用 image_gen_create 以这张图为参考图继续修改：reference_image_paths 传 "' + record.filePath + '"。' +
+      '原始提示词：' + (record.prompt || '') + '。当前参数：model=' + record.model +
+      ', size=' + (record.width && record.height ? record.width + 'x' + record.height : record.size) +
+      ', quality=' + record.quality + '。';
+  }
+
+  async function insert(withRegions) {
+    if (!editing) return;
+    if (withRegions && !editing.regions.length) { toast(t('sheet.noBoxYet'), 'warning'); return; }
+    var record = editing.record;
+    try {
+      var dataUrl = await ensureImage(record.filePath);
+      var content = base64Of(dataUrl);
+      var overall = noteEl.value.trim();
+      var contexts;
+      if (withRegions) {
+        contexts = [{
+          type: 'image-region',
+          name: record.name,
+          mimeType: mimeOf(record),
+          content: content,
+          regions: pixelRegions(record),
+          note: overall || undefined,
+          displayName: record.name,
+        }];
+      } else {
+        contexts = [{
+          type: 'annotation',
+          label: record.name,
+          note: overall || undefined,
+          promptText: editInstruction(record),
+          image: { name: record.name, mimeType: mimeOf(record), content: content },
+        }];
+      }
+      var result = await finchApi.composer.addContexts(contexts);
+      if (result && result.added > 0) {
+        toast(t('toast.inserted'), 'success');
+        if (overall && overall !== record.note) {
+          record.note = overall;
+          if (finchApi.postMessage) finchApi.postMessage({ type: 'saveNote', id: record.id, note: overall });
+          render();
+        }
+        closeAnnotator();
+      } else {
+        toast(t('toast.insertFailed'), 'warning');
+      }
+    } catch (error) {
+      toast(t('toast.insertFailed'), 'warning');
+    }
+  }
+
+  document.getElementById('btnInsertRegions').addEventListener('click', function () { insert(true); });
+  document.getElementById('btnInsertImage').addEventListener('click', function () { insert(false); });
+  document.getElementById('btnSaveNote').addEventListener('click', function () {
+    if (!editing) return;
+    editing.record.note = noteEl.value.trim();
+    if (finchApi && finchApi.postMessage) {
+      finchApi.postMessage({ type: 'saveNote', id: editing.record.id, note: editing.record.note });
+    }
+    render();
+  });
+  document.getElementById('sheetClose').addEventListener('click', closeAnnotator);
+  overlayEl.addEventListener('click', function (event) { if (event.target === overlayEl) closeAnnotator(); });
+  document.addEventListener('keydown', function (event) { if (event.key === 'Escape' && overlayEl.classList.contains('open')) closeAnnotator(); });
+
+  // ── Wiring ───────────────────────────────────────────────────────────────
+  searchEl.addEventListener('input', function () { searchTerm = searchEl.value; render(); });
+
+  var resizePending = false;
+  window.addEventListener('resize', function () {
+    if (resizePending) return;
+    resizePending = true;
+    requestAnimationFrame(function () { resizePending = false; render(); });
+  });
+
+  paintStatic();
+  render();
+  if (finchApi && finchApi.postMessage) finchApi.postMessage({ type: 'requestGallery' });
+})();
+</script>
+</body>
+</html>
