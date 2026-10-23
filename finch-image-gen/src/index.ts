@@ -100,6 +100,12 @@ const MIN_PIXELS = 655_360;
 const MAX_PIXELS = 8_294_400;
 const MAX_EDGE = 3_840;
 const MAX_RATIO = 3;
+/**
+ * The edit endpoint documents this ceiling for the GPT image models
+ * ("you can provide up to 16 images"), so extra references are refused locally
+ * rather than sent to come back as an opaque 400.
+ */
+const MAX_REFERENCE_IMAGES = 16;
 
 export type SizeCheck = { ok: true; size: string } | { ok: false; error: string };
 
@@ -982,7 +988,7 @@ export function activate(ctx: finch.MiniToolContext): void {
             type: 'array',
             items: { type: 'string' },
             description:
-              'Local absolute file paths of reference image(s) for image-to-image / reference-guided editing. Omit for plain text-to-image.',
+              'Local absolute file paths of reference image(s) for image-to-image / reference-guided editing or compositing. Omit for plain text-to-image. The API accepts up to 16 reference images.',
           },
           mask_path: {
             type: 'string',
@@ -1106,6 +1112,14 @@ export function activate(ctx: finch.MiniToolContext): void {
         if (maskPath && !refPaths.length) {
           return {
             content: [{ type: 'text', text: 'mask_path needs reference_image_paths — a mask only applies to an image edit.' }],
+            isError: true,
+          };
+        }
+        // The endpoint documents a hard ceiling for GPT image models; refusing
+        // here beats a request that only comes back as an opaque 400.
+        if (refPaths.length > MAX_REFERENCE_IMAGES) {
+          return {
+            content: [{ type: 'text', text: t('error.tooManyReferences', { max: String(MAX_REFERENCE_IMAGES) }) }],
             isError: true,
           };
         }

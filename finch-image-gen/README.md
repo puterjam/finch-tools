@@ -5,7 +5,7 @@ Generate and edit images with OpenAI's GPT Image models, right inside a Finch co
 ## What it does
 
 - **Text-to-image** — describe what you want, get a picture.
-- **Image-to-image** — hand it one or more reference images plus a prompt, and it generates a new image guided by them (restyle a photo, remix a product shot, follow a reference's composition, etc.).
+- **Image-to-image** — hand it one or more reference images plus a prompt, and it generates a new image guided by them (restyle a photo, remix a product shot, follow a reference's composition, etc.). The API takes up to 16 references per request; enough for a real composite, and anything beyond that is refused before the call.
 - **Masked edits** — add a mask image and only the masked area changes.
 - **Transparent cut-outs** — ask for a transparent background and get a PNG/WebP you can drop straight into a design.
 - **Any size you need** — square, portrait, landscape, 2K or 4K, or a custom `WIDTHxHEIGHT`.
@@ -84,7 +84,7 @@ Click the **settings** (gear) menu on the Image 2.5 card in Toolcase → **API B
 ## 功能
 
 - **文生图**：描述你想要的画面，直接生成图片。
-- **图生图**：提供一张或多张参考图加上提示词，模型会参考这些图生成新图（换风格、改背景、借鉴构图等）。
+- **图生图**：提供一张或多张参考图加上提示词，模型会参考这些图生成新图（换风格、改背景、借鉴构图等）。接口一次最多接受 16 张参考图，超过会在发请求前直接拒绝。
 - **遮罩局部编辑**：再给一张遮罩图，就只改遮罩圈出来的区域。
 - **透明底抠图**：要透明背景就能直接拿到可放进设计稿的 PNG/WebP。
 - **尺寸自由**：方图、横版、竖版、2K、4K，或任意 `宽x高`。

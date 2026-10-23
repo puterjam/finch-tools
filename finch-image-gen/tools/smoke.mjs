@@ -207,6 +207,8 @@ globalThis.fetch = async (url, init) => {
   }
   if (record.init.body && typeof record.init.body !== 'string' && typeof record.init.body.get === 'function') {
     record.form = Object.fromEntries(record.init.body.entries());
+    // fromEntries collapses repeated keys, so keep the pairs too.
+    record.formEntries = [...record.init.body.entries()];
     record.formKeys = record.init.body.getAll ? record.init.body.getAll('image[]').length : 0;
   }
   calls.push(record);
@@ -337,6 +339,16 @@ const base = { prompt: 'a red square' };
   check('mask without references is rejected', noRef.result.isError === true && calls.length === 0, noRef.text);
   const missing = await run({ ...base, reference_image_paths: [join(storagePath, 'nope.png')] });
   check('missing reference file is reported', missing.result.isError === true && calls.length === 0);
+
+  // Several references travel as repeated `image[]` parts, in the order given.
+  const secondPath = join(storagePath, 'ref-2.png');
+  await writeFile(secondPath, PNG_1PX);
+  const multi = await run({ ...base, reference_image_paths: [refPath, secondPath] });
+  check('every reference image is attached', multi.call.formKeys === 2, String(multi.call.formKeys));
+  check('references keep their order and names', JSON.stringify(multi.call.formEntries.filter(([key]) => key === 'image[]').map(([, file]) => file.name)) === '["ref.png","ref-2.png"]', JSON.stringify(multi.call.formEntries.map(([key]) => key)));
+  const many = Array.from({ length: 17 }, () => refPath);
+  const tooMany = await run({ ...base, reference_image_paths: many });
+  check('more than 16 references is refused before any request', tooMany.result.isError === true && tooMany.text.includes('16') && calls.length === 0, tooMany.text);
 }
 
 // 6 — error mapping the model has to act on.
