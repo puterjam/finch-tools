@@ -1,7 +1,17 @@
 import type * as finch from 'finch';
-import { promises as fs } from 'node:fs';
+import { promises as fs, readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseAnnotations, type GalleryAnnotations } from './gallery-model';
+
+/**
+ * The pack id shared by the manifest declaration, the registration below and
+ * every `ext:` reference. Declaring the pack in the manifest only reserves the
+ * namespace: the SVGs themselves have to be registered at runtime, otherwise
+ * every reference silently resolves to nothing and no icon renders.
+ */
+const ICON_PACK_ID = 'image-gen-icons';
+const ICON_FILES = ['book-image', 'image', 'cpu-ai', 'paintbrush', 'image-upscale', 'settings', 'key-round', 'link'] as const;
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 /**
@@ -825,8 +835,30 @@ interface CreateImageInput {
   safety_identifier?: string;
 }
 
+/**
+ * Register every shipped SVG under the pack the manifest reserves. The bundle
+ * lives in `dist/`, so the assets sit one level up — the same layout the
+ * package ships. A missing file costs one icon, never the whole activation.
+ */
+export function registerIcons(ctx: finch.MiniToolContext): number {
+  const directory = fileURLToPath(new URL('../icons/', import.meta.url));
+  const entries: Record<string, { svg: string }> = {};
+  for (const name of ICON_FILES) {
+    try {
+      entries[name] = { svg: readFileSync(path.join(directory, `${name}.svg`), 'utf8') };
+    } catch (err) {
+      ctx.logger.warn(`icon "${name}" could not be read: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  const count = Object.keys(entries).length;
+  if (count) ctx.subscriptions.push(ctx.icons.register(ICON_PACK_ID, entries));
+  return count;
+}
+
 export function activate(ctx: finch.MiniToolContext): void {
   const t = (key: string, values?: Record<string, string | number>) => ctx.i18n.t(key, values);
+
+  registerIcons(ctx);
 
   ctx.subscriptions.push(
     ctx.tools.register({

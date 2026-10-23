@@ -19,7 +19,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from 'node
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activate, checkSize, formatApiError, readImageSize, resolveModel } from '../dist/index.js';
+import { activate, checkSize, formatApiError, readImageSize, registerIcons, resolveModel } from '../dist/index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -54,6 +54,8 @@ function makeCtx(storagePath) {
   const menus = { composer: {}, settings: null };
   // App View cannot attach to a Composer, so it sends into a Session instead.
   const sessions = { created: 0, sent: [], opened: [] };
+  // Icons only render when the pack is registered at runtime, not merely declared.
+  const icons = { packs: {} };
   let sessionCount = 0;
   const ctx = {
     storagePath,
@@ -121,6 +123,12 @@ function makeCtx(storagePath) {
         menus.settings = handlers;
       },
     },
+    icons: {
+      register(packId, entries) {
+        icons.packs[packId] = entries;
+        return { dispose() {} };
+      },
+    },
     ui: {
       async showModalDialog() { return { action: 'dismissed' }; },
       onDidOpenPanel(handler) {
@@ -131,7 +139,7 @@ function makeCtx(storagePath) {
       },
     },
   };
-  return { ctx, registered, menus, store, panelHandlers, previews, sessions };
+  return { ctx, registered, menus, store, panelHandlers, previews, sessions, icons };
 }
 
 function makeExec() {
@@ -207,7 +215,7 @@ globalThis.fetch = async (url, init) => {
 // ── run ──────────────────────────────────────────────────────────────────────
 
 const storagePath = mkdtempSync(join(tmpdir(), 'image-gen-smoke-'));
-const { ctx, registered, menus, store, panelHandlers, previews, sessions } = makeCtx(storagePath);
+const { ctx, registered, menus, store, panelHandlers, previews, sessions, icons } = makeCtx(storagePath);
 activate(ctx);
 
 const tool = registered.image_gen_create;
@@ -487,6 +495,15 @@ panelSent = sent;
   check('every icon reference is an ext: id declared in the manifest', unresolved.length === 0, unresolved.join(', '));
   const missingFiles = declared.filter((id) => !existsSync(join(root, manifest.icons[id].svg)));
   check('every declared icon ships a real SVG', missingFiles.length === 0, missingFiles.join(', '));
+
+  // Declaring the pack only reserves the namespace: without a runtime
+  // registration every reference and every shared side render nothing at all.
+  const registeredIcons = icons.packs[manifest.iconPacks[0].id] ?? {};
+  const registeredIds = Object.keys(registeredIcons);
+  check('the icon pack is registered at runtime', registeredIds.length === Object.keys(manifest.icons).length, `${registeredIds.length}/${Object.keys(manifest.icons).length}`);
+  check('every referenced icon id is registered', used.map(bareIconId).every((id) => registeredIds.includes(id)), registeredIds.join(', '));
+  check('registered icons carry real SVG markup', registeredIds.every((id) => registeredIcons[id].svg.includes('<svg') && registeredIcons[id].svg.includes('path')), JSON.stringify(registeredIcons.bookImage ?? null));
+  check('registration does not depend on the manifest file map', registerIcons(ctx) === registeredIds.length, String(registerIcons(ctx)));
 }
 
 // 11 — the stored default size behaves like the other defaults.
