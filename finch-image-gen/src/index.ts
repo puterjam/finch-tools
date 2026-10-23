@@ -440,25 +440,44 @@ async function saveImages(
  * Keep reporting progress on a fixed interval while `work` is in flight, so the
  * UI still shows a live "N s elapsed" status if the user leaves and returns to
  * the session mid-generation, instead of freezing on the first message.
+ *
+ * `kind: 'image'` asks Finch for its dedicated image-generation animation (with
+ * the requested pixel size as a badge) instead of the default progress bar —
+ * this is the one component that says "a picture is being drawn" rather than
+ * "some tool is working".
  */
 async function withHeartbeat<T>(
   work: Promise<T>,
   progress: finch.ToolProgress,
   stage: string,
   baseMessage: string,
-  intervalMs = 4000,
+  options: { resolution?: [number, number]; intervalMs?: number } = {},
 ): Promise<T> {
   const startedAt = Date.now();
-  progress.report({ stage, message: baseMessage });
+  const report = (message: string): void => {
+    progress.report({
+      stage,
+      message,
+      kind: 'image',
+      ...(options.resolution ? { image: { resolution: options.resolution } } : {}),
+    });
+  };
+  report(baseMessage);
   const timer = setInterval(() => {
     const elapsed = Math.round((Date.now() - startedAt) / 1000);
-    progress.report({ stage, message: `${baseMessage} (${elapsed}s elapsed)` });
-  }, intervalMs);
+    report(`${baseMessage} (${elapsed}s elapsed)`);
+  }, options.intervalMs ?? 4000);
   try {
     return await work;
   } finally {
     clearInterval(timer);
   }
+}
+
+/** `auto` leaves the size to the model, so only an explicit size has a badge. */
+function sizeResolution(size: string): [number, number] | undefined {
+  const match = /^(\d{1,4})x(\d{1,4})$/.exec(size.trim());
+  return match ? [Number(match[1]), Number(match[2])] : undefined;
 }
 
 // ── gallery ──────────────────────────────────────────────────────────────────
@@ -1151,6 +1170,7 @@ export function activate(ctx: finch.MiniToolContext): void {
 
           const stage = refPaths.length ? 'editing' : 'generating';
           const baseMessage = refPaths.length ? t('progress.editing') : t('progress.generating');
+          const resolution = sizeResolution(size);
           const outDir = path.join(ctx.storagePath, 'images');
           const previewDir = path.join(outDir, '.preview');
           const stream = partialImages > 0 && n === 1 && !refPaths.length;
@@ -1178,6 +1198,8 @@ export function activate(ctx: finch.MiniToolContext): void {
                       exec.progress.report({
                         stage,
                         message: t('progress.preview', { index: String(index), total: String(partialImages) }),
+                        kind: 'image',
+                        ...(resolution ? { image: { resolution } } : {}),
                       });
                     },
                   )
@@ -1185,6 +1207,7 @@ export function activate(ctx: finch.MiniToolContext): void {
             exec.progress,
             stage,
             baseMessage,
+            { resolution },
           );
 
           const items = result.data ?? [];

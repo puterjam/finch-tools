@@ -255,12 +255,32 @@ const base = { prompt: 'a red square' };
 
 // 1 — defaults: the cheapest combination, and only the broadly supported knobs.
 {
-  const { call, text } = await run(base);
+  const { call, text, reports } = await run(base);
   check('default model is the cheap gpt-image-2.5-flare', call.json.model === 'gpt-image-2.5-flare', call.json.model);
   check('default size/quality are the cheap 1024x1024 / low', call.json.size === '1024x1024' && call.json.quality === 'low', `${call.json.size} ${call.json.quality}`);
   check('optional knobs stay omitted', call.json.background === undefined && call.json.output_format === undefined && call.json.moderation === undefined);
   check('hits /images/generations', call.url.endsWith('/v1/images/generations'), call.url);
   check('result lists a saved file', text.includes('.png') && text.includes('model: gpt-image-2.5-flare'), text.slice(0, 120));
+  // Finch draws its dedicated image-generation animation for this kind, sized
+  // from the requested pixels — a plain progress bar reads as generic work.
+  check('progress asks for the image component', reports[0]?.kind === 'image' && reports[0]?.stage === 'generating', JSON.stringify(reports[0]));
+  check('the image component carries the pixel size', JSON.stringify(reports[0]?.image?.resolution) === '[1024,1024]', JSON.stringify(reports[0]?.image));
+}
+
+// 1b — an auto size has no pixels to badge yet, but it is still generation.
+{
+  const { reports } = await run({ ...base, size: 'auto' });
+  check('an auto size still shows the image component', reports[0]?.kind === 'image', JSON.stringify(reports[0]));
+  check('an auto size has no resolution badge', reports[0]?.image === undefined, JSON.stringify(reports[0]?.image));
+}
+
+// 1c — an edit is generation too, and it carries the same badge.
+{
+  const ref = join(storagePath, 'reference.png');
+  writeFileSync(ref, PNG_1PX);
+  const { reports } = await run({ ...base, reference_image_paths: [ref], size: '768x1024' });
+  check('editing reports the image component', reports[0]?.kind === 'image' && reports[0]?.stage === 'editing', JSON.stringify(reports[0]));
+  check('editing badges the requested size', JSON.stringify(reports[0]?.image?.resolution) === '[768,1024]', JSON.stringify(reports[0]?.image));
 }
 
 // 2 — stored defaults from the settings menu win over the built-in default.
@@ -360,6 +380,7 @@ const base = { prompt: 'a red square' };
   );
   check('stream sends stream:true and partial_images', stream.call.json.stream === true && stream.call.json.partial_images === 2);
   check('stream reports preview progress', stream.reports.some((r) => String(r.message).includes('1/2')), JSON.stringify(stream.reports));
+  check('a preview also shows the image component', stream.reports.filter((r) => String(r.message).includes('/2')).every((r) => r.kind === 'image' && JSON.stringify(r.image?.resolution) === '[1024,1024]'), JSON.stringify(stream.reports));
   check('stream saves the final image', stream.result.isError !== true && stream.text.includes('.png'), stream.text);
   check('preview scratch dir is cleaned up', !readdirSync(join(storagePath, 'images')).includes('.preview'));
 
