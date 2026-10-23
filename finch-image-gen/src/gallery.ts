@@ -1,8 +1,10 @@
 import type * as finch from 'finch';
-import { el, icon, labelButton, notice, paintIcons, textNode } from './gallery-dom';
+import { el, icon, labelButton, notice, paintIcons, textNode, installTooltips } from './gallery-dom';
 import { imageDimensions, masonryMetrics, type GalleryItem } from './gallery-model';
 import { setLocale, t } from './gallery-i18n';
 import { GalleryEditor } from './gallery-editor';
+import { insertImagePrompt } from './gallery-composer';
+import { captureCards, animateCards } from './gallery-motion';
 
 const api = (window as Window & { finch?: finch.WebviewBridgeApi }).finch;
 const grid = el('grid');
@@ -230,6 +232,7 @@ let shown = PAGE_SIZE;
 
 function render(): void {
   if (el('app').hidden) return;
+  const before = captureCards(grid);
   const filtered = filter === 'current' ? records.filter((r) => r.sessionId === sessionId) : records;
   // Never render the whole library at once: a big gallery is thousands of
   // pictures, and each visible card costs real image bytes.
@@ -267,6 +270,8 @@ function render(): void {
     const dimensions = imageDimensions(record);
     heights[index] += width * dimensions.height / dimensions.width + 12;
   });
+  animateCards(before);
+  requestAnimationFrame(updateScrollEdges);
 }
 
 /** Reuses an existing card (and its loaded image) instead of rebuilding it. */
@@ -289,7 +294,7 @@ function buildCard(record: GalleryItem): HTMLElement {
   if (composerHere()) {
     // Quick path for the common case: no edits, just hand the picture to the
     // Composer. The bytes come from the same cache the card's own image uses.
-    const insert = document.createElement('button'); insert.className = 'card-action'; insert.dataset.act = 'insert'; insert.innerHTML = icon('paperclip');
+    const insert = document.createElement('button'); insert.className = 'card-action'; insert.dataset.act = 'insert'; insert.innerHTML = icon('copy-plus');
     labelButton(insert, t('card.insert'));
     insert.onclick = (event) => { event.stopPropagation(); attachToComposer(record); };
     actions.append(insert);
@@ -328,10 +333,9 @@ async function removeRecord(record: GalleryItem): Promise<void> {
 }
 
 /**
- * Hands the original picture to the Composer as a plain image attachment, with
- * its file path in the reminder so the same picture can still be edited by
- * reference. Deliberately synchronous up to `addContexts`: the call needs the
- * live user gesture, so the bytes have to be ready before the click.
+ * Hands the original picture to the Composer as a plain image attachment.
+ * Deliberately synchronous up to `addContexts`: the call needs the live user
+ * gesture, so the bytes have to be ready before the click.
  */
 function attachToComposer(record: GalleryItem): void {
   if (!api) return;
@@ -345,20 +349,12 @@ function attachToComposer(record: GalleryItem): void {
   }
   const comma = dataUrl.indexOf(',');
   const mimeType = /^data:([^;,]+)/.exec(dataUrl)?.[1] ?? 'image/png';
-  void api.composer
-    .addContexts([
-      {
-        // A plain image attachment, not an annotation token: the user asked for
-        // the picture, and the note keeps the original path visible.
-        type: 'image-region',
-        name: record.name,
-        mimeType,
-        content: dataUrl.slice(comma + 1),
-        regions: [],
-        note: t('insert.reminder', { path: record.filePath }),
-      },
-    ])
-    .then(() => notice(t('insert.done', { name: record.name })))
+  const text = [record.prompt, t('insert.source', { path: record.filePath })].filter(Boolean).join('\n\n');
+  void insertImagePrompt(api, {
+    type: 'image-region', name: record.name, mimeType,
+    content: dataUrl.slice(comma + 1), regions: [],
+  }, text)
+    .then((mode) => notice(t(mode === 'annotation' ? 'insert.legacy' : 'insert.done', { name: record.name })))
     .catch(() => notice(t('insert.failed')));
 }
 
@@ -375,7 +371,10 @@ new ResizeObserver(([entry]) => {
   if (columns === layoutColumns && layoutColumns > 0) {
     // Same packing, only narrower cards: a pure CSS change. Rebuilding here is
     // what made every picture blank out and flash while resizing.
+    const before = captureCards(grid);
     grid.style.setProperty('--card-width', `${cardWidth}px`);
+    animateCards(before);
+    requestAnimationFrame(updateScrollEdges);
     return;
   }
   cancelAnimationFrame(layoutFrame);
@@ -398,6 +397,16 @@ function fillViewport(): void {
   if (document.documentElement.scrollHeight <= window.innerHeight + 8) pageMore();
 }
 
+/** Only shade edges where actual cards continue beyond the visible area. */
+function updateScrollEdges(): void {
+  if (el('app').hidden) return;
+  const bar = el('topbar');
+  const bounds = grid.getBoundingClientRect();
+  bar.classList.toggle('stuck', window.scrollY > 1);
+  bar.classList.toggle('has-before', bounds.top < bar.getBoundingClientRect().bottom - 1 && window.scrollY > 1);
+  el('scrollShadeBottom').classList.toggle('has-after', bounds.bottom > window.innerHeight + 1);
+}
+
 let scrollFrame = 0;
 /**
  * Two jobs on scroll: reveal the divider once the grid slides under the sticky
@@ -407,7 +416,7 @@ function onScroll(): void {
   if (scrollFrame) return;
   scrollFrame = requestAnimationFrame(() => {
     scrollFrame = 0;
-    el('topbar').classList.toggle('stuck', window.scrollY > 1);
+    updateScrollEdges();
     if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 480) pageMore();
     fillViewport();
   });
@@ -415,6 +424,7 @@ function onScroll(): void {
 window.addEventListener('scroll', onScroll, { passive: true });
 window.addEventListener('resize', onScroll, { passive: true });
 
+installTooltips();
 paintCopy(); render();
 requestAnimationFrame(fillViewport);
 api?.postMessage({ type: 'requestGallery' });

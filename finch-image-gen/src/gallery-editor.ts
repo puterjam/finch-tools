@@ -1,10 +1,10 @@
 import type * as finch from 'finch';
-import { el, icon, labelButton, notice } from './gallery-dom';
+import { el, icon, labelButton, tooltipButton, notice } from './gallery-dom';
 import { clamp, emptyAnnotations, parseAnnotations, type GalleryAnnotations, type GalleryItem, type ImageComment, type Point, type Stroke } from './gallery-model';
 import { t } from './gallery-i18n';
+import { insertImagePrompt } from './gallery-composer';
 
 type Mode = 'view' | 'pen' | 'comment';
-type AnnotationDraft = Extract<finch.ComposerContextDraft, { type: 'annotation' }>;
 type ImageRegionDraft = Extract<finch.ComposerContextDraft, { type: 'image-region' }>;
 const clone = (data: GalleryAnnotations): GalleryAnnotations => structuredClone(data);
 const uid = (): string => crypto.randomUUID();
@@ -39,16 +39,18 @@ export class GalleryEditor {
   private pinDrag: { id: string; moved: boolean } | null = null;
   private revision = 0;
   private preparedRevision = -1;
-  private annotated: AnnotationDraft | null = null;
-  /** What a Composer gets: the picture itself, with the request as its note. */
+  /** The flattened marked preview, base64 PNG without a data-URL prefix. */
+  private evidence = '';
+  /** What a Composer gets: the marked picture, with the request as draft text. */
   private attachment: ImageRegionDraft | null = null;
   private loaded = false;
   private busy = false;
+  private clearArmed = false;
+  private clearTimer: ReturnType<typeof setTimeout> | undefined;
   private pendingSend = '';
   private attempt = 0;
   private deadline: ReturnType<typeof setTimeout> | undefined;
   private instruction = '';
-  private sourceUrl = '';
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
   private pendingSave = '';
   private prepareFrame = 0;
@@ -69,7 +71,10 @@ export class GalleryEditor {
     el('toolPen').onclick = () => this.setMode(this.mode === 'pen' ? 'view' : 'pen');
     el('toolComment').onclick = () => this.setMode(this.mode === 'comment' ? 'view' : 'comment');
     el('undo').onclick = () => this.undo();
-    el('clear').onclick = () => { void this.clear(); };
+    el('clear').onclick = () => this.clear();
+    document.addEventListener('pointerdown', (event) => {
+      if (this.clearArmed && !(event.target as Element).closest('#clear')) this.resetClear();
+    });
     el('send').onclick = () => { void this.deliver(); };
     el('deleteComment').onclick = () => this.removeActiveComment();
     el('toolSize').onclick = () => (el('sizeMenu').hidden ? this.openSizeMenu() : this.closeSizeMenu());
@@ -110,6 +115,7 @@ export class GalleryEditor {
     document.addEventListener('keydown', (event) => {
       if (!this.item) return;
       if (event.key === 'Escape') {
+        if (this.clearArmed) { this.resetClear(); return; }
         if (!el('sizeMenu').hidden) { event.stopPropagation(); this.closeSizeMenu(); return; }
         if (!this.popover.hidden) { event.stopPropagation(); this.closePopover(); return; }
         if (!(event.target instanceof HTMLInputElement)) this.close();
@@ -131,6 +137,7 @@ export class GalleryEditor {
    * reads and what ends up in the input box. One size line at a time.
    */
   private pickSize(size: string, ratio: string): void {
+    if (!this.loaded || this.busy) return;
     const prefix = t('size.promptPrefix');
     const line = `${prefix}${t('size.promptValue', { ratio, size })}`;
     const field = el<HTMLTextAreaElement>('instruction');
@@ -142,6 +149,8 @@ export class GalleryEditor {
     this.requested = size;
     this.changed(false);
     this.closeSizeMenu();
+    // Dispatch inside the actual row click, preserving the host user gesture.
+    void this.deliver();
   }
 
   private openSizeMenu(): void {
@@ -185,11 +194,13 @@ export class GalleryEditor {
 
   async open(item: GalleryItem): Promise<void> {
     if (this.item) this.flushSave();
+    this.resetClear();
     this.item = item;
     this.data = clone(parseAnnotations(item.annotations) || emptyAnnotations());
     this.instruction = item.note || '';
+    this.requested = SIZE_OPTIONS.find((option) => this.instruction.includes(option.size))?.size ?? '';
     this.dirty = false; this.pendingSave = ''; this.pendingSend = '';
-    this.loaded = false; this.busy = false; this.annotated = null;
+    this.loaded = false; this.busy = false; this.attachment = null; this.evidence = '';
     this.revision++; this.preparedRevision = -1;
     this.history = []; this.stroke = null; this.pinDrag = null; this.activeComment = '';
     this.mode = 'view';
@@ -206,7 +217,6 @@ export class GalleryEditor {
     try {
       const dataUrl = await this.getImage(item.filePath);
       if (this.item !== item) return;
-      this.sourceUrl = dataUrl;
       this.image.src = dataUrl;
       await this.image.decode();
       if (this.item !== item) return;
@@ -234,7 +244,9 @@ export class GalleryEditor {
     });
     labelButton(el('back'), t('editor.back'));
     labelButton(el('undo'), t('editor.undo'));
-    labelButton(el('clear'), t('editor.clear'));
+    tooltipButton(el('toolPen'), t('editor.draw'), t('editor.penHint'));
+    tooltipButton(el('toolComment'), t('editor.comment'), t('editor.commentHint'));
+    tooltipButton(el('toolSize'), t('editor.size'));
     labelButton(el('deleteComment'), t('editor.removeComment'));
     el<HTMLTextAreaElement>('commentText').placeholder = t('editor.commentPlaceholder');
     el<HTMLTextAreaElement>('instruction').placeholder = t('editor.instruction');
@@ -257,16 +269,23 @@ export class GalleryEditor {
     el('sendLabel').textContent = t(this.busy ? 'editor.delivering' : this.deliverLabel());
     const sendIcon = el('sendIcon');
     // Keep the attribute in step: the painter re-reads it on the next env change.
-    sendIcon.dataset.icon = composer ? 'corner-down-left' : 'send';
+    sendIcon.dataset.icon = composer ? 'copy-plus' : 'send';
     sendIcon.innerHTML = icon(sendIcon.dataset.icon ?? 'send');
     el('scopeHint').hidden = composer || sendable;
     el('scopeHint').textContent = t(this.canSend ? 'editor.scopeHint' : 'editor.sendUnsupported');
     el('toolPen').setAttribute('aria-pressed', String(this.mode === 'pen'));
     el('toolComment').setAttribute('aria-pressed', String(this.mode === 'comment'));
     this.surface.dataset.mode = this.mode;
-    const hint = t(this.mode === 'pen' ? 'editor.penHint' : this.mode === 'comment' ? 'editor.commentHint' : 'editor.viewHint');
-    el('toolHint').textContent = hint;
-    el('toolHint').hidden = !hint;
+    el<HTMLButtonElement>('toolSize').disabled = !this.loaded || this.busy;
+    const clear = el('clear');
+    clear.classList.toggle('icon-only', !this.clearArmed);
+    clear.classList.toggle('clear-confirm', this.clearArmed);
+    el('toolbar').dataset.confirming = String(this.clearArmed);
+    el('clearIcon').dataset.icon = this.clearArmed ? 'triangle-alert' : 'brush-cleaning';
+    el('clearIcon').innerHTML = icon(this.clearArmed ? 'triangle-alert' : 'brush-cleaning');
+    el('clearLabel').textContent = this.clearArmed ? t('editor.confirmClear') : '';
+    el('clearLabel').hidden = !this.clearArmed;
+    tooltipButton(clear, t(this.clearArmed ? 'editor.confirmClear' : 'editor.clear'));
     el('undo').hidden = !this.history.length;
     el('clear').hidden = !this.data.strokes.length && !this.data.comments.length;
     el('toolDivider').hidden = !this.history.length && !this.data.strokes.length && !this.data.comments.length;
@@ -501,6 +520,7 @@ export class GalleryEditor {
 
   private changed(redraw = true): void {
     if (!this.item) return;
+    this.resetClear();
     this.revision++; this.preparedRevision = -1; this.dirty = true;
     // Keep an in-memory draft even if a host write fails or a snapshot arrives.
     this.item.annotations = clone(this.data); this.item.note = this.instruction;
@@ -522,11 +542,32 @@ export class GalleryEditor {
     if (comment) this.openPopover(comment, false);
   }
 
-  private async clear(): Promise<void> {
-    if (!this.api || this.busy) return;
-    const { confirmed } = await this.api.ui.confirm({ title: t('editor.clearTitle'), message: t('editor.clearBody'), confirmLabel: t('editor.clear'), cancelLabel: t('cancel') });
-    if (!confirmed || !this.item) return;
-    this.snapshot(); this.data = emptyAnnotations(); this.closePopover(); this.changed();
+  private resetClear(): void {
+    clearTimeout(this.clearTimer);
+    if (!this.clearArmed) return;
+    this.clearArmed = false;
+    if (this.item) this.controls();
+  }
+
+  private clear(): void {
+    if (!this.item || this.busy) return;
+    if (!this.clearArmed) {
+      this.clearArmed = true;
+      this.controls();
+      this.clearTimer = setTimeout(() => this.resetClear(), 4000);
+      return;
+    }
+    this.clearAnnotations();
+  }
+
+  /** Clearing is a new baseline: neither the button nor Ctrl+Z revives marks. */
+  private clearAnnotations(): void {
+    this.resetClear();
+    this.stroke = null; this.pinDrag = null;
+    this.history = [];
+    this.data = emptyAnnotations();
+    this.closePopover(); this.activeComment = '';
+    this.changed();
   }
 
   private grow(node: HTMLTextAreaElement): void {
@@ -535,24 +576,9 @@ export class GalleryEditor {
   }
 
   /**
-   * A pin is a point; give it a small box so the region is a mark on the picture
-   * rather than a zero-sized one, and keep the coordinates normalized.
-   */
-  private regionFor(comment: { x: number; y: number; text: string }): { x: number; y: number; width: number; height: number; note?: string } {
-    const size = .04;
-    return {
-      x: clamp(comment.x - size / 2),
-      y: clamp(comment.y - size / 2),
-      width: Math.min(size, 1 - clamp(comment.x - size / 2)),
-      height: Math.min(size, 1 - clamp(comment.y - size / 2)),
-      note: comment.text.trim() || undefined,
-    };
-  }
-
-  /**
    * Everything the model needs, in the order a person reads it: what the user
-   * typed, each pin with its percentage, then where the original file is. This
-   * is the attachment note, so it stays readable in the Composer hover card.
+   * typed, each pin with its percentage, then where the original file is. Inside
+   * a Composer this is the draft text, so the user can reword it before sending.
    */
   private requestText(): string {
     const parts: string[] = [];
@@ -575,17 +601,13 @@ export class GalleryEditor {
 
   /**
    * Flatten strokes and pins once, before the click: the Composer protocol has no
-   * freehand path type, so the evidence image carries the marks while the request
-   * text — comment by comment, with percentages and the original file path —
-   * travels as the attachment's note. Nothing is sent automatically and the
-   * original file is never overwritten.
+   * freehand path type, so the evidence image carries the marks. Nothing is sent
+   * automatically and the original file is never overwritten.
    */
   private prepare(): void {
     if (!this.loaded || !this.item || this.stroke) return;
     try {
       const name = this.item.name;
-      const separator = this.sourceUrl.indexOf(',');
-      const mimeType = /^data:([^;]+);/.exec(this.sourceUrl)?.[1] || 'image/png';
       const scale = Math.min(1, 2048 / Math.max(this.image.naturalWidth, this.image.naturalHeight));
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(this.image.naturalWidth * scale));
@@ -615,28 +637,19 @@ export class GalleryEditor {
       });
       const evidence = canvas.toDataURL('image/png').split(',')[1];
       if (evidence.length > 24 * 1024 * 1024) throw new Error(t('editor.sendTooLarge'));
-      const text = this.requestText();
-      const image = { name: `${name.replace(/\.[^.]+$/, '')}-annotated.png`, mimeType: 'image/png', content: evidence };
-      this.annotated = {
-        type: 'annotation', label: t('editor.annotationLabel', { name }),
-        note: text, promptText: text,
-        reminder: t('editor.reminder', { path: this.item.filePath }),
-        image,
-      };
+      this.evidence = evidence;
       /**
-       * In a Composer the picture goes in as a plain image attachment rather
-       * than an annotation token: the pins become its regions and the request
-       * becomes its note, so the user sees what they asked for on hover and the
-       * model receives it with the picture.
+       * What a Composer gets: the marked picture as a plain image attachment —
+       * no regions, so Finch draws nothing of its own onto it. The request text
+       * travels separately as editable draft text (see `deliver`), which is the
+       * whole point: the user must be able to reword it before sending.
        */
       this.attachment = {
         type: 'image-region',
         name: `${name.replace(/\.[^.]+$/, '')}-annotated.png`,
-        displayName: name,
         mimeType: 'image/png',
         content: evidence,
-        regions: this.data.comments.map((comment) => this.regionFor(comment)),
-        note: text,
+        regions: [],
       };
       this.preparedRevision = this.revision;
       this.controls();
@@ -646,14 +659,15 @@ export class GalleryEditor {
   }
 
   private readyEvidence(): string | null {
-    if (this.preparedRevision !== this.revision || !this.annotated?.image) this.prepare();
-    return this.preparedRevision === this.revision ? this.annotated?.image?.content ?? null : null;
+    if (this.preparedRevision !== this.revision || !this.evidence) this.prepare();
+    return this.preparedRevision === this.revision ? this.evidence : null;
   }
 
   /**
    * One button, two destinations: inside a Composer scope the marked preview is
-   * attached to the draft; in the App View there is no draft, so the edit is sent
-   * into a Session this mini tool owns and the host is asked to open it.
+   * attached and the request is dropped into the input box as editable text; in
+   * the App View there is no draft, so the edit is sent into a Session this mini
+   * tool owns and the host is asked to open it.
    */
   private async deliver(): Promise<void> {
     const item = this.item;
@@ -665,14 +679,13 @@ export class GalleryEditor {
     this.busy = true; this.controls();
     try {
       if (composer) {
-        // Invoke addContexts straight from this click: it needs the trusted
-        // gesture, so nothing may be awaited before it.
-        const result = await this.api.composer.addContexts([this.attachment ?? this.annotated!]);
+        const mode = await insertImagePrompt(this.api, this.attachment!, this.requestText());
         if (this.item !== item) return;
-        if (result.added < 1) throw new Error(t('editor.failed'));
+        // Only clear after the host accepted the marked image and full request.
+        this.busy = false;
+        this.clearAnnotations();
         this.flushSave();
-        this.close();
-        notice(t('editor.attached'));
+        notice(t(mode === 'annotation' ? 'insert.legacy' : 'editor.attached'));
         return;
       }
       this.attempt += 1;
@@ -724,11 +737,12 @@ export class GalleryEditor {
   }
 
   private close(): void {
+    this.resetClear();
     this.endStroke(); this.flushSave();
     cancelAnimationFrame(this.prepareFrame);
     clearTimeout(this.deadline);
     const draft = this.item;
-    this.item = null; this.sourceUrl = ''; this.annotated = null; this.activeComment = '';
+    this.item = null; this.attachment = null; this.evidence = ''; this.activeComment = '';
     this.closePopover(); this.closeSizeMenu();
     el('editor').hidden = true; document.body.classList.remove('editing');
     if (draft) this.onClose(draft);

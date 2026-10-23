@@ -145,6 +145,7 @@ function makeCtx(storagePath) {
 
 function makeExec() {
   const reports = [];
+  activeReports = reports;
   return {
     reports,
     exec: {
@@ -170,6 +171,8 @@ const PNG_1PX = Buffer.from(
 
 let calls = [];
 let nextResponse = null;
+/** Progress reports of the run in flight, so the stub can time them. */
+let activeReports = [];
 
 function jsonReply(body, init = {}) {
   return {
@@ -211,6 +214,9 @@ globalThis.fetch = async (url, init) => {
     record.formEntries = [...record.init.body.entries()];
     record.formKeys = record.init.body.getAll ? record.init.body.getAll('image[]').length : 0;
   }
+  // How many progress reports existed when the request went out: preparation
+  // must not have claimed to be drawing anything yet.
+  record.reportsBeforeSend = activeReports.length;
   calls.push(record);
   return nextResponse;
 };
@@ -223,6 +229,7 @@ activate(ctx);
 
 const tool = registered.image_gen_create;
 check('tool image_gen_create is registered', !!tool);
+check('no initial progress component before image generation starts', tool.progressMode === undefined);
 
 /** Stand in for a gallery webview so the panel bridge can be driven end to end. */
 function makePanel(view = 'appView', sessionId = '') {
@@ -267,6 +274,10 @@ const base = { prompt: 'a red square' };
   // from the requested pixels — a plain progress bar reads as generic work.
   check('progress asks for the image component', reports[0]?.kind === 'image' && reports[0]?.stage === 'generating', JSON.stringify(reports[0]));
   check('the image component carries the pixel size', JSON.stringify(reports[0]?.image?.resolution) === '[1024,1024]', JSON.stringify(reports[0]?.image));
+  // The first report goes out *with* the request: while the tool is still
+  // reading and uploading local inputs nothing is being drawn, so no image
+  // component is claimed (a report at the top of the call would make this 2).
+  check('drawing is only claimed once the request is on the wire', call.reportsBeforeSend === 1, String(call.reportsBeforeSend));
 }
 
 // 1b — an auto size has no pixels to badge yet, but it is still generation.
@@ -332,6 +343,7 @@ const base = { prompt: 'a red square' };
   await writeFile(refPath, PNG_1PX);
   const { call } = await run({ ...base, reference_image_paths: [refPath], mask_path: refPath, n: 9 });
   check('edits go to /images/edits', call.url.endsWith('/v1/images/edits'), call.url);
+  check('an edit reads its reference image before claiming to draw', call.reportsBeforeSend === 1, String(call.reportsBeforeSend));
   check('reference image is attached', call.formKeys === 1, String(call.formKeys));
   check('mask is attached', call.form.mask !== undefined && call.form.mask.name === 'ref.png', JSON.stringify(call.form.mask));
   check('n is clamped to 4', call.form.n === '4', call.form.n);

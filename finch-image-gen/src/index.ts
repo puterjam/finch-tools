@@ -296,8 +296,10 @@ async function callGenerate(
   baseUrl: string,
   apiKey: string,
   body: Record<string, unknown>,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  started: () => void,
 ): Promise<OpenAiImageResponse> {
+  started();
   const response = await fetch(`${baseUrl}/images/generations`, {
     method: 'POST',
     headers: { ...authHeaders(apiKey), 'Content-Type': 'application/json' },
@@ -314,7 +316,8 @@ async function callEdit(
   fields: Record<string, string>,
   referenceImagePaths: string[],
   maskPath: string | undefined,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  started: () => void,
 ): Promise<OpenAiImageResponse> {
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) form.append(key, value);
@@ -326,6 +329,9 @@ async function callEdit(
     const buf = await fs.readFile(maskPath);
     form.append('mask', new Blob([buf], { type: mimeForPath(maskPath) }), path.basename(maskPath));
   }
+  // Announced here, not at the top: reading (and about to upload) the
+  // reference images is preparation, not generation.
+  started();
   const response = await fetch(`${baseUrl}/images/edits`, {
     method: 'POST',
     headers: authHeaders(apiKey),
@@ -349,7 +355,9 @@ async function callGenerateStreaming(
   body: Record<string, unknown>,
   signal: AbortSignal | undefined,
   onPartial: (index: number, buf: Buffer) => void,
+  started: () => void,
 ): Promise<OpenAiImageResponse> {
+  started();
   const response = await fetch(`${baseUrl}/images/generations`, {
     method: 'POST',
     headers: { ...authHeaders(apiKey), 'Content-Type': 'application/json', Accept: 'text/event-stream' },
@@ -452,19 +460,23 @@ async function saveImages(
  * UI still shows a live "N s elapsed" status if the user leaves and returns to
  * the session mid-generation, instead of freezing on the first message.
  *
- * `kind: 'image'` asks Finch for its dedicated image-generation animation (with
- * the requested pixel size as a badge) instead of the default progress bar —
- * this is the one component that says "a picture is being drawn" rather than
- * "some tool is working".
+ * Nothing is reported until the work calls `started()`: reading and uploading
+ * local inputs is not generation, and claiming it with the image component
+ * would show a picture being drawn before the request even went out. `started()`
+ * fires exactly when the generation call goes on the wire, and every report
+ * after it uses `kind: 'image'` — Finch's dedicated image-generation animation
+ * (with the requested pixel size as a badge), the one component that says "a
+ * picture is being drawn" rather than "some tool is working".
  */
 async function withHeartbeat<T>(
-  work: Promise<T>,
+  work: (started: () => void) => Promise<T>,
   progress: finch.ToolProgress,
   stage: string,
   baseMessage: string,
   options: { resolution?: [number, number]; intervalMs?: number } = {},
 ): Promise<T> {
   const startedAt = Date.now();
+  let timer: ReturnType<typeof setInterval> | undefined;
   const report = (message: string): void => {
     progress.report({
       stage,
@@ -473,15 +485,18 @@ async function withHeartbeat<T>(
       ...(options.resolution ? { image: { resolution: options.resolution } } : {}),
     });
   };
-  report(baseMessage);
-  const timer = setInterval(() => {
-    const elapsed = Math.round((Date.now() - startedAt) / 1000);
-    report(`${baseMessage} (${elapsed}s elapsed)`);
-  }, options.intervalMs ?? 4000);
+  const started = (): void => {
+    if (timer) return;
+    report(baseMessage);
+    timer = setInterval(() => {
+      const elapsed = Math.round((Date.now() - startedAt) / 1000);
+      report(`${baseMessage} (${elapsed}s elapsed)`);
+    }, options.intervalMs ?? 4000);
+  };
   try {
-    return await work;
+    return await work(started);
   } finally {
-    clearInterval(timer);
+    if (timer) clearInterval(timer);
   }
 }
 
@@ -1098,7 +1113,6 @@ export function activate(ctx: finch.MiniToolContext): void {
       },
       risk: 'medium',
       timeoutMs: 300000,
-      progressMode: 'indeterminate',
       async execute(rawInput: Record<string, unknown>, exec: finch.ToolExecutionContext) {
         const input = rawInput as unknown as CreateImageInput;
         const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : '';
@@ -1202,34 +1216,37 @@ export function activate(ctx: finch.MiniToolContext): void {
           const stream = partialImages > 0 && n === 1 && !refPaths.length;
 
           const result = await withHeartbeat(
-            refPaths.length
-              ? callEdit(
-                  baseUrl,
-                  apiKey,
-                  { model, prompt, size, quality, n: String(n), ...optional },
-                  refPaths,
-                  maskPath,
-                  exec.signal,
-                )
-              : stream
-                ? callGenerateStreaming(
+            (started) =>
+              refPaths.length
+                ? callEdit(
                     baseUrl,
                     apiKey,
-                    { model, prompt, size, quality, n, partial_images: partialImages, ...optional },
+                    { model, prompt, size, quality, n: String(n), ...optional },
+                    refPaths,
+                    maskPath,
                     exec.signal,
-                    async (index, buf) => {
-                      const previewPath = path.join(previewDir, `${namePrefix}-preview-${index}.png`);
-                      await fs.mkdir(previewDir, { recursive: true });
-                      await fs.writeFile(previewPath, buf);
-                      exec.progress.report({
-                        stage,
-                        message: t('progress.preview', { index: String(index), total: String(partialImages) }),
-                        kind: 'image',
-                        ...(resolution ? { image: { resolution } } : {}),
-                      });
-                    },
+                    started,
                   )
-                : callGenerate(baseUrl, apiKey, { model, prompt, size, quality, n, ...optional }, exec.signal),
+                : stream
+                  ? callGenerateStreaming(
+                      baseUrl,
+                      apiKey,
+                      { model, prompt, size, quality, n, partial_images: partialImages, ...optional },
+                      exec.signal,
+                      async (index, buf) => {
+                        const previewPath = path.join(previewDir, `${namePrefix}-preview-${index}.png`);
+                        await fs.mkdir(previewDir, { recursive: true });
+                        await fs.writeFile(previewPath, buf);
+                        exec.progress.report({
+                          stage,
+                          message: t('progress.preview', { index: String(index), total: String(partialImages) }),
+                          kind: 'image',
+                          ...(resolution ? { image: { resolution } } : {}),
+                        });
+                      },
+                      started,
+                    )
+                  : callGenerate(baseUrl, apiKey, { model, prompt, size, quality, n, ...optional }, exec.signal, started),
             exec.progress,
             stage,
             baseMessage,

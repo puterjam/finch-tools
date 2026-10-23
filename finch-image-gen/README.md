@@ -21,16 +21,18 @@ Generate and edit images with OpenAI's GPT Image models, right inside a Finch co
 
 Every generation lands in the gallery — open it from the **Image 2.5** entry in the left sidebar (full-screen App View), or from the **Image 2.5** panel inside a session.
 
-- **Compact masonry** — cards never exceed 220px, with at most five columns. Narrow Panels reflow without stretching a lone image. Click the picture for the native preview.
+Older Finch versions remain supported through image annotations containing the complete request. Editable message text is an optional enhancement only when the host exposes it; the released app does not gain it merely by updating this mini tool. Development stays on the published SDK 0.3.15, with no SDK update or publication required.
+
+- **Compact masonry** — cards never exceed 220px, with at most five columns. Narrow Panels reflow without stretching a lone image. Reflow and resizing ease over 240ms, respect reduced motion, and keep the same decoded image nodes; shallow 12px edge shades appear only where more cards continue offscreen. Click the picture for the native preview.
 - **Opens fast, stays fast** — the grid renders 4K originals from thumbnails it made itself, keeps them on disk, and shows the library 20 cards at a time as you scroll. The title and the session filters stay pinned on top, with a divider once the grid passes under them.
 - **Less chrome** — the card is just the picture; hover brings up two lines of prompt over a bottom gradient plus the action buttons, and click opens Finch's native preview. Session filters sit below the title, like the Artifacts library.
-- **Attach in one click** — inside a session Panel, hovering a card offers **Attach**: the picture goes straight into the input box as an image attachment, with its file path in the reminder so it can still be edited by reference afterwards. No editor detour for "look at this picture".
+- **Attach in one click** — inside a session Panel, hovering a card offers **Attach**: the picture and its original prompt/path enter the input box together, as annotations on older hosts or editable text on capable hosts. The action uses a copy icon rather than a paperclip. No editor detour for "look at this picture".
 - **Edit in place** — the editor fills its Panel. The picture gets the whole area and the tool capsule floats on top of it, with no fixed-width side panel.
-- **Draw and comment** — freehand red lines and any number of numbered comments. Click the picture to drop a comment, which opens a small bubble right there to type into; drag its pin to move the comment, Escape to close. The editor height never changes. The capsule keeps the tools in the order you use them: **annotate / comment / size**, a divider, then **undo / clear** — clearing shows a delete mark, not a rubber, which in a picture editor reads as erasing the image itself.
-- **Ask for a different shape while you edit** — the toolbar's **Size** tool writes the aspect into the instructions ("Output size: 16:9 (1280x720)"), so the request carries its own size instead of quietly changing the tool's defaults. One size line at a time, and it stays editable.
+- **Draw and comment** — freehand red lines and any number of numbered comments. Click the picture to drop a comment, which opens a small bubble right there to type into; drag its pin to move the comment, Escape to close. Short tool hints appear only on hover, never in a footer row. Clear first becomes a warning-colored **Confirm clear** button; click again to clear, or Escape/click elsewhere to cancel. Clearing resets undo history. The editor height never changes. The capsule keeps the tools in the order you use them: **annotate / comment / size**, a divider, then **undo / clear** — clearing uses Lucide's `brush-cleaning` icon.
+- **Ask for a different shape while you edit** — the toolbar's **Size** tool writes the aspect into the instructions ("Output size: 16:9 (1280x720)"), so the request carries its own size instead of quietly changing the tool's defaults. Picking a size immediately inserts the picture and request into the Composer (or sends it in Composer-less scopes); it never changes the global default.
 - **Adjust from the App View** — the sidebar gallery browses; its cards hand an image back to the session that produced it. Click **Adjust** and Finch opens that session, with an already-open gallery panel dropping straight into the editor.
-- **A slim footer** — one instruction field and one button. Inside a session panel or on Home, **Attach image + request** puts the marked picture into the input box as a normal image attachment: the pins become its regions and your request becomes its note — every comment with its position, the overall instruction and the original file path — so it is all visible in the hover card and reaches the model with the picture. No second click, no parked text. A panel scope with no input box of its own sends everything to a new chat instead.
-- **Honest progress** — a long render shows Finch's image-generation animation with the requested pixel size as a badge, refreshed with elapsed time, and streaming previews report as they arrive. An `auto` size has no badge, because nobody knows the pixels yet.
+- **A slim footer** — one instruction field and one button. Inside a session panel or on Home, **Attach image + request** hands over the marked picture and complete request: image annotations on older Finch, or a plain image plus editable text when the host supports it. Successful insertion keeps the editor open and the instruction intact, but clears all marks and their undo history. Failed insertion preserves the marks for retry. A card's **Attach** also carries its original prompt. Older Finch builds keep using image annotations with the full request; no app update is required to use insertion. A panel scope with no input box of its own sends everything to a new chat instead.
+- **Honest progress** — a long render shows Finch's image-generation animation with the requested pixel size as a badge, refreshed with elapsed time, and streaming previews report as they arrive. It only appears once the request is actually on the wire — reading and uploading your reference images first is a plain tool state, not a drawing. An `auto` size has no badge, because nobody knows the pixels yet.
 - **Drafts are saved**, and removing an image only removes its gallery entry — the original file is kept.
 
 Editing needs a Composer to write into, so the editor opens from a session panel or a Home panel. The sidebar App View, which has no input box, offers **Adjust** instead of **Edit**; a card whose image was not created in a session offers neither.
@@ -102,16 +104,18 @@ Click the **settings** (gear) menu on the Image 2.5 card in Toolcase → **API B
 
 每张生成的图都会进图片库——从左侧边栏的 **Image 2.5** 入口打开（全屏 App View），或者在会话里打开 **Image 2.5** 面板。
 
-- **紧凑瀑布流**：每张卡片最大 220px，每排最多五列；窄面板自动重排，只有一张图也不会撑满整行。点击图片用内置预览器查看。
+**兼容旧版 Finch**：旧宿主使用图片批注承载完整说明，可以正常插入，但批注不是可编辑正文。只有宿主实际提供新能力时才增强为正文；单独更新小程序不会让旧 App 获得这项能力。开发依赖固定使用已发布的 SDK 0.3.15，不要求升级或发布 SDK。
+
+- **紧凑瀑布流**：每张卡片最大 220px，每排最多五列；窄面板自动重排，只有一张图也不会撑满整行。换列、变大变小都有 240ms 缓动，不重建图片，并尊重系统减少动态效果设置；列表边缘仅在还有内容时出现 12px 的浅遮挡阴影。点击图片用内置预览器查看。
 - **打开快、翻得快**：网格不用 4K 原图，而是用页面自己生成的缩略图（存在本地，下次打开直接用），并且一次只渲染 20 张、滚到底再续。标题和会话筛选固定在顶部，网格滚到下面时出现一条分隔线。
 - **轻量卡片**：卡片上只有图片本身，悬停时底部渐变上显示两行提示词、右上角出现操作按钮，点击图片用内置预览器查看。标题下方的筛选沿用成果库风格，不再提供搜索框。
-- **一键插入**：在会话面板里悬停卡片会多出一个**插入**按钮，直接把这张图作为图片附件放进输入框，并把原图路径写在 reminder 里，之后还能按参考图继续改；只想「让助手看看这张图」时不用绕进编辑器。
+- **一键插入**：在会话面板里悬停卡片会多出一个**插入**按钮，把图片、原始提示词和原图路径一起插入；旧宿主走图片批注，支持新能力的宿主才使用可编辑正文；图标改为复制而非别针；只想「让助手看看这张图」时不用绕进编辑器。
 - **区域内全屏编辑**：填满当前 Panel，图片占满整个区域，工具条浮动在图片上方，不再有固定宽侧栏。
-- **画线与多条评论**：自由画红线，点击图片就地弹出小气泡输入评论；拖动编号点可以改位置，Esc 关闭。底部高度不会因此变化。工具条按使用顺序排：**标注 / 评论 / 尺寸**，一条分割线，然后是**撤销 / 清除**——清除用删除图标而不是橡皮，图片编辑器里的橡皮会被读成「擦掉图片本身」。
-- **编辑时顺手改画幅**：工具栏的**尺寸**按钮把想要的画幅写进修改说明（如「输出尺寸：16:9（1280x720）」），这次请求自带尺寸，不去改工具的默认值；同一时间只留一行，随时可改。
+- **画线与多条评论**：自由画红线，点击图片就地弹出小气泡输入评论；拖动编号点可以改位置，Esc 关闭。工具提示只在悬停时显示短气泡，不再占据底部。清除先变成警告色的「确认清除标记」按钮，再点一次执行；Esc 或点其他位置取消，清除后不保留撤销记录。底部高度不会因此变化。工具条按使用顺序排：**标注 / 评论 / 尺寸**，一条分割线，然后是**撤销 / 清除**——清除使用 `brush-cleaning` 清扫图标。
+- **编辑时顺手改画幅**：工具栏的**尺寸**按钮把想要的画幅写进修改说明（如「输出尺寸：16:9（1280x720）」），这次请求自带尺寸，不去改工具的默认值；同一时间只留一行；点选后直接把图片和说明插入输入框，不用再点底部按钮。
 - **在 App View 里调整**：侧边栏图库只管浏览，卡片会把图片交回生成它的会话。点**调整**就会打开对应会话，已经开着图片库面板的会话还会直接进入编辑。
-- **精简底栏**：一个说明输入框加一个按钮。在会话面板或首页点**插入图片和说明**，带标注的图片会作为普通图片附件进入输入框——编号点变成它的 regions，你的要求变成它的 note（每条评论带坐标、整体说明、原图路径），悬停就能看到，也会随图片一起给到模型；不用再点第二次，也没有被挂起的文字。在没有自有输入框的面板作用域里，同一个按钮会改成**发送到新会话**。
-- **进度如实反馈**：出图期间显示 Finch 的生图动效，角标是本次请求的像素尺寸，并逐秒刷新已用时间；开了流式预览就逐张上报。尺寸是 `auto` 时不给角标，因为这时谁都不知道像素。
+- **精简底栏**：一个说明输入框加一个按钮。在会话面板或首页点**插入图片和说明**，会把带标注的图片和完整修改要求交给输入框：旧版 Finch 使用图片批注；只有支持新能力的宿主才插入普通图片附件和可编辑正文；插入成功后仍停留在当前编辑页，保留整体说明，自动清除全部标记和撤销记录；插入失败则保留标记供重试。卡片上的**插入**也带上原始提示词。旧版 Finch 正常使用图片批注携带完整说明，不强制更新 App。在没有自有输入框的面板作用域里，同一个按钮会改成**发送到新会话**。
+- **进度如实反馈**：出图期间显示 Finch 的生图动效，角标是本次请求的像素尺寸，并逐秒刷新已用时间；开了流式预览就逐张上报。它只在请求真的发出去之后出现——之前读参考图、拼请求的阶段是普通的工具状态，不会假装已经在画。尺寸是 `auto` 时不给角标，因为这时谁都不知道像素。
 - **草稿自动保存**；移除图片只移除图库记录，原始文件仍保留。
 
 编辑需要一个能写入的输入框，所以编辑器从会话面板或首页面板打开。侧边栏 App View 没有输入框，卡片给的是**调整**而不是**编辑**；不是在会话里生成的图片则两个都不给。

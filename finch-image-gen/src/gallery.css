@@ -9,6 +9,7 @@
   --border: var(--finch-border, #e6e6e8);
   --accent: var(--finch-accent, #3b82f6);
   --ink: #ef5350;
+  --warning: #a5670b;
   --gap: 12px;
 }
 @media (prefers-color-scheme: dark) {
@@ -20,6 +21,7 @@
     --muted: var(--finch-text-secondary, #a0a5ad);
     --border: var(--finch-border, #353535);
     --accent: var(--finch-accent, #62a2ff);
+    --warning: #e9b95d;
   }
 }
 * { box-sizing: border-box; }
@@ -43,6 +45,10 @@ button:disabled { opacity: .4; cursor: wait; }
 /* Title and filters ride along, with a divider once the grid passes under them. */
 .topbar { position: sticky; top: 0; z-index: 5; padding: 24px 0 20px; background: var(--bg); }
 .topbar.stuck { border-bottom: 1px solid var(--border); }
+.topbar::after { content: ''; position: absolute; top: 100%; left: 0; right: 0; height: 12px; pointer-events: none; opacity: 0; background: linear-gradient(var(--bg), transparent), linear-gradient(#00000012, transparent); transition: opacity .18s ease; }
+.topbar.has-before::after, .scroll-shade-bottom.has-after { opacity: 1; }
+.scroll-shade-bottom { position: fixed; z-index: 5; bottom: 0; left: 0; right: 0; height: 12px; pointer-events: none; opacity: 0; background: linear-gradient(transparent, var(--bg)), linear-gradient(transparent, #00000012); transition: opacity .18s ease; }
+body.editing .scroll-shade-bottom { display: none; }
 .topbar .tabs { margin-bottom: 0; }
 .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; gap: 12px; }
 .title-group { display: flex; align-items: center; gap: 8px; }
@@ -112,8 +118,11 @@ body.editing { overflow: hidden; }
 .tool:hover { background: var(--hover); }
 .tool[aria-pressed=true] { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .tool.icon-only { width: 30px; padding: 4px; }
+.tool.clear-confirm { color: var(--warning); background: color-mix(in srgb, var(--warning) 15%, transparent); padding: 4px 6px; font-size: 11px; }
+.tool.clear-confirm:hover { background: color-mix(in srgb, var(--warning) 24%, transparent); }
+.toolbar[data-confirming=true] .tool [data-text] { display: none; }
 .divider { width: 1px; height: 18px; background: var(--border); margin: 0 3px; }
-.tool-hint, .scope-hint { margin: 0; font-size: 11px; color: var(--muted); text-align: center; line-height: 1.4; }
+.scope-hint { margin: 0; font-size: 11px; color: var(--muted); text-align: center; line-height: 1.4; }
 
 /* Comment bubble anchored to its pin, so the footer never changes height. */
 .popover { position: absolute; z-index: 3; display: flex; flex-direction: column; gap: 5px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: 0 8px 26px #00000033; }
@@ -147,6 +156,7 @@ textarea { border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px
    accent border alone is the focus indicator here. */
 textarea:focus, textarea:focus-visible { outline: none; border-color: var(--accent); }
 .send:focus-visible { outline-offset: 0; }
+.tooltip { position: fixed; z-index: 40; max-width: calc(100vw - 12px); pointer-events: none; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); box-shadow: 0 2px 8px #0002; color: var(--text); font-size: 11px; white-space: nowrap; }
 .notice { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 8px 14px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: 0 4px 20px #0002; z-index: 30; max-width: 90%; font-size: 12px; }
 @media (max-width: 400px) {
   #app { padding: 0 12px 32px; }

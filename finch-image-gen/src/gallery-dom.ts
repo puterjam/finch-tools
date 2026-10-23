@@ -21,6 +21,51 @@ export function labelButton(node: HTMLElement, label: string): void {
   node.title = label;
   node.setAttribute('aria-label', label);
 }
+export function tooltipButton(node: HTMLElement, label: string, hint = label): void {
+  node.removeAttribute('title');
+  node.setAttribute('aria-label', label);
+  node.dataset.tooltip = hint;
+}
+
+/** One delegated bubble, outside the capsule so it cannot wrap or clip tools. */
+export function installTooltips(): void {
+  const bubble = el('toolTooltip');
+  let anchor: HTMLElement | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const hide = () => {
+    clearTimeout(timer);
+    anchor?.removeAttribute('aria-describedby');
+    anchor = null;
+    bubble.hidden = true;
+  };
+  const show = (event: Event) => {
+    const node = (event.target as Element).closest<HTMLElement>('[data-tooltip]');
+    if (!node || node === anchor) return;
+    hide();
+    anchor = node;
+    timer = setTimeout(() => {
+      if (anchor !== node || !node.isConnected) return;
+      const box = node.getBoundingClientRect();
+      if (!box.width) return;
+      bubble.textContent = node.dataset.tooltip ?? '';
+      bubble.hidden = false;
+      node.setAttribute('aria-describedby', bubble.id);
+      bubble.style.left = `${Math.max(6, Math.min(innerWidth - bubble.offsetWidth - 6, box.left + (box.width - bubble.offsetWidth) / 2))}px`;
+      bubble.style.top = `${Math.max(6, box.top - bubble.offsetHeight - 7)}px`;
+    }, 220);
+  };
+  document.addEventListener('pointerover', show);
+  document.addEventListener('focusin', show);
+  document.addEventListener('pointerout', (event) => {
+    if (anchor && !anchor.contains(event.relatedTarget as Node | null)) hide();
+  });
+  document.addEventListener('focusout', hide);
+  document.addEventListener('pointerdown', hide);
+  document.addEventListener('keydown', hide);
+  window.addEventListener('scroll', hide, { passive: true });
+  window.addEventListener('resize', hide, { passive: true });
+}
+
 export function textNode(tag: string, text: string, className = ''): HTMLElement {
   const node = document.createElement(tag);
   node.textContent = text;

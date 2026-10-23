@@ -40,7 +40,7 @@ await page.addInitScript(() => {
     sessionId: i % 2 ? 'session-2' : 'session-1', createdAt: Date.now() - i * 10000, note: '',
   }));
   const listeners = [];
-  const state = { records, contexts: [], rejections: [], messages: [], previews: [], view: 'session', sessionId: 'session-1', imageDelay: 0, refuseInsert: false, failImages: false, canSend: true, sends: [], failSend: false, thumbs: new Map(), savedThumbs: [], imageVariants: [] };
+  const state = { records, contexts: [], fills: [], rejections: [], messages: [], previews: [], confirmations: [], motions: [], view: 'session', sessionId: 'session-1', imageDelay: 0, refuseInsert: false, failImages: false, canSend: true, sends: [], failSend: false, thumbs: new Map(), savedThumbs: [], imageVariants: [], refuseFill: false };
   const emit = (message) => listeners.forEach((fn) => fn(message));
   const env = () => ({ view: state.view, sessionId: state.sessionId, locale: 'zh-CN', canSend: state.canSend });
   const snapshot = () => emit({ type: 'gallery', data: state.records, env: env() });
@@ -56,6 +56,11 @@ await page.addInitScript(() => {
     records.forEach((record) => state.thumbs.set(record.filePath, kept));
   }
   window.__host = Object.assign(state, { emit, snapshot, env });
+  const animate = Element.prototype.animate;
+  Element.prototype.animate = function (frames, options) {
+    if (this.matches('.card')) state.motions.push(options);
+    return animate.call(this, frames, options);
+  };
   window.finch = {
     onMessage(fn) { listeners.push(fn); return () => {}; },
     postMessage(message) {
@@ -100,9 +105,13 @@ await page.addInitScript(() => {
       }
     },
     composer: {
-      addContexts(contexts) {
+      fillText(text, options) {
+        throw new Error('Gallery must insert image and text atomically, not call fillText separately');
+      },
+      addContexts(contexts, options) {
         if (!navigator.userActivation.isActive) return Promise.reject(new Error('user-gesture-required'));
         if (state.refuseInsert) return Promise.reject(new Error('host rejected insertion'));
+        if (options?.text !== undefined && state.refuseFill) return Promise.reject(new Error('no composer on screen'));
         for (const item of contexts) {
           if (item.type === 'image-region' && item.regions.some((r) => [r.x, r.y, r.width, r.height].some((v) => v < 0 || v > 1))) {
             state.rejections.push('image-region requires normalized coordinates');
@@ -111,10 +120,11 @@ await page.addInitScript(() => {
           if (item.image && (!item.image.content || item.image.content.startsWith('data:'))) return Promise.reject(new Error('raw base64 required'));
         }
         state.contexts.push(...contexts);
+        if (options?.text !== undefined) state.fills.push({ text: options.text, mode: options.mode ?? 'append' });
         return Promise.resolve({ added: contexts.length });
       },
     },
-    ui: { toast() { return Promise.resolve({}); }, confirm() { return Promise.resolve({ confirmed: true }); } },
+    ui: { toast() { return Promise.resolve({}); }, confirm(options) { state.confirmations.push(options); return Promise.resolve({ confirmed: true }); } },
     appView: { openPreview(path) { state.previews.push(path); return Promise.resolve({ id: '' }); } },
   };
 });
@@ -133,7 +143,17 @@ try {
 }
 
 async function settle() {
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.evaluate(async () => {
+    // ResizeObserver schedules a later rAF render; two quiet frame pairs avoid
+    // sampling before that render has even started its FLIP animations.
+    let quiet = 0;
+    for (let pass = 0; pass < 10 && quiet < 2; pass++) {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const animations = document.getAnimations().filter((a) => a.effect?.target?.matches('.card'));
+      quiet = animations.length ? 0 : quiet + 1;
+      await Promise.all(animations.map((a) => a.finished.catch(() => {})));
+    }
+  });
 }
 
 async function runGalleryTests() {
@@ -158,7 +178,7 @@ async function runGalleryTests() {
     assert(layout.scroll <= layout.width, `${width}px: no horizontal overflow`);
     for (let i = 0; i < layout.cards.length; i++) for (let j = i + 1; j < layout.cards.length; j++) {
       const a = layout.cards[i]; const b = layout.cards[j];
-      assert(!(a.x < b.x + b.w - 1 && a.x + a.w > b.x + 1 && a.y < b.y + b.h - 1 && a.y + a.h > b.y + 1), 'Masonry cards do not overlap');
+      assert(!(a.x < b.x + b.w - 1 && a.x + a.w > b.x + 1 && a.y < b.y + b.h - 1 && a.y + a.h > b.y + 1), `Masonry cards do not overlap at ${width}px: ${JSON.stringify({ a, b })}`);
     }
     console.log(`ok UI: ${width}px gallery, ${layout.columns} columns, all cards <=220px`);
   }
@@ -191,7 +211,15 @@ async function runGalleryTests() {
   assert(reuse.loaded > 0, 'A re-layout never blanks the picture');
   await page.evaluate(() => window.__observer.disconnect());
   await page.setViewportSize({ width: 1200, height: 850 }); await settle();
-  console.log('ok UI: resizing never re-creates or reloads gallery images');
+  const motions = await page.evaluate(() => window.__host.motions);
+  assert(motions.length > 0 && motions.every((m) => m.duration === 240 && m.easing.includes('cubic-bezier')), 'Card reflows and resizing use eased, bounded FLIP animations');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const motionCount = motions.length;
+  await page.setViewportSize({ width: 700, height: 850 }); await settle();
+  assert.equal(await page.evaluate(() => window.__host.motions.length), motionCount, 'Reduced motion skips layout animations');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.setViewportSize({ width: 1200, height: 850 }); await settle();
+  console.log('ok UI: resizing eases without re-creating or reloading gallery images, respects reduced motion');
   await page.mouse.move(1190, 10);
   await page.waitForFunction(() => getComputedStyle(document.querySelector('.card .prompt-overlay')).opacity === '0');
   await page.locator('.card').first().hover();
@@ -209,17 +237,20 @@ async function runGalleryTests() {
   const firstCard = page.locator('.card').first();
   await firstCard.hover();
   assert.equal(await firstCard.locator('.card-action').count(), 3, 'A session card offers insert, edit and remove');
+  assert.equal(flat(await firstCard.locator('[data-act="insert"] svg').innerHTML()), flat(lucide['copy-plus']), 'Insert is a copy action, not a paperclip');
   await firstCard.locator('[data-act="insert"]').click();
   await page.waitForFunction(() => window.__host.contexts.length === 1);
   const attached = await page.evaluate(() => window.__host.contexts[0]);
   assert.equal(attached.type, 'image-region', 'The picture is attached as an image, not a chip token');
   assert.equal(attached.name, 'picture-0.png', 'The attachment is named after the file');
   assert(attached.mimeType === 'image/png' && attached.content.length > 100 && !attached.content.startsWith('data:'), 'The attachment carries raw image bytes');
-  assert(attached.note.includes('/gallery/picture-0.png'), 'The original path stays visible in the note');
+  assert(!attached.note, 'The picture goes in alone: a note would arrive as a separate text attachment');
   assert.equal(attached.regions.length, 0, 'A plain attach marks no regions');
+  const cardText = await page.evaluate(() => window.__host.fills[0]?.text);
+  assert(cardText?.includes('/gallery/picture-0.png') && cardText.includes(await page.evaluate(() => window.__host.records[0].prompt)), 'A card inserts its prompt and original path with the picture');
   assert(await page.locator('#editor').isHidden(), 'Attaching never opens the editor');
   await page.screenshot({ path: join(root, 'node_modules/.ui-card-actions.png') });
-  await page.evaluate(() => { window.__host.contexts.length = 0; });
+  await page.evaluate(() => { window.__host.contexts.length = 0; window.__host.fills.length = 0; });
   const card = await page.locator('.card').first().boundingBox();
   await page.mouse.click(card.x + card.width / 2, card.y + card.height / 2);
   assert.equal(await page.evaluate(() => window.__host.previews.length), 1, 'Click opens the native preview');
@@ -289,6 +320,8 @@ async function runLoadingTests() {
     return { stuck: bar.classList.contains('stuck'), border: getComputedStyle(bar).borderBottomWidth };
   });
   assert(!before.stuck && before.border === '0px', `No divider before anything scrolls (${JSON.stringify(before)})`);
+  assert(await page.locator('#scrollShadeBottom').evaluate((node) => node.classList.contains('has-after')), 'Bottom shade appears while cards continue below');
+  assert(!(await page.locator('#topbar').evaluate((node) => node.classList.contains('has-before'))), 'No top shade at the start');
 
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   await settle();
@@ -303,6 +336,15 @@ async function runLoadingTests() {
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   await settle();
   assert.equal(await page.locator('.card').count(), 45, 'The last page stops at the end of the library');
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight)); await settle();
+  assert(!(await page.locator('#scrollShadeBottom').evaluate((node) => node.classList.contains('has-after'))), 'No bottom shade after the last card');
+  assert(await page.locator('#topbar').evaluate((node) => node.classList.contains('has-before')), 'Top shade appears while cards remain above');
+  const shades = await page.evaluate(() => ({
+    top: getComputedStyle(document.getElementById('topbar'), '::after').height,
+    bottom: getComputedStyle(document.getElementById('scrollShadeBottom')).height,
+    pointer: getComputedStyle(document.getElementById('scrollShadeBottom')).pointerEvents,
+  }));
+  assert(parseFloat(shades.top) <= 12 && parseFloat(shades.bottom) <= 12 && shades.pointer === 'none', 'Edge shades stay shallow and never block clicks');
 
   await page.evaluate(() => {
     window.__host.records = window.__host.originalRecords;
@@ -314,6 +356,7 @@ async function runLoadingTests() {
 }
 
 async function openEditor() {
+  if (await page.locator('#editor').isVisible()) await page.locator('#back').click();
   await page.locator('#app').waitFor({ state: 'visible' });
   await settle();
   await page.locator('.card').first().hover();
@@ -337,6 +380,27 @@ async function drawStroke(from, to) {
   await settle();
 }
 
+/** A fresh annotated draft after a successful insertion cleared the last one. */
+async function markForRetry() {
+  if (await page.locator('#toolPen').getAttribute('aria-pressed') !== 'true') await page.locator('#toolPen').click();
+  await drawStroke([.2, .25], [.4, .5]);
+  await drawStroke([.6, .3], [.75, .45]);
+  await page.locator('#toolComment').click();
+  for (const [x, y, text] of [[.3, .4, '把这里换成暖光'], [.7, .6, '保留这个轮廓']]) {
+    const rect = await page.locator('#imageSurface').boundingBox();
+    await page.mouse.click(rect.x + rect.width * x, rect.y + rect.height * y);
+    await page.locator('#commentText').fill(text);
+  }
+  await page.waitForFunction(() => !document.getElementById('send').disabled);
+}
+
+async function assertCleared() {
+  assert.equal(await page.locator('.pin, #inkLayer path').count(), 0, 'All comments and lines are cleared');
+  assert(await page.locator('#undo').isHidden() && await page.locator('#clear').isHidden(), 'Clearing leaves no undo or clear action');
+  await page.keyboard.press('Control+z');
+  assert.equal(await page.locator('.pin, #inkLayer path').count(), 0, 'Keyboard undo cannot revive cleared marks');
+}
+
 async function runEditorTests() {
   await page.setViewportSize({ width: 360, height: 720 }); await settle();
   await openEditor();
@@ -355,9 +419,8 @@ async function runEditorTests() {
   // Tools in the order they are used: mark the picture, then take marks back.
   const tools = await page.evaluate(() => [...document.getElementById('toolbar').children].map((node) => node.id));
   assert.equal(tools.join(','), 'toolPen,toolComment,toolSize,toolDivider,undo,clear', `The size tool sits between the comment tool and the divider (${tools.join(',')})`);
-  // A rubber is a tool that removes pixels; this button clears marks, so it must
-  // not look like something that rubs out the picture.
-  assert.equal(await page.locator('#clear').getAttribute('data-icon'), 'trash-2', 'Clearing marks is a delete, not an eraser');
+  assert.equal(await page.locator('#clearIcon').getAttribute('data-icon'), 'brush-cleaning', 'Clear uses the requested cleaning brush');
+  assert.equal(flat(await page.locator('#clearIcon svg').innerHTML()), flat(lucide['brush-cleaning']), 'Cleaning brush is the actual Lucide geometry');
 
   // The toolbar can change the output size too, with the same presets.
   await page.locator('#toolSize').click();
@@ -382,6 +445,9 @@ async function runEditorTests() {
   await page.locator('#sizeMenuList .menu-row').nth(4).click();
   await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
   assert.equal(await page.locator('#instruction').inputValue(), '输出尺寸：16:9（1280x720）', 'Picking a size writes it into the instructions');
+  await page.waitForFunction(() => window.__host.contexts.length === 1);
+  assert((await page.evaluate(() => window.__host.fills.at(-1).text)).includes('16:9（1280x720）'), 'A size click immediately inserts the image and size request');
+  assert(await page.locator('#editor').isVisible(), 'Size insertion stays in the editor');
   assert.equal(await page.evaluate(() => window.__host.messages.some((m) => m.type === 'setDefaultSize')), false, 'The gallery never writes the tool default');
   await page.locator('#instruction').fill('把天空换成黄昏');
   await page.locator('#toolSize').click();
@@ -389,6 +455,8 @@ async function runEditorTests() {
   await page.locator('#sizeMenuList .menu-row').nth(0).click();
   await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
   assert.equal(await page.locator('#instruction').inputValue(), '把天空换成黄昏\n输出尺寸：1:1（1024x1024）', 'A second pick replaces the size line and keeps the request');
+  await page.waitForFunction(() => window.__host.contexts.length === 2);
+  assert((await page.evaluate(() => window.__host.fills.at(-1).text)).includes('把天空换成黄昏'), 'The direct size action also keeps the user instruction');
   await page.locator('#toolSize').click();
   await page.waitForFunction(() => !document.getElementById('sizeMenu').hidden);
   const markedRow = await page.evaluate(() => {
@@ -399,6 +467,18 @@ async function runEditorTests() {
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
   await page.locator('#instruction').fill('');
+  await page.evaluate(() => { window.__host.contexts.length = 0; window.__host.fills.length = 0; });
+  assert.equal(flat(await page.locator('#sendIcon').innerHTML()), flat(lucide['copy-plus']), 'Editor insertion uses the copy icon too');
+  assert.equal(await page.locator('#toolHint').count(), 0, 'No tool hint row is left below the image');
+  for (const [tool, hint] of [['toolPen', '拖动画线'], ['toolComment', '点击加评论']]) {
+    await page.locator(`#${tool}`).hover();
+    await page.locator('#toolTooltip').waitFor({ state: 'visible' });
+    assert.equal(await page.locator('#toolTooltip').textContent(), hint, 'Hover hint stays short');
+    const footer = await page.locator('.editor-bottom').boundingBox();
+    await page.locator(`#${tool}`).click();
+    assert(await page.locator('#toolTooltip').isHidden(), 'Click dismisses the hover bubble');
+    assert.equal((await page.locator('.editor-bottom').boundingBox()).height, footer.height, 'Selecting a tool never grows the footer');
+  }
 
   // The field is a readable width with an explicit send button beside it.
   await page.setViewportSize({ width: 1000, height: 800 }); await settle();
@@ -470,21 +550,23 @@ async function runEditorTests() {
   await page.locator('#send').click();
   await page.waitForFunction(() => window.__host.contexts.length === 1);
   const context = await page.evaluate(() => window.__host.contexts[0]);
-  // The picture goes in as an image attachment, not an annotation token…
+  const fill = await page.evaluate(() => window.__host.fills[0]);
+  // The picture goes in as a plain image attachment, not an annotation token…
   assert.equal(context.type, 'image-region');
   assert.equal(context.mimeType, 'image/png');
-  assert.equal(context.displayName, 'picture-0.png', 'The attachment still reads as the picture the user knows');
+  assert.equal(context.name, 'picture-0-annotated.png', 'The attachment says it is the marked preview, not the original');
   assert(context.content.length > 100 && !context.content.startsWith('data:'));
-  // …and the request travels with it, on screen: the note lists every comment
-  // with its position, plus the instructions and the original path.
-  assert(context.note.includes('把这里换成暖光') && context.note.includes('保留这个轮廓') && context.note.includes('保持构图'), 'Every comment and the instruction are in the visible note');
-  assert(context.note.includes('/gallery/picture-0.png'), 'The source path is retained for reference_image_paths');
-  const notePercent = /（(\d+)%, (\d+)%）/.exec(context.note) ?? /\((\d+)%, (\d+)%\)/.exec(context.note);
+  // …with nothing drawn onto it and no note: the marks are already in the bytes.
+  assert.equal(context.regions.length, 0, 'Finch draws nothing of its own onto the marked preview');
+  assert(!context.note, 'No note: a note would arrive as a second text attachment the user cannot edit');
+  // The request goes into the input box as editable text, where the user can
+  // reword it before sending; it lists every comment, its position, the
+  // instruction and the original path to pass as reference_image_paths.
+  assert(fill && fill.mode === 'append', 'The request is appended to whatever the user already typed');
+  assert(fill.text.includes('把这里换成暖光') && fill.text.includes('保留这个轮廓') && fill.text.includes('保持构图'), 'Every comment and the instruction are in the input box');
+  assert(fill.text.includes('/gallery/picture-0.png'), 'The source path is in the text for reference_image_paths');
+  const notePercent = /（(\d+)%, (\d+)%）/.exec(fill.text) ?? /\((\d+)%, (\d+)%\)/.exec(fill.text);
   assert(notePercent && Number(notePercent[1]) > 40, `The dragged comment reports its new position (${notePercent?.[1]}%)`);
-  // Each pin is also a region, so the picture itself shows where each comment is.
-  assert.equal(context.regions.length, 2, 'One region per comment');
-  assert(context.regions.every((region) => ['x', 'y', 'width', 'height'].every((key) => region[key] >= 0 && region[key] <= 1)), `Regions stay normalized (${JSON.stringify(context.regions[0])})`);
-  assert(context.regions.some((region) => region.note === '保留这个轮廓') && context.regions.some((region) => region.note === '把这里换成暖光'), 'Each region carries its own comment');
   assert.equal(await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'stagePrompt').length), 0, 'Nothing is parked for a second click anymore');
   const marked = await page.evaluate(async (content) => {
     const image = new Image(); image.src = `data:image/png;base64,${content}`; await image.decode();
@@ -496,9 +578,14 @@ async function runEditorTests() {
     return redPixels;
   }, context.content);
   assert(marked > 100, 'The attached evidence contains actual red pen/pin pixels');
+  await page.waitForFunction(() => !document.getElementById('send').disabled);
+  assert(await page.locator('#editor').isVisible(), 'A successful insertion stays on this picture');
+  await assertCleared();
+  assert.equal(await page.locator('#instruction').inputValue(), '保持构图', 'Insertion keeps the instruction draft');
   await openEditor();
-  assert.equal(await page.locator('.pin').count(), 2, 'Multiple comments survive reopening');
-  assert.equal(await page.locator('#inkLayer path').count(), 2, 'Freehand strokes survive reopening');
+  await assertCleared();
+  assert.equal(await page.locator('#instruction').inputValue(), '保持构图', 'Only the marks are cleared, not the instruction');
+  await markForRetry();
   await page.evaluate(() => { window.__host.refuseInsert = true; });
   await page.locator('#send').click();
   await page.waitForFunction(() => !document.getElementById('notice').hidden);
@@ -508,16 +595,60 @@ async function runEditorTests() {
   await page.locator('#send').click();
   await page.waitForFunction(() => window.__host.contexts.length === 2);
   assert.equal(await page.evaluate(() => window.__host.contexts[1].name), 'picture-0-annotated.png', 'A retry re-attaches the same marked preview');
+  await assertCleared();
+  // When the input box itself is not open, the text call fails first and the
+  // picture is never attached — no half-done delivery.
+  await openEditor();
+  await markForRetry();
+  await page.evaluate(() => { window.__host.refuseFill = true; });
+  await page.locator('#send').click();
+  await page.waitForFunction(() => !document.getElementById('notice').hidden);
+  assert.equal(await page.evaluate(() => window.__host.contexts.length), 2, 'A refused text fill attaches nothing');
+  assert.equal(await page.locator('.pin').count(), 2, 'A refused text fill keeps the draft');
+  await page.evaluate(() => { window.__host.refuseFill = false; });
+  // Older Finch builds ship no `composer.fillText` at all (mini tools update
+  // independently of the app): preserve the working annotation protocol.
+  const fillsBeforeFallback = await page.evaluate(() => window.__host.fills.length);
+  await page.evaluate(() => { window.__host.fillText = window.finch.composer.fillText; delete window.finch.composer.fillText; });
+  await page.locator('#send').click();
+  await page.waitForFunction(() => window.__host.contexts.length === 3);
+  const legacy = await page.evaluate(() => window.__host.contexts[2]);
+  assert.equal(legacy.type, 'annotation', 'Old hosts use the known-working annotation route, not the broken plain attachment projection');
+  assert(legacy.image?.content?.length > 100 && String(legacy.promptText || '').includes('保留这个轮廓') && legacy.promptText.includes('/gallery/picture-0.png'), 'Legacy annotation retains both the image and request');
+  assert.equal(await page.locator('#notice').textContent(), '已插入图片和批注。', 'Old hosts are supported without an upgrade requirement or false editable-text claim');
+  assert.equal(await page.evaluate(() => window.__host.fills.length), fillsBeforeFallback, 'The fallback writes no text of its own');
+  await assertCleared();
+  await page.evaluate(() => { window.finch.composer.fillText = window.__host.fillText; });
   console.log('ok UI: narrow Panel pen + floating bubble comments, pin dragging, capture-loss recovery, single deliver button');
 
   await openEditor();
+  await markForRetry();
   await page.locator('#toolPen').click();
   await drawStroke([.2, .7], [.6, .7]);
   assert.equal(await page.locator('#inkLayer path').count(), 3);
   await page.locator('#undo').click();
   assert.equal(await page.locator('#inkLayer path').count(), 2);
+  const confirms = await page.evaluate(() => window.__host.confirmations.length);
+  await page.setViewportSize({ width: 280, height: 720 }); await settle();
   await page.locator('#clear').click();
+  assert.equal(await page.locator('.pin').count(), 2, 'The first clear click keeps every mark');
+  assert.equal(await page.locator('#clearLabel').textContent(), '确认清除标记');
+  assert(await page.locator('#clear').evaluate((node) => node.classList.contains('clear-confirm')), 'Confirmation uses a warning button');
+  assert((await page.locator('#toolbar').boundingBox()).height <= 44, 'Inline clear confirmation fits a narrow toolbar');
+  assert.equal(await page.evaluate(() => window.__host.confirmations.length), confirms, 'Clearing never opens a modal');
+  await page.keyboard.press('Escape');
+  assert(await page.locator('#clearLabel').isHidden(), 'Escape cancels clear confirmation without leaving the editor');
+  await page.locator('#clear').click();
+  await page.locator('#toolPen').click();
+  assert(await page.locator('#clearLabel').isHidden(), 'Another tool cancels the pending confirmation');
+  await page.locator('#clear').click();
+  await page.getByRole('button', { name: '确认清除标记', exact: true }).click();
   await page.waitForFunction(() => document.querySelectorAll('.pin').length === 0);
+  await assertCleared();
+  await page.locator('#back').click();
+  await openEditor();
+  await assertCleared();
+  await page.setViewportSize({ width: 360, height: 720 }); await settle();
   assert.equal(await page.locator('#inkLayer path').count(), 0);
   await page.locator('#back').click();
   await page.evaluate(() => {
