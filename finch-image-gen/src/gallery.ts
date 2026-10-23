@@ -14,26 +14,83 @@ let pickedFilter = false;
 let authoritativeEnv = false;
 let canSend = false;
 const cache = new Map<string, string>();
-const waiting = new Map<string, { resolve: (value: string) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+const thumbs = new Map<string, string>();
+/**
+ * One in-flight request per (variant, path). The reply carries the variant that
+ * was actually sent, so a `thumb` request can be answered with the original when
+ * no thumbnail exists yet.
+ */
+type Variant = 'thumb' | 'full';
+type Reply = { dataUrl: string; variant: Variant };
+const waiting = new Map<string, { resolve: (value: Reply) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 
 /** Event-driven image RPC, not a polling timer; rejected requests stay retryable. */
-function getImage(filePath: string): Promise<string> {
-  const cached = cache.get(filePath);
-  if (cached) return Promise.resolve(cached);
+function requestImage(filePath: string, variant: Variant): Promise<Reply> {
   if (!api) return Promise.reject(new Error(t('image.failed')));
-  // The gallery does not need the original bytes before an item is visible.
   return new Promise((resolve, reject) => {
-    const previous = waiting.get(filePath);
+    const key = `${variant}|${filePath}`;
+    const previous = waiting.get(key);
     if (previous) {
       const oldResolve = previous.resolve; const oldReject = previous.reject;
       previous.resolve = (value) => { oldResolve(value); resolve(value); };
       previous.reject = (error) => { oldReject(error); reject(error); };
       return;
     }
-    const timer = setTimeout(() => { waiting.delete(filePath); reject(new Error(t('image.failed'))); }, 12000);
-    waiting.set(filePath, { resolve, reject, timer });
-    api.postMessage({ type: 'requestImage', filePath });
+    const timer = setTimeout(() => { waiting.delete(key); reject(new Error(t('image.failed'))); }, 12000);
+    waiting.set(key, { resolve, reject, timer });
+    api.postMessage({ type: 'requestImage', filePath, variant });
   });
+}
+
+/** The original bytes: for the editor, the preview and attaching by hand. */
+function getImage(filePath: string): Promise<string> {
+  const cached = cache.get(filePath);
+  if (cached) return Promise.resolve(cached);
+  return requestImage(filePath, 'full').then((reply) => {
+    cache.set(filePath, reply.dataUrl);
+    if (cache.size > 12) cache.delete(cache.keys().next().value!);
+    return reply.dataUrl;
+  });
+}
+
+/** A grid-sized copy if one has been kept, otherwise the original. */
+function getThumb(filePath: string): Promise<string> {
+  const cached = thumbs.get(filePath);
+  if (cached) return Promise.resolve(cached);
+  return requestImage(filePath, 'thumb').then((reply) => {
+    if (reply.variant === 'thumb') {
+      thumbs.set(filePath, reply.dataUrl);
+      if (thumbs.size > 400) thumbs.delete(thumbs.keys().next().value!);
+    } else {
+      cache.set(filePath, reply.dataUrl);
+    }
+    return reply.dataUrl;
+  });
+}
+
+/**
+ * Shrink a decoded picture for the grid and hand it back for keeping. The page
+ * is the only side with an image decoder, so this is where thumbnails come from.
+ */
+function keepThumb(filePath: string, img: HTMLImageElement): void {
+  if (thumbs.has(filePath) || !api) return;
+  try {
+    const max = 440;
+    const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/webp', .72);
+    if (!dataUrl.startsWith('data:image/webp;base64,') || dataUrl.length < 128) return;
+    thumbs.set(filePath, dataUrl);
+    api.postMessage({ type: 'saveThumb', filePath, dataUrl });
+  } catch {
+    // A thumbnail is an optimisation: any failure just means the original is
+    // sent again next time.
+  }
 }
 
 const editor = new GalleryEditor(api, getImage, (draft) => {
@@ -59,6 +116,11 @@ function openEditorFor(id: string): void {
   void editor.open(record);
 }
 
+/**
+ * Cards load only once they are, or are about to be, on screen. A gallery can
+ * hold thousands of records and every request is real image bytes, so loading
+ * them all at once is what made opening the library feel slow.
+ */
 const lazy = new IntersectionObserver((entries) => {
   entries.forEach((entry) => {
     if (!entry.isIntersecting) return;
@@ -69,7 +131,7 @@ const lazy = new IntersectionObserver((entries) => {
     if (!img || !filePath) return;
     // A reused card keeps its decoded bitmap: never re-assign a live src.
     if (img.dataset.loaded === '1') return;
-    getImage(filePath).then((dataUrl) => {
+    getThumb(filePath).then((dataUrl) => {
       if (!img.isConnected || img.dataset.loaded === '1') return;
       img.onload = () => {
         img.dataset.loaded = '1';
@@ -78,12 +140,14 @@ const lazy = new IntersectionObserver((entries) => {
           record.width = img.naturalWidth; record.height = img.naturalHeight;
           card.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
         }
+        // Only the original needs shrinking; a kept thumbnail is already small.
+        if (!dataUrl.startsWith('data:image/webp;base64,')) keepThumb(filePath, img);
         card.querySelector<HTMLElement>('.image-placeholder')?.remove();
       };
       img.src = dataUrl;
     }).catch(() => { card.querySelector<HTMLElement>('.image-placeholder')?.setAttribute('title', t('image.failed')); });
   });
-}, { rootMargin: '240px' });
+}, { rootMargin: '160px' });
 
 /**
  * Editing happens where the edit can be delivered. The App View is a browsing
@@ -130,12 +194,16 @@ api?.onMessage((raw) => {
     render();
     if (pendingEdit) openEditorFor(pendingEdit);
   } else if (message.type === 'imageData' && typeof message.filePath === 'string') {
-    const pending = waiting.get(message.filePath);
-    if (pending) { clearTimeout(pending.timer); waiting.delete(message.filePath); }
+    const filePath = message.filePath;
+    const variant: Variant = message.variant === 'thumb' ? 'thumb' : 'full';
+    // A thumb request is answered with the original when none exists yet, so
+    // fall back to the other key before giving up on the reply.
+    const pending = waiting.get(`${variant}|${filePath}`) ?? waiting.get(`${variant === 'thumb' ? 'full' : 'thumb'}|${filePath}`);
+    if (pending) {
+      for (const [key, entry] of waiting) if (entry === pending) { clearTimeout(entry.timer); waiting.delete(key); }
+    }
     if (typeof message.dataUrl === 'string' && message.dataUrl.startsWith('data:image/')) {
-      cache.set(message.filePath, message.dataUrl);
-      if (cache.size > 48) cache.delete(cache.keys().next().value!);
-      pending?.resolve(message.dataUrl);
+      pending?.resolve({ dataUrl: message.dataUrl, variant });
     } else pending?.reject(new Error(t(message.error === 'too-large' ? 'image.large' : 'image.failed')));
   } else if (message.type === 'annotationsSaved' || message.type === 'panelError') {
     editor.onSaved(message);
@@ -156,16 +224,23 @@ function paintCopy(): void {
   paintIcons();
 }
 
+/** One page of cards; the rest arrives as the page is scrolled. */
+const PAGE_SIZE = 20;
+let shown = PAGE_SIZE;
+
 function render(): void {
   if (el('app').hidden) return;
-  const items = filter === 'current' ? records.filter((r) => r.sessionId === sessionId) : records;
-  el('count').textContent = t('count', { n: items.length });
+  const filtered = filter === 'current' ? records.filter((r) => r.sessionId === sessionId) : records;
+  // Never render the whole library at once: a big gallery is thousands of
+  // pictures, and each visible card costs real image bytes.
+  const items = filtered.slice(0, shown);
+  el('count').textContent = t('count', { n: filtered.length });
   const tabs = el('tabs'); tabs.replaceChildren();
   const choices: ('all' | 'current')[] = view === 'session' && sessionId ? ['all', 'current'] : ['all'];
   choices.forEach((key) => {
     const button = textNode('button', t(key === 'all' ? 'tab.all' : 'tab.current'), `tab${filter === key ? ' active' : ''}`);
     button.setAttribute('aria-pressed', String(filter === key));
-    button.onclick = () => { pickedFilter = true; filter = key; render(); };
+    button.onclick = () => { pickedFilter = true; filter = key; shown = PAGE_SIZE; render(); };
     tabs.append(button);
   });
   const { columns, width } = masonryMetrics(grid.clientWidth);
@@ -173,7 +248,7 @@ function render(): void {
   layoutWidth = grid.clientWidth;
   grid.style.setProperty('--columns', String(columns));
   grid.style.setProperty('--card-width', `${width}px`);
-  el('empty').hidden = items.length > 0;
+  el('empty').hidden = filtered.length > 0;
   el('emptyTitle').textContent = t(filter === 'current' ? 'empty.current' : 'empty.title');
   el('emptyHint').textContent = t('empty.hint');
   // Keep the nodes of items that are still shown: their <img> elements hold the
@@ -302,5 +377,40 @@ new ResizeObserver(([entry]) => {
   cancelAnimationFrame(layoutFrame);
   layoutFrame = requestAnimationFrame(render);
 }).observe(grid);
+
+function visibleRecords(): GalleryItem[] {
+  return filter === 'current' ? records.filter((r) => r.sessionId === sessionId) : records;
+}
+
+/** One more page of cards, if the library has one. */
+function pageMore(): void {
+  if (shown >= visibleRecords().length) return;
+  shown += PAGE_SIZE;
+  render();
+}
+
+/** A short page in a tall window never scrolls, so keep paging until it does. */
+function fillViewport(): void {
+  if (document.documentElement.scrollHeight <= window.innerHeight + 8) pageMore();
+}
+
+let scrollFrame = 0;
+/**
+ * Two jobs on scroll: reveal the divider once the grid slides under the sticky
+ * title, and grow the window before the user actually hits the bottom.
+ */
+function onScroll(): void {
+  if (scrollFrame) return;
+  scrollFrame = requestAnimationFrame(() => {
+    scrollFrame = 0;
+    el('topbar').classList.toggle('stuck', window.scrollY > 1);
+    if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 480) pageMore();
+    fillViewport();
+  });
+}
+window.addEventListener('scroll', onScroll, { passive: true });
+window.addEventListener('resize', onScroll, { passive: true });
+
 paintCopy(); render();
+requestAnimationFrame(fillViewport);
 api?.postMessage({ type: 'requestGallery' });

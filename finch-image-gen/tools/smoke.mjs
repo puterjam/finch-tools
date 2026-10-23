@@ -463,8 +463,35 @@ panelSent = sent;
   await ask({ type: 'requestImage', filePath }, 'imageData');
   const imageMessage = sent.find((message) => message.type === 'imageData');
   check('image bytes cross the bridge as a data URL', imageMessage?.dataUrl?.startsWith('data:image/png;base64,'), JSON.stringify(imageMessage).slice(0, 80));
+  check('the reply says it is the original', imageMessage?.variant === 'full', String(imageMessage?.variant));
   await ask({ type: 'requestImage', filePath: join(storagePath, 'ghost.png') }, 'imageData');
   check('unreadable image is reported, not thrown', sent.some((m) => m.type === 'imageData' && m.error === 'unreadable'));
+
+  // Thumbnails: the grid asks for one and gets the original until it exists.
+  const beforeThumb = sent.length;
+  await ask({ type: 'requestImage', filePath, variant: 'thumb' }, 'imageData');
+  const noThumbYet = sent.slice(beforeThumb).find((m) => m.type === 'imageData');
+  check('without a thumbnail the original is sent instead', noThumbYet?.variant === 'full' && noThumbYet?.dataUrl.startsWith('data:image/png;base64,'), JSON.stringify(noThumbYet).slice(0, 60));
+
+  const tinyWebp = `data:image/webp;base64,${Buffer.from('RIFF____WEBPVP8 '.repeat(8)).toString('base64')}`;
+  /** The thumbnail folder only exists once something has been kept. */
+  const thumbFiles = () => { try { return readdirSync(join(storagePath, 'thumbs')); } catch { return []; } };
+  await handlers[0]({ type: 'saveThumb', filePath, dataUrl: tinyWebp });
+  await until(() => thumbFiles().length > 0);
+  const thumbs = thumbFiles();
+  check('a kept thumbnail is written next to the index', thumbs.length === 1 && thumbs[0].endsWith('.webp'), thumbs.join(','));
+
+  const beforeKept = sent.length;
+  await ask({ type: 'requestImage', filePath, variant: 'thumb' }, 'imageData');
+  const keptReply = sent.slice(beforeKept).find((m) => m.type === 'imageData');
+  check('the kept thumbnail is what the grid gets', keptReply?.variant === 'thumb' && keptReply?.dataUrl === tinyWebp, JSON.stringify(keptReply).slice(0, 60));
+
+  await handlers[0]({ type: 'saveThumb', filePath, dataUrl: 'data:image/png;base64,AAAA' });
+  check('only a webp thumbnail is kept', thumbFiles().length === 1);
+  await handlers[0]({ type: 'saveThumb', filePath: join(storagePath, 'ghost.png'), dataUrl: tinyWebp });
+  check('a thumbnail for an unknown image is ignored', thumbFiles().length === 1);
+  await handlers[0]({ type: 'saveThumb', filePath, dataUrl: `data:image/webp;base64,${Buffer.alloc(600 * 1024).toString('base64')}` });
+  check('an oversized thumbnail is refused', thumbFiles().length === 1);
 
   await ask({ type: 'openPreview', filePath });
   check('preview falls back to the host API', previews.includes(filePath), JSON.stringify(previews));

@@ -39,7 +39,11 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .card:focus-visible::after { opacity: 0; }
 svg { display: block; width: 16px; height: 16px; flex: none; }
 button:disabled { opacity: .4; cursor: wait; }
-#app { max-width: 1188px; margin: 0 auto; padding: 24px 20px 48px; }
+#app { max-width: 1188px; margin: 0 auto; padding: 0 20px 48px; }
+/* Title and filters ride along, with a divider once the grid passes under them. */
+.topbar { position: sticky; top: 0; z-index: 5; padding: 24px 0 20px; background: var(--bg); }
+.topbar.stuck { border-bottom: 1px solid var(--border); }
+.topbar .tabs { margin-bottom: 0; }
 .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; gap: 12px; }
 .title-group { display: flex; align-items: center; gap: 8px; }
 .title-icon { color: var(--accent); }
@@ -145,7 +149,8 @@ textarea:focus, textarea:focus-visible { outline: none; border-color: var(--acce
 .send:focus-visible { outline-offset: 0; }
 .notice { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 8px 14px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: 0 4px 20px #0002; z-index: 30; max-width: 90%; font-size: 12px; }
 @media (max-width: 400px) {
-  #app { padding: 20px 12px 32px; }
+  #app { padding: 0 12px 32px; }
+  .topbar { padding: 16px 0 16px; }
   .editor-bottom { padding: 6px 10px 10px; }
   .editor-header { padding: 10px 10px 4px; }
   .tool span[data-text] { display: none; }

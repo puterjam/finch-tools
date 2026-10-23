@@ -40,12 +40,21 @@ await page.addInitScript(() => {
     sessionId: i % 2 ? 'session-2' : 'session-1', createdAt: Date.now() - i * 10000, note: '',
   }));
   const listeners = [];
-  const state = { records, contexts: [], rejections: [], messages: [], previews: [], view: 'session', sessionId: 'session-1', imageDelay: 0, refuseInsert: false, failImages: false, canSend: true, sends: [], failSend: false };
+  const state = { records, contexts: [], rejections: [], messages: [], previews: [], view: 'session', sessionId: 'session-1', imageDelay: 0, refuseInsert: false, failImages: false, canSend: true, sends: [], failSend: false, thumbs: new Map(), savedThumbs: [], imageVariants: [] };
   const emit = (message) => listeners.forEach((fn) => fn(message));
   const env = () => ({ view: state.view, sessionId: state.sessionId, locale: 'zh-CN', canSend: state.canSend });
   const snapshot = () => emit({ type: 'gallery', data: state.records, env: env() });
   state.failImages = location.search.includes('image-error');
   state.imageDelay = location.search.includes('slow-image') ? 500 : 0;
+  // `?thumbs` arrives as a gallery whose thumbnails were kept on an earlier visit.
+  if (location.search.includes('thumbs')) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 16; canvas.height = 16;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#3b6ea5'; ctx.fillRect(0, 0, 16, 16);
+    const kept = canvas.toDataURL('image/webp', .7);
+    records.forEach((record) => state.thumbs.set(record.filePath, kept));
+  }
   window.__host = Object.assign(state, { emit, snapshot, env });
   window.finch = {
     onMessage(fn) { listeners.push(fn); return () => {}; },
@@ -53,7 +62,10 @@ await page.addInitScript(() => {
       state.messages.push(message);
       if (message.type === 'requestGallery') setTimeout(snapshot, 0);
       if (message.type === 'requestImage') setTimeout(() => {
+        state.imageVariants.push(`${message.variant}:${message.filePath}`);
         if (state.failImages) return emit({ type: 'imageData', filePath: message.filePath, error: 'unreadable' });
+        const kept = state.thumbs.get(message.filePath);
+        if (message.variant === 'thumb' && kept) return emit({ type: 'imageData', filePath: message.filePath, variant: 'thumb', dataUrl: kept });
         // A card can be dropped again while its bytes are still in flight.
         const record = records.find((r) => r.filePath === message.filePath) ?? { width: 640, height: 480 };
         const canvas = document.createElement('canvas');
@@ -64,8 +76,12 @@ await page.addInitScript(() => {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.fillStyle = '#638fa4'; ctx.beginPath();
         ctx.arc(canvas.width * .5, canvas.height * .48, canvas.width * .22, 0, Math.PI * 2); ctx.fill();
-        emit({ type: 'imageData', filePath: message.filePath, dataUrl: canvas.toDataURL() });
+        emit({ type: 'imageData', filePath: message.filePath, variant: 'full', dataUrl: canvas.toDataURL() });
       }, state.imageDelay);
+      if (message.type === 'saveThumb') {
+        state.thumbs.set(message.filePath, message.dataUrl);
+        state.savedThumbs.push(message.filePath);
+      }
       if (message.type === 'saveAnnotations') {
         const record = state.records.find((r) => r.id === message.id);
         record.annotations = message.annotations; record.note = message.note;
@@ -106,6 +122,7 @@ await page.addInitScript(() => {
 try {
   await page.goto(origin);
   await runGalleryTests();
+  await runLoadingTests();
   await runEditorTests();
   await runFailureAndThemeTests();
   assert.deepEqual(pageErrors, [], 'No unhandled page errors');
@@ -218,6 +235,82 @@ async function runGalleryTests() {
   await page.waitForFunction(() => [...document.querySelectorAll('.card')].slice(0, 5).every((card) => card.querySelector('img').naturalWidth > 0 && !card.querySelector('.image-placeholder')));
   await page.screenshot({ path: join(root, 'node_modules/.ui-gallery-wide.png'), fullPage: true });
   console.log('ok UI: hover overlay, top-right actions, native preview, single-card cap');
+}
+
+/** The gallery opens on the current session, so these tests ask for everything. */
+async function showAll() {
+  await page.locator('#tabs button').first().click();
+  await settle();
+}
+
+async function runLoadingTests() {
+  // Opening the library again must not re-read the originals: the grid asks for
+  // the thumbnail the page kept last time and renders straight from it. A tall
+  // window keeps most of the 16 records on screen, so the sample is meaningful.
+  await page.setViewportSize({ width: 960, height: 1000 });
+  await page.goto(`${origin}/?thumbs`);
+  await showAll();
+  await page.waitForFunction(() => window.__host.imageVariants.length >= 12);
+  const kept = await page.evaluate(() => ({
+    variants: window.__host.imageVariants,
+    src: document.querySelector('.card img')?.getAttribute('src') ?? '',
+  }));
+  assert(kept.variants.every((entry) => entry.startsWith('thumb:')), `A kept thumbnail is fetched, not the original (${kept.variants.slice(0, 3).join(' ')})`);
+  assert(kept.src.startsWith('data:image/webp;base64,'), 'The card renders the thumbnail bytes');
+
+  // A picture seen for the first time is rendered from the original once, then
+  // handed back as a thumbnail so the next visit is cheap.
+  await page.goto(origin);
+  await showAll();
+  await page.waitForFunction(() => window.__host.savedThumbs.length >= 12);
+  const saved = await page.evaluate(() => {
+    const first = window.__host.savedThumbs[0];
+    return { count: window.__host.savedThumbs.length, bytes: window.__host.thumbs.get(first).length };
+  });
+  assert(saved.count >= 12, `Every rendered card is kept as a thumbnail (${saved.count})`);
+  assert(saved.bytes > 100 && saved.bytes < 400000, `A thumbnail stays small (${saved.bytes} bytes)`);
+  assert(await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'saveThumb').length) === saved.count, 'The thumbnail is sent to the extension, not just cached in the page');
+
+  // A big library arrives one page at a time; a short window keeps one page
+  // taller than the viewport so nothing is filled in ahead of the scroll.
+  await page.setViewportSize({ width: 960, height: 600 });
+  await page.evaluate(() => {
+    window.__host.originalRecords = [...window.__host.records];
+    window.__host.records = Array.from({ length: 45 }, (_, i) => ({
+      ...window.__host.originalRecords[i % 16], id: `page-${i}`, filePath: `/gallery/page-${i}.png`, name: `page-${i}.png`,
+    }));
+    window.__host.snapshot();
+  });
+  await settle();
+  assert.equal(await page.locator('.card').count(), 20, 'A page renders 20 cards');
+  assert.equal((await page.locator('#count').textContent()).trim(), '共 45 张', 'The count still reports the whole library');
+  const before = await page.evaluate(() => {
+    const bar = document.getElementById('topbar');
+    return { stuck: bar.classList.contains('stuck'), border: getComputedStyle(bar).borderBottomWidth };
+  });
+  assert(!before.stuck && before.border === '0px', `No divider before anything scrolls (${JSON.stringify(before)})`);
+
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await settle();
+  assert.equal(await page.locator('.card').count(), 40, 'Reaching the bottom loads the next page');
+  const bar = await page.evaluate(() => {
+    const node = document.getElementById('topbar');
+    return { top: Math.round(node.getBoundingClientRect().top), stuck: node.classList.contains('stuck'), border: getComputedStyle(node).borderBottomWidth };
+  });
+  assert.equal(bar.top, 0, 'The title and filters stay at the top while the grid scrolls');
+  assert(bar.stuck && bar.border === '1px', `A divider appears once content passes under them (${JSON.stringify(bar)})`);
+  await page.screenshot({ path: join(root, 'node_modules/.ui-sticky-bar.png') });
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await settle();
+  assert.equal(await page.locator('.card').count(), 45, 'The last page stops at the end of the library');
+
+  await page.evaluate(() => {
+    window.__host.records = window.__host.originalRecords;
+    window.__host.snapshot();
+    window.scrollTo(0, 0);
+  });
+  await settle();
+  console.log('ok UI: thumbnails, paged loading and a sticky title with a divider');
 }
 
 async function openEditor() {

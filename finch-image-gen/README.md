@@ -22,6 +22,7 @@ Generate and edit images with OpenAI's GPT Image models, right inside a Finch co
 Every generation lands in the gallery — open it from the **Image 2.5** entry in the left sidebar (full-screen App View), or from the **Image 2.5** panel inside a session.
 
 - **Compact masonry** — cards never exceed 220px, with at most five columns. Narrow Panels reflow without stretching a lone image. Click the picture for the native preview.
+- **Opens fast, stays fast** — the grid renders 4K originals from thumbnails it made itself, keeps them on disk, and shows the library 20 cards at a time as you scroll. The title and the session filters stay pinned on top, with a divider once the grid passes under them.
 - **Less chrome** — the card is just the picture; hover brings up two lines of prompt over a bottom gradient plus the action buttons, and click opens Finch's native preview. Session filters sit below the title, like the Artifacts library.
 - **Attach in one click** — inside a session Panel, hovering a card offers **Attach**: the picture goes straight into the input box as an image attachment, with its file path in the reminder so it can still be edited by reference afterwards. No editor detour for "look at this picture".
 - **Edit in place** — the editor fills its Panel. The picture gets the whole area and the tool capsule floats on top of it, with no fixed-width side panel.
@@ -102,6 +103,7 @@ Click the **settings** (gear) menu on the Image 2.5 card in Toolcase → **API B
 每张生成的图都会进图片库——从左侧边栏的 **Image 2.5** 入口打开（全屏 App View），或者在会话里打开 **Image 2.5** 面板。
 
 - **紧凑瀑布流**：每张卡片最大 220px，每排最多五列；窄面板自动重排，只有一张图也不会撑满整行。点击图片用内置预览器查看。
+- **打开快、翻得快**：网格不用 4K 原图，而是用页面自己生成的缩略图（存在本地，下次打开直接用），并且一次只渲染 20 张、滚到底再续。标题和会话筛选固定在顶部，网格滚到下面时出现一条分隔线。
 - **轻量卡片**：卡片上只有图片本身，悬停时底部渐变上显示两行提示词、右上角出现操作按钮，点击图片用内置预览器查看。标题下方的筛选沿用成果库风格，不再提供搜索框。
 - **一键插入**：在会话面板里悬停卡片会多出一个**插入**按钮，直接把这张图作为图片附件放进输入框，并把原图路径写在 reminder 里，之后还能按参考图继续改；只想「让助手看看这张图」时不用绕进编辑器。
 - **区域内全屏编辑**：填满当前 Panel，图片占满整个区域，工具条浮动在图片上方，不再有固定宽侧栏。

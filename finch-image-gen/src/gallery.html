@@ -9,11 +9,14 @@
 </head>
 <body>
 <main id="app">
-  <header class="header">
-    <div class="title-group"><span class="title-icon" data-icon="book-image"></span><h1 id="title"></h1></div>
-    <span class="count" id="count"></span>
-  </header>
-  <nav id="tabs" class="tabs" aria-label="Gallery filters"></nav>
+  <!-- The title and filters stay put; the grid scrolls under them. -->
+  <div id="topbar" class="topbar">
+    <header class="header">
+      <div class="title-group"><span class="title-icon" data-icon="book-image"></span><h1 id="title"></h1></div>
+      <span class="count" id="count"></span>
+    </header>
+    <nav id="tabs" class="tabs" aria-label="Gallery filters"></nav>
+  </div>
   <div id="grid"></div>
   <section id="empty" class="empty" hidden><span data-icon="image"></span><h2 id="emptyTitle"></h2><p id="emptyHint"></p></section>
 </main>

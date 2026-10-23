@@ -1,4 +1,5 @@
 import type * as finch from 'finch';
+import { createHash } from 'node:crypto';
 import { promises as fs, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -496,6 +497,20 @@ const GALLERY_FILE = 'gallery.json';
 const GALLERY_LIMIT = 2000;
 /** Above this we refuse to ship bytes across the panel bridge. */
 const MAX_EMBED_BYTES = 12 * 1024 * 1024;
+/**
+ * The grid never needs a 4K original: the page renders each card from a small
+ * thumbnail it produced itself (it is the only side with an image decoder) and
+ * asks us to keep it, so a gallery that has been looked at once opens instantly.
+ */
+const THUMB_DIR = 'thumbs';
+const MAX_THUMB_BYTES = 400 * 1024;
+const currentThumbs = new Map<string, string>();
+
+/** Thumbnails live beside the gallery index, keyed by the original path. */
+function thumbFile(ctx: finch.MiniToolContext, filePath: string): string {
+  const key = createHash('sha1').update(filePath).digest('hex').slice(0, 20);
+  return path.join(ctx.storagePath, THUMB_DIR, `${key}.webp`);
+}
 
 export interface GalleryRecord {
   id: string;
@@ -754,12 +769,27 @@ async function handlePanelMessage(
 
   if (type === 'requestImage') {
     const filePath = typeof msg.filePath === 'string' ? msg.filePath : '';
+    const wantThumb = msg.variant === 'thumb';
     if (!filePath) return;
     try {
       const records = await loadGallery(ctx);
       if (!records.some((record) => record.filePath === filePath)) {
         await panel.postMessage({ type: 'imageData', filePath, error: 'unreadable' });
         return;
+      }
+      if (wantThumb) {
+        // A grid-sized copy, when one has been made. Otherwise the page gets the
+        // original, renders it, and sends back a thumbnail for next time.
+        const thumb = await fs.readFile(thumbFile(ctx, filePath)).catch(() => null);
+        if (thumb && thumb.length > 64 && thumb.length <= MAX_THUMB_BYTES) {
+          await panel.postMessage({
+            type: 'imageData',
+            filePath,
+            variant: 'thumb',
+            dataUrl: `data:image/webp;base64,${thumb.toString('base64')}`,
+          });
+          return;
+        }
       }
       const info = await fs.stat(filePath);
       if (info.size > MAX_EMBED_BYTES) {
@@ -770,11 +800,34 @@ async function handlePanelMessage(
       await panel.postMessage({
         type: 'imageData',
         filePath,
+        variant: 'full',
         dataUrl: `data:${imageMime(filePath)};base64,${buf.toString('base64')}`,
       });
     } catch {
       await panel.postMessage({ type: 'imageData', filePath, error: 'unreadable' });
     }
+    return;
+  }
+
+  if (type === 'saveThumb') {
+    // The page is the only side that can resize, so it hands us the result. Only
+    // a picture this gallery actually knows is accepted, and only small ones.
+    const filePath = typeof msg.filePath === 'string' ? msg.filePath : '';
+    const dataUrl = typeof msg.dataUrl === 'string' ? msg.dataUrl : '';
+    const encoded = /^data:image\/webp;base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+    if (!filePath || !encoded) return;
+    const records = await loadGallery(ctx);
+    if (!records.some((record) => record.filePath === filePath)) return;
+    const buf = Buffer.from(encoded[1], 'base64');
+    if (buf.length < 64 || buf.length > MAX_THUMB_BYTES) return;
+    const target = thumbFile(ctx, filePath);
+    const cached = currentThumbs.get(target);
+    if (cached === encoded[1]) return;
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    const tmp = `${target}.tmp`;
+    await fs.writeFile(tmp, buf);
+    await fs.rename(tmp, target);
+    currentThumbs.set(target, encoded[1]);
     return;
   }
 
@@ -920,6 +973,10 @@ async function handlePanelMessage(
         fileDeleteError = err instanceof Error ? err.message : String(err);
       });
     }
+    // The record is gone for good, so its cached thumbnail is dead weight.
+    const thumb = thumbFile(ctx, target.filePath);
+    await fs.rm(thumb, { force: true }).catch(() => {});
+    currentThumbs.delete(thumb);
     await panel.postMessage({ type: 'deleteResult', id, deleteFile, fileDeleteError });
     await broadcastGallery(ctx);
     return;
