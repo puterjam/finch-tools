@@ -221,7 +221,7 @@ api?.onMessage((raw) => {
 });
 
 function paintCopy(): void {
-  el('title').textContent = t('title'); document.title = 'Image 2.5';
+  el('title').textContent = t('title'); document.title = t('title');
   el('tabs').setAttribute('aria-label', t('title'));
   paintIcons();
 }

@@ -33,9 +33,9 @@
 - 包名用 `finch-<name>` 风格（如 `finch-ego-lite`），manifest `id` 用 kebab-case。
 - 所有包 `author.name` 统一为 `PuterJam`（中间无空格），url 为 `https://github.com/puterjam`。
 
-## Image 2.5 0.1.0 插入与交互（覆盖下方旧版本记录）
+## 生图工具 0.1.0 插入与交互（覆盖下方旧版本记录）
 
-- 版本按用户要求从 `0.1.0` 重新开始，保留原 0.25.3 的全部功能与修复；下文 0.25.x 是开发历史，不作为后续版本递增起点。
+- 版本按用户要求从 `0.1.0` 重新开始，保留原 0.25.3 的全部功能与修复；下文 0.25.x 是开发历史，不作为后续版本递增起点。小程序展示名改为「生图工具」（英文 Image Tool），菜单项一律不带 hoverText——悬停气泡会盖住相邻行，说明直接写在行内 `description`。
 - 兼容性优先：开发依赖固定为已发布 `@finchtoys/minitool-api@0.3.15`，不发布/升级 SDK；可选正文插入契约局限在 gallery-composer 的能力适配器里，运行时探测宿主能力，旧宿主保留完整 annotation。提示仅说「已插入图片和批注」，不能宣称正文可编辑或要求升级才能使用。必须用 npm ci 替换曾被手工覆盖的声明，再跑两条插入路径。
 
 - 0.25 的「写附件投影 + 单独 fillText」未真正更新已挂载输入框；假 Bridge 收到参数不等于用户看见内容。新版用一次 `composer.addContexts([image], { text, mode: 'append' })`，等真实 Composer 接收端落盘并同时提交图片和正文后再报成功；卡片也必须带 `record.prompt` 和原图路径。

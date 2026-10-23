@@ -584,7 +584,12 @@ panelSent = sent;
   ].join(',');
   const modelRows = modelRow.children.map((child) => `${child.label}|${child.description}`).join(',');
   check('model rows are the variant plus its family', modelRows === expectedModels, modelRows);
-  check('the model row still explains itself on hover', modelRow.children.every((child) => typeof child.hoverText === 'string' && child.hoverText.length > 0 && child.hoverText !== child.label));
+  check('the model row still names the current model inline', modelRow.description.length > 0);
+  // Menus stay quiet: rows explain themselves inline, never with a tooltip that
+  // covers the neighbouring rows.
+  const everyRow = [...composerMenu, ...composerMenu.flatMap((item) => item.children ?? []), ...settingsItems]
+    .concat(settingsItems.flatMap((item) => item.children ?? []));
+  check('no menu row carries a hover tooltip', everyRow.every((item) => item.hoverText === undefined), everyRow.filter((item) => item.hoverText !== undefined).map((item) => item.id).join(','));
   check('the model row shows the short name', modelRow.description === locale['model.flare'], modelRow.description);
   await store.set('defaultModel', 'my-relay-model');
   const relayMenu = await menus.composer['image-gen-settings'].getMenu({});

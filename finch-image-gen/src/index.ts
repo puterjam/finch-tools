@@ -53,14 +53,14 @@ const SIZE_CHOICES = [
  * expanded, never guessed at.
  *
  * The row stays short (the variant name, with its family as the small trailing
- * text) because the full names made the menu unreadable; what each variant is
- * good for lives in the hover text instead.
+ * text) because the full names made the menu unreadable, and rows carry no
+ * hover text: a tooltip on hover would cover the neighbouring rows.
  */
-const MODEL_CHOICES: Array<{ id: string; labelKey: string; hintKey: string; family: string }> = [
-  { id: 'gpt-image-2.5-flare', labelKey: 'model.flare', hintKey: 'model.flare.hint', family: 'Image 2.5' },
-  { id: 'gpt-image-2.5-sunburst', labelKey: 'model.sunburst', hintKey: 'model.sunburst.hint', family: 'Image 2.5' },
-  { id: 'gpt-image-2', labelKey: 'model.previous', hintKey: 'model.previous.hint', family: 'Image 2' },
-  { id: 'gpt-image-1.5', labelKey: 'model.legacy', hintKey: 'model.legacy.hint', family: 'Image 1.5' },
+const MODEL_CHOICES: Array<{ id: string; labelKey: string; family: string }> = [
+  { id: 'gpt-image-2.5-flare', labelKey: 'model.flare', family: 'Image 2.5' },
+  { id: 'gpt-image-2.5-sunburst', labelKey: 'model.sunburst', family: 'Image 2.5' },
+  { id: 'gpt-image-2', labelKey: 'model.previous', family: 'Image 2' },
+  { id: 'gpt-image-1.5', labelKey: 'model.legacy', family: 'Image 1.5' },
 ];
 
 const MODEL_ALIASES: Record<string, string> = {
@@ -1333,12 +1333,10 @@ export function activate(ctx: finch.MiniToolContext): void {
             iconName: 'ext:image-gen-icons/cpu-ai',
             // A relay's own model id has no short name, so it stays as-is.
             description: knownModel ? t(knownModel.labelKey) : effectiveModel,
-            hoverText: effectiveModel,
             children: MODEL_CHOICES.map((choice) => ({
               id: `model:${choice.id}`,
               label: t(choice.labelKey),
               description: choice.family,
-              hoverText: t(choice.hintKey),
               current: choice.id === effectiveModel,
             })),
           },
@@ -1347,7 +1345,6 @@ export function activate(ctx: finch.MiniToolContext): void {
             label: t('menu.quality'),
             iconName: 'ext:image-gen-icons/paintbrush',
             description: effectiveQuality,
-            hoverText: t('menu.current', { value: effectiveQuality }),
             children: QUALITY_ENUM.map((value) => ({
               id: `quality:${value}`,
               label: value,
@@ -1359,7 +1356,6 @@ export function activate(ctx: finch.MiniToolContext): void {
             label: t('menu.size'),
             iconName: 'ext:image-gen-icons/image-upscale',
             description: effectiveSize,
-            hoverText: t('menu.current', { value: effectiveSize }),
             // Aspect-ratio presets, each resolved to a valid pixel size.
             children: [
               ...SIZE_CHOICES.map((preset) => ({
@@ -1367,14 +1363,12 @@ export function activate(ctx: finch.MiniToolContext): void {
                 label: t(preset.label),
                 iconName: `ext:image-gen-icons/${preset.icon}`,
                 description: preset.ratio,
-                hoverText: preset.size,
                 current: preset.size === effectiveSize,
               })),
               {
                 id: 'size:auto',
                 label: t('size.auto'),
                 description: 'auto',
-                hoverText: t('size.auto.hint'),
                 current: effectiveSize === 'auto',
               },
             ],
@@ -1424,14 +1418,12 @@ export function activate(ctx: finch.MiniToolContext): void {
             label: t('menu.apiKey'),
             iconName: 'ext:image-gen-icons/key-round',
             description: keyStatus,
-            hoverText: `${t('menu.apiKey.hint')} ${t('menu.current', { value: keyStatus })}`,
           },
           {
             id: 'set-base-url',
             label: t('menu.baseUrl'),
             iconName: 'ext:image-gen-icons/link',
             description: effectiveBaseUrl,
-            hoverText: `${t('menu.baseUrl.hint')} ${t('menu.current', { value: effectiveBaseUrl })}`,
           },
         ];
       },
