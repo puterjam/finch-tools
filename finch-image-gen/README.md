@@ -1,4 +1,4 @@
-# Image Gen (OpenAI)
+# Image 2.5
 
 Generate and edit images with OpenAI's GPT Image models, right inside a Finch conversation — text-to-image, image-to-image, masked edits and transparent cut-outs, saved as local files ready to view or share.
 
@@ -19,7 +19,7 @@ Generate and edit images with OpenAI's GPT Image models, right inside a Finch co
 
 ## Image gallery
 
-Every generation lands in the gallery — open it from the **Image Gen** entry in the left sidebar (full-screen App View), or from the **Image Gen** panel inside a session.
+Every generation lands in the gallery — open it from the **Image 2.5** entry in the left sidebar (full-screen App View), or from the **Image 2.5** panel inside a session.
 
 - **Masonry layout** — 2 to 5 columns depending on how wide the window is; click any picture for the built-in previewer.
 - **A badge on every card** shows what produced it: model · quality · actual pixel size. Small marks flag images made from reference images or with a mask.
@@ -33,8 +33,8 @@ The attach buttons need a Composer to write into, so they appear when the galler
 ## Setup
 
 1. Install and enable this mini tool in Finch's Toolcase.
-2. On the Image Gen card in Toolcase, click its **settings** (gear) menu → **OpenAI API Key**, paste your key, and save. The same menu has **API Base URL** if you want an OpenAI-compatible proxy or relay instead of the official `https://api.openai.com/v1` — leave it empty to use the default.
-3. (Optional) In any Composer, the **Image Gen** toolbar button holds the everyday generation defaults: **Default model**, **Default quality**, **Default size**. Those are only fallbacks — asking in chat still overrides them for a single request.
+2. On the Image 2.5 card in Toolcase, click its **settings** (gear) menu → **OpenAI API Key**, paste your key, and save. The same menu has **API Base URL** if you want an OpenAI-compatible proxy or relay instead of the official `https://api.openai.com/v1` — leave it empty to use the default.
+3. (Optional) In any Composer, the **Image 2.5** toolbar button holds the everyday generation defaults: **Default model**, **Default quality**, **Default size**. Those are only fallbacks — asking in chat still overrides them for a single request.
 4. That's it. Just ask Finch to generate an image.
 
 ## Example prompts
@@ -62,7 +62,7 @@ Quality and size both drive cost and waiting time, so it's worth drafting low an
 
 ## Using a proxy / relay endpoint
 
-Click the **settings** (gear) menu on the Image Gen card in Toolcase → **API Base URL**, type the endpoint, and save. It applies to every future generation until you change it again (leave the field empty and save to go back to the official endpoint). For a one-off different endpoint on a single request, you can also just ask in chat, e.g. "这次用 https://my-relay.example.com/v1 生成" — that overrides only that call without touching the saved setting.
+Click the **settings** (gear) menu on the Image 2.5 card in Toolcase → **API Base URL**, type the endpoint, and save. It applies to every future generation until you change it again (leave the field empty and save to go back to the official endpoint). For a one-off different endpoint on a single request, you can also just ask in chat, e.g. "这次用 https://my-relay.example.com/v1 生成" — that overrides only that call without touching the saved setting.
 
 ## Notes
 
@@ -74,7 +74,7 @@ Click the **settings** (gear) menu on the Image Gen card in Toolcase → **API B
 
 ---
 
-# Image Gen (OpenAI) 中文说明
+# Image 2.5 中文说明
 
 在 Finch 对话里直接用 OpenAI 的 GPT Image 模型生成或编辑图片——支持文生图、图生图、局部遮罩编辑和透明底抠图，结果保存为本地文件，随时可以查看或分享。
 
@@ -95,7 +95,7 @@ Click the **settings** (gear) menu on the Image Gen card in Toolcase → **API B
 
 ## 图片库
 
-每张生成的图都会进图片库——从左侧边栏的 **Image Gen** 入口打开（全屏 App View），或者在会话里打开 **Image Gen** 面板。
+每张生成的图都会进图片库——从左侧边栏的 **Image 2.5** 入口打开（全屏 App View），或者在会话里打开 **Image 2.5** 面板。
 
 - **瀑布流布局**：按窗口宽度自动排 2 到 5 列；点任意图片用内置预览器放大看。
 - **每张图右下角都有角标**，写清它是用什么生成的：模型 · 画质 · 实际像素尺寸。用了参考图或遮罩的图另有小标记。
@@ -109,8 +109,8 @@ Click the **settings** (gear) menu on the Image Gen card in Toolcase → **API B
 ## 使用前配置
 
 1. 在 Finch 工具箱（Toolcase）中安装并启用本小工具。
-2. 在工具箱里的 Image Gen 卡片上点它的**设置**（齿轮）菜单 → **OpenAI API Key**，粘贴你的 Key 并保存。同一个菜单里还有 **API Base URL**——想用兼容 OpenAI 接口格式的代理/中转站代替官方地址 `https://api.openai.com/v1` 就填这里；留空即用官方默认地址。
-3. （可选）任意对话的输入框工具栏里的 **Image Gen** 按钮，管的是日常生图默认参数：**默认模型**、**默认画质**、**默认尺寸**。它们只是兜底值——在聊天里直接说仍然会覆盖本次请求。
+2. 在工具箱里的 Image 2.5 卡片上点它的**设置**（齿轮）菜单 → **OpenAI API Key**，粘贴你的 Key 并保存。同一个菜单里还有 **API Base URL**——想用兼容 OpenAI 接口格式的代理/中转站代替官方地址 `https://api.openai.com/v1` 就填这里；留空即用官方默认地址。
+3. （可选）任意对话的输入框工具栏里的 **Image 2.5** 按钮，管的是日常生图默认参数：**默认模型**、**默认画质**、**默认尺寸**。它们只是兜底值——在聊天里直接说仍然会覆盖本次请求。
 4. 之后直接让 Finch 帮你生成图片即可。
 
 ## 尺寸与画质
@@ -138,7 +138,7 @@ Click the **settings** (gear) menu on the Image Gen card in Toolcase → **API B
 
 ## 使用中转站/代理接口
 
-点击工具箱里 Image Gen 卡片上的**设置**（齿轮）菜单 → **API Base URL**，填入地址后保存即可——修改后对之后每次生成都生效，直到你再次修改（清空后保存即恢复官方地址）。如果只想某一次请求临时换个地址，也可以直接在聊天里说，例如 "这次用 https://my-relay.example.com/v1 生成"，这只影响这一次调用，不会改动已保存的设置。
+点击工具箱里 Image 2.5 卡片上的**设置**（齿轮）菜单 → **API Base URL**，填入地址后保存即可——修改后对之后每次生成都生效，直到你再次修改（清空后保存即恢复官方地址）。如果只想某一次请求临时换个地址，也可以直接在聊天里说，例如 "这次用 https://my-relay.example.com/v1 生成"，这只影响这一次调用，不会改动已保存的设置。
 
 ## 说明
 

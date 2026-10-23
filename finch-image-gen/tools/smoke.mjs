@@ -424,8 +424,10 @@ const base = { prompt: 'a red square' };
   const used = [...composerMenu, ...settingsItems]
     .map((item) => item.iconName)
     .concat([manifest.appPanel.icon, manifest.appView.icon, manifest.settingsMenu.icon, manifest.composerActions[0].icon]);
+  // `ext:id` and `ext:<packId>/id` both have to land on a declared icon.
+  const bareIconId = (ref) => String(ref).replace(/^ext:/, '').split('/').pop();
   const unresolved = used.filter((ref) => !String(ref).startsWith('ext:')).concat(
-    used.filter((ref) => String(ref).startsWith('ext:')).map((ref) => ref.slice(4)).filter((id) => !declared.includes(id)),
+    used.map(bareIconId).filter((id) => !declared.includes(id)),
   );
   check('every icon reference is an ext: id declared in the manifest', unresolved.length === 0, unresolved.join(', '));
   const missingFiles = declared.filter((id) => !existsSync(join(root, manifest.icons[id].svg)));
