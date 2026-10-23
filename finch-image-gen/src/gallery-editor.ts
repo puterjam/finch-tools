@@ -577,20 +577,19 @@ export class GalleryEditor {
 
   /**
    * Everything the model needs, in the order a person reads it: what the user
-   * typed, each pin with its percentage, then where the original file is. Inside
-   * a Composer this is the draft text, so the user can reword it before sending.
+   * typed, then each pin with its percentage, then the file to edit. Headers and
+   * counts are left out — the attached preview already shows the marks, and the
+   * manifest's systemPrompt explains how to treat it. Inside a Composer this is
+   * the draft text, so the user can reword it before sending.
    */
   private requestText(): string {
     const parts: string[] = [];
     const body = this.instruction.trim();
     if (body) parts.push(body);
-    if (this.data.comments.length) {
-      parts.push(t('editor.commentsText'));
-      this.data.comments.forEach((comment, index) => {
-        parts.push(t('editor.commentText', { n: index + 1, x: Math.round(comment.x * 100), y: Math.round(comment.y * 100), text: comment.text.trim() }));
-      });
-    }
-    if (this.data.strokes.length) parts.push(t('editor.linesText', { n: this.data.strokes.length }));
+    this.data.comments.forEach((comment, index) => {
+      parts.push(t('editor.commentText', { n: index + 1, x: Math.round(comment.x * 100), y: Math.round(comment.y * 100), text: comment.text.trim() }));
+    });
+    // The attachment is the marked preview, so the original has to be named here.
     parts.push(t('editor.reminder', { path: this.item?.filePath ?? '' }));
     return parts.join('\n');
   }

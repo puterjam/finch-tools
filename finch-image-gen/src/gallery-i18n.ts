@@ -29,10 +29,9 @@ const en = {
   'editor.sendTooLarge': 'The marked preview is too large. Clear some annotations and try again.',
   'editor.saved': 'Saved', 'editor.saving': 'Saving…', 'editor.saveFailed': 'Not saved — try again before closing',
   'editor.scopeHint': 'Open the image tool in a session’s right-side panel or on Home to attach the edit to the input box.',
-  'editor.commentsText': 'Comments on the numbered pins (positions are percentages of the original image):',
-  'editor.commentText': '{n}. ({x}%, {y}%): {text}', 'editor.linesText': '{n} freehand annotation(s) appear in red on the attached preview.',
+  'editor.commentText': '{n}. ({x}%, {y}%): {text}',
   'editor.attachOrder': 'Attachments: the first image is the ORIGINAL to edit; the second is the marked preview, included only as evidence of the requested edits.',
-  'editor.reminder': 'Edit the ORIGINAL image at {path} with image_gen_create, passing that path as reference_image_paths. The attached picture is the marked preview that shows what to change, not a new original — do not draw its red strokes or numbered pins into the result. Keep every area the comments do not mention, and do not raise quality or size unless asked.',
+  'editor.reminder': 'Original file: {path}',
 };
 type CopyKey = keyof typeof en;
 const zh: Record<CopyKey, string> = {
@@ -65,10 +64,9 @@ const zh: Record<CopyKey, string> = {
   'editor.sendTooLarge': '带标注的预览图太大，清除部分标注后重试。',
   'editor.saved': '已保存', 'editor.saving': '保存中…', 'editor.saveFailed': '未保存，请先重试再关闭',
   'editor.scopeHint': '需要插入到输入框时，请在会话右侧面板或首页打开生图工具。',
-  'editor.commentsText': '图片编号位置的评论（坐标为相对原图的百分比）：',
-  'editor.commentText': '{n}. （{x}%, {y}%）：{text}', 'editor.linesText': '附件中有 {n} 笔红色画线标注。',
+  'editor.commentText': '{n}. （{x}%, {y}%）：{text}',
   'editor.attachOrder': '附件顺序：第 1 张是要修改的原图，第 2 张是带标注的预览图（仅作为修改要求的证据）。',
-  'editor.reminder': '请用 image_gen_create 编辑原图：{path}（把这个路径传给 reference_image_paths）。附件那张是标注预览，用来说明要改什么，不是新的原图——不要把红色画线和编号点画进结果。评论没提到的区域保持原样，除非我要求，不要提高画质或尺寸。',
+  'editor.reminder': '原图：{path}',
 };
 let language: 'zh' | 'en' = 'en';
 export function setLocale(locale: string): void { language = locale.toLowerCase().startsWith('zh') ? 'zh' : 'en'; }

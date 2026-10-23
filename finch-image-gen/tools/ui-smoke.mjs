@@ -570,6 +570,9 @@ async function runEditorTests() {
   assert(fill && fill.mode === 'append', 'The request is appended to whatever the user already typed');
   assert(fill.text.includes('把这里换成暖光') && fill.text.includes('保留这个轮廓') && fill.text.includes('保持构图'), 'Every comment and the instruction are in the input box');
   assert(fill.text.includes('/gallery/picture-0.png'), 'The source path is in the text for reference_image_paths');
+  // Just the instruction, the numbered comments and one path line: no header
+  // sentence, no stroke count — the systemPrompt already explains the preview.
+  assert(/^保持构图\n1\. （\d+%, \d+%）：把这里换成暖光\n2\. （\d+%, \d+%）：保留这个轮廓\n原图：/m.test(fill.text), `The inserted text stays this short:\n${fill.text}`);
   const notePercent = /（(\d+)%, (\d+)%）/.exec(fill.text) ?? /\((\d+)%, (\d+)%\)/.exec(fill.text);
   assert(notePercent && Number(notePercent[1]) > 40, `The dragged comment reports its new position (${notePercent?.[1]}%)`);
   assert.equal(await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'stagePrompt').length), 0, 'Nothing is parked for a second click anymore');
