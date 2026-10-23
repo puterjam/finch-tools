@@ -32,28 +32,29 @@
       <div id="pins"></div>
     </div>
     <div id="imageStatus" class="image-status" role="status"></div>
-  </div>
-  <div class="editor-bottom">
+    <!-- Floats over the picture so it costs the image no height or position. -->
     <div id="toolbar" class="toolbar" role="toolbar">
       <button id="toolPen" class="tool" type="button" data-mode="pen"><span data-icon="pencil-line"></span><span data-text="editor.draw"></span></button>
       <button id="toolComment" class="tool" type="button" data-mode="comment"><span data-icon="message-square-plus"></span><span data-text="editor.comment"></span></button>
-      <span class="divider"></span>
+      <span id="toolDivider" class="divider"></span>
       <button id="undo" class="tool icon-only" type="button" data-icon="undo-2"></button>
       <button id="clear" class="tool icon-only" type="button" data-icon="eraser"></button>
     </div>
-    <p id="toolHint" class="tool-hint" role="status"></p>
-    <section id="comments" class="comments" hidden>
-      <header class="comments-header"><span id="commentsTitle"></span><button id="addComment" class="text-button" type="button" data-icon="plus"></button></header>
-      <div id="commentList" class="comment-list"></div>
-    </section>
-    <div class="overall-note"><textarea id="overallNote" rows="1"></textarea></div>
-    <div id="insertActions" class="insert-actions">
-      <button id="insertOriginal" class="button" type="button"><span data-icon="image"></span><span data-text="editor.insertOriginal"></span></button>
-      <button id="insertAnnotated" class="button primary" type="button"><span data-icon="corner-down-left"></span><span data-text="editor.insert"></span></button>
-      <button id="sendToSession" class="button primary" type="button" hidden><span data-icon="send"></span><span data-text="editor.send"></span></button>
+    <div id="commentPopover" class="popover" hidden>
+      <div class="popover-row">
+        <span id="popoverIndex" class="popover-index"></span>
+        <button id="deleteComment" class="text-button" type="button" data-icon="trash-2"></button>
+      </div>
+      <textarea id="commentText" rows="2"></textarea>
+    </div>
+  </div>
+  <div class="editor-bottom">
+    <p id="toolHint" class="tool-hint" role="status" hidden></p>
+    <div class="composer">
+      <textarea id="instruction" rows="1"></textarea>
+      <button id="send" class="send" type="button" hidden><span id="sendIcon" data-icon="corner-down-left"></span><span id="sendLabel" data-text="editor.deliver"></span></button>
     </div>
     <p id="scopeHint" class="scope-hint" hidden></p>
-    <p id="editorError" class="error" role="alert" hidden></p>
   </div>
 </section>
 <div id="notice" class="notice" role="status" hidden></div>

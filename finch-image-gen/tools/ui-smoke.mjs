@@ -171,7 +171,22 @@ async function openEditor() {
   await settle();
   await page.locator('.card').first().hover();
   await page.locator('.card').first().locator('[data-act="edit"]').click();
-  await page.waitForFunction(() => !document.getElementById('imageSurface').hidden && !document.getElementById('insertAnnotated').disabled);
+  await page.waitForFunction(() => !document.getElementById('imageSurface').hidden && !document.getElementById('send').disabled);
+  await settle();
+}
+
+/** Dispatches a real pointer sequence on the image surface. */
+async function drawStroke(from, to) {
+  await page.evaluate(([a, b]) => {
+    const surface = document.getElementById('imageSurface');
+    const rect = surface.getBoundingClientRect();
+    const init = (t) => ({ clientX: rect.left + rect.width * t[0], clientY: rect.top + rect.height * t[1], bubbles: true, pointerId: 11, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1 });
+    surface.dispatchEvent(new PointerEvent('pointerdown', init(a)));
+    for (let i = 1; i <= 4; i++) {
+      surface.dispatchEvent(new PointerEvent('pointermove', init([a[0] + (b[0] - a[0]) * (i / 4), a[1] + (b[1] - a[1]) * (i / 4)])));
+    }
+    surface.dispatchEvent(new PointerEvent('pointerup', init(b)));
+  }, [from, to]);
   await settle();
 }
 
@@ -181,30 +196,56 @@ async function runEditorTests() {
   const bounds = await page.evaluate(() => {
     const r = document.getElementById('imageSurface').getBoundingClientRect();
     const tools = document.getElementById('toolbar').getBoundingClientRect();
-    return { w: r.width, h: r.height, right: r.right, bottom: r.bottom, toolbarY: tools.y, scroll: document.documentElement.scrollWidth };
+    const stage = document.getElementById('stage').getBoundingClientRect();
+    return { w: r.width, h: r.height, right: r.right, bottom: r.bottom, top: r.top, toolbarY: tools.y, toolbarBottom: tools.bottom, stageBottom: stage.bottom, scroll: document.documentElement.scrollWidth };
   });
   assert(bounds.w > 150 && bounds.h > 100 && bounds.right <= 360 && bounds.scroll <= 360, 'Editor image is usable inside a narrow Panel');
-  assert(bounds.toolbarY >= bounds.bottom, 'Toolbar stays below the fitted image');
+  assert(bounds.toolbarBottom <= bounds.stageBottom + 1 && bounds.toolbarBottom > bounds.stageBottom - 60, 'The toolbar floats at the bottom of the stage');
+  assert.equal(await page.locator('#insertOriginal').count(), 0, 'Insert-original is gone');
+  assert.equal(await page.locator('#editorError').count(), 0, 'No inline red error text remains');
+  assert.equal(await page.locator('#commentList, .comment-row').count(), 0, 'Comments no longer live in a list under the image');
+
   await page.locator('#toolPen').click();
-  let rect = await page.locator('#imageSurface').boundingBox();
-  await page.mouse.move(rect.x + rect.width * .2, rect.y + rect.height * .25);
-  await page.mouse.down();
-  await page.mouse.move(rect.x + rect.width * .4, rect.y + rect.height * .5, { steps: 10 });
-  await page.mouse.up();
-  assert.equal(await page.locator('#inkLayer path').count(), 1);
-  await page.locator('#toolComment').click();
-  rect = await page.locator('#imageSurface').boundingBox();
-  await page.mouse.click(rect.x + rect.width * .3, rect.y + rect.height * .4);
-  await page.locator('.comment-row textarea').nth(0).fill('把这里换成暖光');
+  await drawStroke([.2, .25], [.4, .5]);
+  assert.equal(await page.locator('#inkLayer path').count(), 1, 'A stroke is drawn');
+  // Reproduces the "sometimes a line vanishes" bug: losing capture mid-stroke
+  // used to discard the line; it must survive.
+  await page.evaluate(() => {
+    const surface = document.getElementById('imageSurface');
+    const rect = surface.getBoundingClientRect();
+    const at = (x, y) => ({ clientX: rect.left + rect.width * x, clientY: rect.top + rect.height * y, bubbles: true, pointerId: 12, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1 });
+    surface.dispatchEvent(new PointerEvent('pointerdown', at(.6, .3)));
+    surface.dispatchEvent(new PointerEvent('pointermove', at(.75, .45)));
+    surface.dispatchEvent(new PointerEvent('lostpointercapture', at(.75, .45)));
+  });
   await settle();
+  assert.equal(await page.locator('#inkLayer path').count(), 2, 'A stroke interrupted by capture loss is kept, not discarded');
+
+  await page.locator('#toolComment').click();
+  let rect = await page.locator('#imageSurface').boundingBox();
+  await page.mouse.click(rect.x + rect.width * .3, rect.y + rect.height * .4);
+  await page.waitForFunction(() => !document.getElementById('commentPopover').hidden);
+  assert(await page.evaluate(() => document.activeElement?.id === 'commentText'), 'The bubble focuses its input right away');
+  await page.locator('#commentText').fill('把这里换成暖光');
+  const popoverBefore = await page.locator('#commentPopover').boundingBox();
+  const pin = await page.locator('.pin').first().boundingBox();
+  await page.mouse.move(pin.x + pin.width / 2, pin.y + pin.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(pin.x + pin.width / 2 + 90, pin.y + pin.height / 2 + 60, { steps: 8 });
+  await page.mouse.up();
+  await settle();
+  const popoverAfter = await page.locator('#commentPopover').boundingBox();
+  assert(Math.abs(popoverAfter.x - popoverBefore.x) > 20 && Math.abs(popoverAfter.y - popoverBefore.y) > 10, 'Dragging the pin moves its bubble, so the comment moved');
+
   rect = await page.locator('#imageSurface').boundingBox();
   await page.mouse.click(rect.x + rect.width * .7, rect.y + rect.height * .6);
-  await page.locator('.comment-row textarea').nth(1).fill('保留这个轮廓');
-  await page.locator('#overallNote').fill('保持构图');
+  await page.locator('#commentText').fill('保留这个轮廓');
+  await page.locator('#instruction').fill('保持构图');
   assert.equal(await page.locator('.pin').count(), 2);
-  await page.waitForFunction(() => !document.getElementById('insertAnnotated').disabled);
   await page.screenshot({ path: join(root, 'node_modules/.ui-editor-panel.png') });
-  await page.locator('#insertAnnotated').click();
+  await page.waitForFunction(() => !document.getElementById('send').disabled);
+  assert.equal((await page.locator('#sendLabel').textContent()).trim(), '插入修改要求', 'A Composer scope offers attaching');
+  await page.locator('#send').click();
   await page.waitForFunction(() => window.__host.contexts.length === 1);
   const context = await page.evaluate(() => window.__host.contexts[0]);
   assert.equal(context.type, 'annotation');
@@ -212,6 +253,8 @@ async function runEditorTests() {
   assert(context.image.content.length > 100 && !context.image.content.startsWith('data:'));
   assert(context.note.includes('把这里换成暖光') && context.note.includes('保留这个轮廓') && context.note.includes('保持构图'));
   assert(context.reminder.includes('/gallery/picture-0.png'), 'The source path is retained for reference_image_paths');
+  const movedPercent = /（(\d+)%, (\d+)%）/.exec(context.note) ?? /\((\d+)%, (\d+)%\)/.exec(context.note);
+  assert(movedPercent && Number(movedPercent[1]) > 40, `The dragged comment reports its new position (${movedPercent?.[1]}%)`);
   const marked = await page.evaluate(async (content) => {
     const image = new Image(); image.src = `data:image/png;base64,${content}`; await image.decode();
     const canvas = document.createElement('canvas'); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
@@ -224,27 +267,24 @@ async function runEditorTests() {
   assert(marked > 100, 'The attached evidence contains actual red pen/pin pixels');
   await openEditor();
   assert.equal(await page.locator('.pin').count(), 2, 'Multiple comments survive reopening');
-  assert.equal(await page.locator('#inkLayer path').count(), 1, 'Freehand strokes survive reopening');
+  assert.equal(await page.locator('#inkLayer path').count(), 2, 'Freehand strokes survive reopening');
   await page.evaluate(() => { window.__host.refuseInsert = true; });
-  await page.locator('#insertAnnotated').click();
-  await page.waitForFunction(() => !document.getElementById('editorError').hidden);
-  assert.equal(await page.locator('.pin').count(), 2, 'A rejected insert does not lose the draft');
+  await page.locator('#send').click();
+  await page.waitForFunction(() => !document.getElementById('notice').hidden);
+  assert.equal(await page.locator('.pin').count(), 2, 'A rejected deliver does not lose the draft');
   await page.evaluate(() => { window.__host.refuseInsert = false; });
-  await page.locator('#insertOriginal').click();
+  await page.waitForFunction(() => !document.getElementById('send').disabled);
+  await page.locator('#send').click();
   await page.waitForFunction(() => window.__host.contexts.length === 2);
-  assert.equal(await page.evaluate(() => window.__host.contexts[1].image.name), 'picture-0.png');
-  console.log('ok UI: narrow Panel pen + multiple comments, actual PNG evidence, original path, insertion retry and draft restoration');
+  assert.equal(await page.evaluate(() => window.__host.contexts[1].image.name), 'picture-0-annotated.png', 'A retry re-attaches the same marked preview');
+  console.log('ok UI: narrow Panel pen + floating bubble comments, pin dragging, capture-loss recovery, single deliver button');
 
   await openEditor();
   await page.locator('#toolPen').click();
-  rect = await page.locator('#imageSurface').boundingBox();
-  await page.mouse.move(rect.x + rect.width * .2, rect.y + rect.height * .7);
-  await page.mouse.down();
-  await page.mouse.move(rect.x + rect.width * .6, rect.y + rect.height * .7, { steps: 5 });
-  await page.mouse.up();
-  assert.equal(await page.locator('#inkLayer path').count(), 2);
+  await drawStroke([.2, .7], [.6, .7]);
+  assert.equal(await page.locator('#inkLayer path').count(), 3);
   await page.locator('#undo').click();
-  assert.equal(await page.locator('#inkLayer path').count(), 1);
+  assert.equal(await page.locator('#inkLayer path').count(), 2);
   await page.locator('#clear').click();
   await page.waitForFunction(() => document.querySelectorAll('.pin').length === 0);
   assert.equal(await page.locator('#inkLayer path').count(), 0);
@@ -256,23 +296,24 @@ async function runEditorTests() {
   await settle();
   assert.equal(await page.locator('#tabs button').count(), 1, 'App View hides the session-only tab');
 
-  // The App View has no Composer, so the edit is sent into a chat instead.
+  // The App View has no Composer, so the same button sends into a chat instead.
   await openEditor();
-  assert(await page.locator('#insertActions').isVisible(), 'App View can still deliver the edit');
-  assert(await page.locator('#sendToSession').isVisible(), 'App View offers sending into a chat');
-  assert(await page.locator('#insertOriginal').isHidden() && await page.locator('#insertAnnotated').isHidden(), 'Composer-only actions stay hidden');
+  assert(await page.locator('#send').isVisible(), 'App View can still deliver the edit');
+  assert.equal((await page.locator('#sendLabel').textContent()).trim(), '发送到新会话', 'The button switches meaning outside a Composer');
   assert(await page.locator('#scopeHint').isHidden(), 'No dead hint while sending is possible');
   await page.locator('#toolComment').click();
   rect = await page.locator('#imageSurface').boundingBox();
   await page.mouse.click(rect.x + rect.width * .3, rect.y + rect.height * .3);
-  await page.locator('.comment-row textarea').nth(0).fill('App View 评论');
-  await page.waitForFunction(() => !document.getElementById('sendToSession').disabled);
-  await page.locator('#sendToSession').click();
+  await page.locator('#commentText').fill('App View 评论');
+  await page.locator('#instruction').fill('整体保持构图');
+  await page.waitForFunction(() => !document.getElementById('send').disabled);
+  await page.locator('#send').click();
   await page.waitForFunction(() => window.__host.sends.length === 1);
   const send = await page.evaluate(() => window.__host.sends[0]);
   assert.equal(send.type, 'sendToSession');
   assert(send.text.includes('/gallery/picture-0.png'), 'The sent text keeps the original path');
-  assert(send.text.includes('App View 评论'), 'Every comment travels with the send');
+  assert(send.text.includes('App View 评论') && send.text.includes('整体保持构图'), 'Every comment and the instruction travel with the send');
+  assert(send.text.includes('第 1 张是要修改的原图'), 'The attachment order is explained to the model');
   assert(send.evidence.length > 100 && !send.evidence.startsWith('data:'), 'The composed preview travels as raw base64');
   assert(!!send.idempotencyKey, 'Each attempt carries an idempotency key');
   await page.waitForFunction(() => document.getElementById('editor').hidden, null, { timeout: 5000 });
@@ -282,8 +323,8 @@ async function runEditorTests() {
   await page.evaluate(() => { window.__host.failSend = true; });
   await openEditor();
   assert.equal(await page.locator('.pin').count(), 1, 'The comment survived and was reopened');
-  await page.locator('#sendToSession').click();
-  await page.waitForFunction(() => !document.getElementById('editorError').hidden);
+  await page.locator('#send').click();
+  await page.waitForFunction(() => !document.getElementById('notice').hidden);
   assert.equal(await page.locator('.pin').count(), 1, 'A failed send keeps the annotations');
   assert(!(await page.locator('#back').isHidden()));
   await page.evaluate(() => { window.__host.failSend = false; });
@@ -294,7 +335,7 @@ async function runEditorTests() {
     window.__host.canSend = false; window.__host.emit({ type: 'finch:env', ...window.__host.env() });
   });
   await openEditor();
-  assert(await page.locator('#insertActions').isHidden(), 'No send button without host support');
+  assert(await page.locator('#send').isHidden(), 'No send button without host support');
   assert(await page.locator('#scopeHint').isVisible(), 'An actionable hint replaces the dead button');
   await page.locator('#back').click();
   await page.evaluate(() => {
@@ -306,13 +347,13 @@ async function runEditorTests() {
     window.__host.view = 'home'; window.__host.emit({ type: 'finch:env', ...window.__host.env() });
   });
   await openEditor();
-  assert(await page.locator('#insertActions').isVisible());
-  assert(await page.locator('#insertAnnotated').isVisible() && await page.locator('#sendToSession').isHidden(), 'A Composer scope inserts instead of sending');
+  assert(await page.locator('#send').isVisible());
+  assert.equal((await page.locator('#sendLabel').textContent()).trim(), '插入修改要求', 'A Composer scope attaches instead of sending');
   await page.evaluate(() => {
     window.__host.view = 'session'; window.__host.sessionId = 'session-2';
     window.__host.emit({ type: 'finch:env', ...window.__host.env() });
   });
-  assert(await page.locator('#insertActions').isVisible());
+  assert(await page.locator('#send').isVisible());
   await page.locator('#back').click();
   console.log('ok UI: undo/clear, App View sending, retry after failure, and repeatable scope changes');
 }
@@ -321,33 +362,50 @@ async function runFailureAndThemeTests() {
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.setViewportSize({ width: 1200, height: 850 }); await settle();
   await page.screenshot({ path: join(root, 'node_modules/.ui-gallery-dark.png') });
-  for (const width of [280, 420, 1000]) {
-    await page.setViewportSize({ width, height: 560 }); await settle();
+  // 360x420 is tall-image territory, where the capsule must overlap the picture.
+  for (const [width, height] of [[280, 560], [420, 560], [1000, 560], [360, 420]]) {
+    await page.setViewportSize({ width, height }); await settle();
     await openEditor();
     const geometry = await page.evaluate(() => {
       const image = document.getElementById('imageSurface').getBoundingClientRect();
       const toolbar = document.getElementById('toolbar').getBoundingClientRect();
+      const stage = document.getElementById('stage').getBoundingClientRect();
       const editor = document.getElementById('editor').getBoundingClientRect();
-      return { image: { x: image.x, y: image.y, right: image.right, bottom: image.bottom, width: image.width }, toolbar: { y: toolbar.y, right: toolbar.right }, editor: { width: editor.width, height: editor.height }, scroll: document.documentElement.scrollWidth };
+      return {
+        image: { x: image.x, y: image.y, right: image.right, bottom: image.bottom, width: image.width, height: image.height },
+        toolbar: { y: toolbar.y, right: toolbar.right, bottom: toolbar.bottom },
+        stage: { top: stage.top, bottom: stage.bottom, height: stage.height },
+        editor: { width: editor.width, height: editor.height },
+        scroll: document.documentElement.scrollWidth,
+      };
     });
-    assert(geometry.image.x >= 0 && geometry.image.right <= width && geometry.image.width > 0);
-    assert(geometry.toolbar.y >= geometry.image.bottom && geometry.toolbar.right <= width);
-    assert(geometry.scroll <= width && geometry.editor.width === width && geometry.editor.height === 560);
+    assert(geometry.image.x >= 0 && geometry.image.right <= width && geometry.image.width > 0, `${width}px: image fits`);
+    // The capsule floats: it reserves no space, so the picture is centred in the
+    // whole stage rather than in a stage shortened by the toolbar.
+    const imageCentre = geometry.image.y + geometry.image.height / 2;
+    const stageCentre = geometry.stage.top + geometry.stage.height / 2;
+    assert(Math.abs(imageCentre - stageCentre) <= 2, `${width}x${height}: the toolbar reserves no layout space`);
+    assert(geometry.toolbar.bottom <= geometry.stage.bottom + 1 && geometry.toolbar.bottom > geometry.stage.bottom - 60, `${width}x${height}: the toolbar floats at the bottom of the stage`);
+    assert(geometry.toolbar.right <= width, `${width}x${height}: the toolbar fits the width`);
+    if (geometry.image.height >= geometry.stage.height - 2) {
+      assert(geometry.toolbar.y < geometry.image.bottom, `${width}x${height}: a full-height image sits under the capsule`);
+    }
+    assert(geometry.scroll <= width && geometry.editor.width === width && geometry.editor.height === height);
     await page.locator('#back').click();
   }
   await page.setViewportSize({ width: 360, height: 720 });
   await page.goto(`${origin}/?slow-image`);
   await page.locator('.card').first().locator('[data-act="edit"]').click({ force: true });
-  assert(await page.locator('#insertAnnotated').isDisabled(), 'Loading cannot submit stale image bytes');
+  assert(await page.locator('#send').isDisabled(), 'Loading cannot submit stale image bytes');
   assert.equal(await page.evaluate(() => window.__host.contexts.length), 0, 'Loading never auto-attaches');
-  await page.waitForFunction(() => !document.getElementById('insertAnnotated').disabled);
-  await page.locator('#insertAnnotated').click();
+  await page.waitForFunction(() => !document.getElementById('send').disabled);
+  await page.locator('#send').click();
   await page.waitForFunction(() => window.__host.contexts.length === 1);
 
   await page.goto(`${origin}/?image-error`);
   await page.locator('.card').first().locator('[data-act="edit"]').click({ force: true });
   await page.waitForFunction(() => document.getElementById('imageStatus').textContent.includes('失败'));
-  assert(await page.locator('#insertAnnotated').isDisabled());
+  assert(await page.locator('#send').isDisabled());
   await page.locator('#back').click();
   await page.evaluate(() => { window.__host.failImages = false; });
   await openEditor();

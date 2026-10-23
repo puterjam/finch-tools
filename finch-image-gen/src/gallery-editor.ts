@@ -1,11 +1,18 @@
 import type * as finch from 'finch';
 import { el, icon, labelButton, notice } from './gallery-dom';
-import { clamp, emptyAnnotations, parseAnnotations, type GalleryAnnotations, type GalleryItem, type Point, type Stroke } from './gallery-model';
+import { clamp, emptyAnnotations, parseAnnotations, type GalleryAnnotations, type GalleryItem, type ImageComment, type Point, type Stroke } from './gallery-model';
 import { t } from './gallery-i18n';
 
 type Mode = 'view' | 'pen' | 'comment';
+type AnnotationDraft = Extract<finch.ComposerContextDraft, { type: 'annotation' }>;
 const clone = (data: GalleryAnnotations): GalleryAnnotations => structuredClone(data);
 const uid = (): string => crypto.randomUUID();
+/** Keeps the floating bubble inside the stage. */
+const between = (value: number, min: number, max: number): number => Math.min(Math.max(value, min), max);
+const MAX_STROKES = 100;
+const MAX_COMMENTS = 50;
+const MAX_POINTS = 20000;
+const POPOVER_WIDTH = 232;
 
 /** A route within the webview, with image-relative geometry and prebuilt evidence. */
 export class GalleryEditor {
@@ -14,27 +21,28 @@ export class GalleryEditor {
   private history: GalleryAnnotations[] = [];
   private mode: Mode = 'view';
   private scope = '';
+  private canSend = false;
   private stroke: Stroke | null = null;
-  private selectedComment = '';
+  private activeComment = '';
+  private pinDrag: { id: string; moved: boolean } | null = null;
   private revision = 0;
   private preparedRevision = -1;
-  private original: Extract<finch.ComposerContextDraft, { type: 'annotation' }> | null = null;
-  private annotated: Extract<finch.ComposerContextDraft, { type: 'annotation' }> | null = null;
+  private annotated: AnnotationDraft | null = null;
   private loaded = false;
   private busy = false;
-  private canSend = false;
   private pendingSend = '';
-  private sendAttempt = 0;
-  private sendTimer: ReturnType<typeof setTimeout> | undefined;
-  private note = '';
+  private attempt = 0;
+  private deadline: ReturnType<typeof setTimeout> | undefined;
+  private instruction = '';
   private sourceUrl = '';
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
   private pendingSave = '';
   private prepareFrame = 0;
-  private noteDirty = false;
+  private dirty = false;
   private readonly image = el<HTMLImageElement>('editorImage');
   private readonly surface = el('imageSurface');
   private readonly stage = el('stage');
+  private readonly popover = el('commentPopover');
 
   constructor(
     private readonly api: finch.WebviewBridgeApi | undefined,
@@ -44,57 +52,77 @@ export class GalleryEditor {
     el('back').onclick = () => this.close();
     el('toolPen').onclick = () => this.setMode(this.mode === 'pen' ? 'view' : 'pen');
     el('toolComment').onclick = () => this.setMode(this.mode === 'comment' ? 'view' : 'comment');
-    el('addComment').onclick = () => this.setMode('comment');
     el('undo').onclick = () => this.undo();
     el('clear').onclick = () => { void this.clear(); };
-    el('insertOriginal').onclick = () => { void this.insert(false); };
-    el('insertAnnotated').onclick = () => { void this.insert(true); };
-    el('sendToSession').onclick = () => { void this.send(); };
-    el<HTMLTextAreaElement>('overallNote').maxLength = 8000;
-    el<HTMLTextAreaElement>('overallNote').oninput = (event) => {
-      this.note = (event.target as HTMLTextAreaElement).value;
+    el('send').onclick = () => { void this.deliver(); };
+    el('deleteComment').onclick = () => this.removeActiveComment();
+    const instruction = el<HTMLTextAreaElement>('instruction');
+    instruction.maxLength = 8000;
+    instruction.oninput = () => { this.instruction = instruction.value; this.grow(instruction); this.changed(false); };
+    instruction.onkeydown = (event) => {
+      // Enter sends, Shift+Enter adds a line — the footer stays a single row.
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); void this.deliver(); }
+    };
+    const text = el<HTMLTextAreaElement>('commentText');
+    text.maxLength = 4000;
+    text.oninput = () => {
+      const comment = this.active();
+      if (!comment) return;
+      comment.text = text.value;
+      this.syncPinLabel(comment);
       this.changed(false);
     };
     this.surface.addEventListener('pointerdown', (event) => this.pointerDown(event));
     this.surface.addEventListener('pointermove', (event) => this.pointerMove(event));
-    this.surface.addEventListener('pointerup', (event) => this.pointerUp(event));
-    this.surface.addEventListener('pointercancel', () => this.cancelStroke());
-    this.surface.addEventListener('lostpointercapture', () => this.cancelStroke());
+    this.surface.addEventListener('pointerup', (event) => this.endStroke(event));
+    // Losing capture (cursor left the webview, OS took over) must keep the line
+    // that was already drawn instead of discarding it.
+    this.surface.addEventListener('pointercancel', () => this.endStroke());
+    this.surface.addEventListener('lostpointercapture', () => this.endStroke());
+    this.stage.addEventListener('pointerdown', (event) => {
+      const target = event.target as HTMLElement;
+      // The surface handler already decided (new pin, close, or nothing) — this
+      // only closes the bubble for presses that land next to the picture.
+      if (target.closest('.image-surface') || this.popover.contains(target)) return;
+      this.closePopover();
+    });
     new ResizeObserver(() => this.fit()).observe(this.stage);
     document.addEventListener('keydown', (event) => {
       if (!this.item) return;
-      const typing = event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement;
-      if (event.key === 'Escape' && !typing) this.close();
-      if (!typing && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); this.undo(); }
+      if (event.key === 'Escape') {
+        if (!this.popover.hidden) { event.stopPropagation(); this.closePopover(); return; }
+        if (!(event.target instanceof HTMLInputElement)) this.close();
+      }
+      if (event.target instanceof HTMLInputElement) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); this.undo(); }
     });
   }
 
   setScope(scope: string, canSend = this.canSend): void {
     this.scope = scope;
     this.canSend = canSend;
-    if (this.item) { this.copy(); this.controls(); }
+    if (this.item) this.controls();
   }
 
   async open(item: GalleryItem): Promise<void> {
     if (this.item) this.flushSave();
     this.item = item;
     this.data = clone(parseAnnotations(item.annotations) || emptyAnnotations());
-    this.note = item.note || '';
-    this.noteDirty = false; this.pendingSave = '';
-    this.loaded = false; this.busy = false; this.original = null; this.annotated = null;
-    this.pendingSend = '';
-    clearTimeout(this.sendTimer);
+    this.instruction = item.note || '';
+    this.dirty = false; this.pendingSave = ''; this.pendingSend = '';
+    this.loaded = false; this.busy = false; this.annotated = null;
     this.revision++; this.preparedRevision = -1;
-    this.history = []; this.stroke = null; this.selectedComment = '';
+    this.history = []; this.stroke = null; this.pinDrag = null; this.activeComment = '';
     this.mode = 'view';
     this.surface.hidden = true;
     this.image.removeAttribute('src');
+    this.closePopover();
+    const instruction = el<HTMLTextAreaElement>('instruction');
+    instruction.value = this.instruction; this.grow(instruction);
     el('editor').hidden = false; document.body.classList.add('editing');
     el('saveState').textContent = '';
-    el('editorError').hidden = true;
     el('imageStatus').hidden = false; el('imageStatus').textContent = t('image.loading');
-    this.copy(); this.renderComments(); this.controls();
-    el<HTMLTextAreaElement>('overallNote').value = this.note;
+    this.copy(); this.controls();
     el('back').focus();
     try {
       const dataUrl = await this.getImage(item.filePath);
@@ -112,58 +140,56 @@ export class GalleryEditor {
     }
   }
 
+  /** Every string, attribute and control state in one place. */
   private copy(): void {
     el('editorTitle').textContent = t('editor.title');
     const item = this.item!;
     el('editorMeta').textContent = `${item.model.replace('gpt-image-2.5-', '')} · ${item.quality} · ${item.width}×${item.height} · ${item.format.toUpperCase()}`;
     el('editor').querySelectorAll<HTMLElement>('[data-text]').forEach((node) => {
-      node.textContent = t(node.dataset.text as Parameters<typeof t>[0]);
+      const key = node.dataset.text as Parameters<typeof t>[0];
+      if (key !== 'editor.deliver') node.textContent = t(key);
     });
     labelButton(el('back'), t('editor.back'));
     labelButton(el('undo'), t('editor.undo'));
     labelButton(el('clear'), t('editor.clear'));
-    labelButton(el('addComment'), t('editor.addComment'));
-    el<HTMLTextAreaElement>('overallNote').placeholder = t('editor.overall');
-    el('overallNote').setAttribute('aria-label', t('editor.overall'));
-    el('scopeHint').textContent = t('editor.scopeHint');
+    labelButton(el('deleteComment'), t('editor.removeComment'));
+    el<HTMLTextAreaElement>('commentText').placeholder = t('editor.commentPlaceholder');
+    el<HTMLTextAreaElement>('instruction').placeholder = t('editor.instruction');
     el('toolbar').setAttribute('aria-label', t('editor.title'));
+    this.controls();
+  }
+
+  /** The single button means "attach" inside a Composer scope and "send" outside. */
+  private deliverLabel(): Parameters<typeof t>[0] {
+    return this.scope === 'session' || this.scope === 'home' ? 'editor.deliver' : 'editor.deliverSend';
   }
 
   private controls(): void {
     const composer = this.scope === 'session' || this.scope === 'home';
-    // The App View (and container) scope own no Composer draft, so editing there
-    // is only useful if the result can be sent into a Session instead.
     const sendable = !composer && this.canSend;
-    const actionable = composer || sendable;
-    el('insertActions').hidden = !actionable;
-    el('scopeHint').hidden = actionable;
-    el('scopeHint').textContent = t(this.canSend ? 'editor.scopeHint' : 'editor.sendUnsupported');
-    el('insertOriginal').hidden = !composer;
-    el('insertAnnotated').hidden = !composer;
-    el('sendToSession').hidden = !sendable;
     const ready = this.loaded && !this.busy && this.preparedRevision === this.revision;
-    el<HTMLButtonElement>('insertOriginal').disabled = !this.loaded || this.busy;
-    el<HTMLButtonElement>('insertAnnotated').disabled = !ready;
-    el<HTMLButtonElement>('sendToSession').disabled = !ready;
-    el('insertAnnotated').querySelector('[data-text]')!.textContent = t(
-      this.busy ? 'editor.inserting' : this.loaded && this.preparedRevision !== this.revision ? 'editor.preparing' : 'editor.insert',
-    );
-    el('sendToSession').querySelector('[data-text]')!.textContent = t(
-      this.busy ? 'editor.sending' : this.loaded && this.preparedRevision !== this.revision ? 'editor.preparing' : 'editor.send',
-    );
+    const button = el<HTMLButtonElement>('send');
+    button.hidden = !(composer || sendable);
+    button.disabled = !ready;
+    el('sendLabel').textContent = t(this.busy ? 'editor.delivering' : this.deliverLabel());
+    el('sendIcon').innerHTML = icon(composer ? 'corner-down-left' : 'send');
+    el('scopeHint').hidden = composer || sendable;
+    el('scopeHint').textContent = t(this.canSend ? 'editor.scopeHint' : 'editor.sendUnsupported');
     el('toolPen').setAttribute('aria-pressed', String(this.mode === 'pen'));
     el('toolComment').setAttribute('aria-pressed', String(this.mode === 'comment'));
     this.surface.dataset.mode = this.mode;
-    el('toolHint').textContent = t(
-      this.mode === 'pen' ? 'editor.penHint' : this.mode === 'comment' ? 'editor.commentHint' : sendable ? 'editor.sendHint' : 'editor.viewHint',
-    );
+    const hint = t(this.mode === 'pen' ? 'editor.penHint' : this.mode === 'comment' ? 'editor.commentHint' : 'editor.viewHint');
+    el('toolHint').textContent = hint;
+    el('toolHint').hidden = !hint;
     el('undo').hidden = !this.history.length;
     el('clear').hidden = !this.data.strokes.length && !this.data.comments.length;
-    el('toolbar').querySelector<HTMLElement>('.divider')!.hidden = !this.history.length && !this.data.strokes.length && !this.data.comments.length;
+    el('toolDivider').hidden = !this.history.length && !this.data.strokes.length && !this.data.comments.length;
   }
 
   private setMode(mode: Mode): void {
-    this.mode = mode; this.controls();
+    this.mode = mode;
+    if (mode !== 'comment') this.closePopover();
+    this.controls();
   }
 
   private fit(): void {
@@ -172,9 +198,10 @@ export class GalleryEditor {
     const scale = Math.min(width / this.image.naturalWidth, height / this.image.naturalHeight);
     const w = this.image.naturalWidth * scale; const h = this.image.naturalHeight * scale;
     Object.assign(this.surface.style, { width: `${w}px`, height: `${h}px`, left: `${(width - w) / 2}px`, top: `${(height - h) / 2}px` });
+    this.positionPopover();
   }
 
-  private point(event: PointerEvent): Point {
+  private point(event: { clientX: number; clientY: number }): Point {
     const rect = this.surface.getBoundingClientRect();
     return { x: clamp((event.clientX - rect.left) / rect.width), y: clamp((event.clientY - rect.top) / rect.height) };
   }
@@ -185,23 +212,30 @@ export class GalleryEditor {
   }
 
   private pointerDown(event: PointerEvent): void {
-    if (!this.loaded || this.busy || event.button !== 0 || !event.isPrimary || (event.target as HTMLElement).closest('button')) return;
+    if (!this.loaded || this.busy || event.button !== 0 || !event.isPrimary) return;
+    if ((event.target as HTMLElement).closest('button')) return;
     if (this.mode === 'comment') {
-      if (this.data.comments.length >= 50) { notice(t('editor.limit')); return; }
+      if (this.data.comments.length >= MAX_COMMENTS) { notice(t('editor.limit')); return; }
       this.snapshot();
-      const comment = { id: uid(), ...this.point(event), text: '' };
-      this.data.comments.push(comment); this.selectedComment = comment.id;
-      this.changed(); this.renderComments();
-      const input = el('commentList').querySelector<HTMLTextAreaElement>(`[data-comment="${comment.id}"]`);
-      input?.focus(); input?.scrollIntoView({ block: 'nearest' });
+      const comment: ImageComment = { id: uid(), ...this.point(event), text: '' };
+      this.data.comments.push(comment);
+      this.selected(comment.id);
+      this.openPopover(comment, true);
+      this.changed();
     } else if (this.mode === 'pen') {
-      if (this.data.strokes.length >= 100) { notice(t('editor.limit')); return; }
+      // A second press while drawing must finish the previous line, not replace it.
+      if (this.stroke) this.endStroke();
+      if (this.data.strokes.length >= MAX_STROKES) { notice(t('editor.limit')); return; }
       this.snapshot();
-      // A stable image-relative width survives fitting into a narrow Panel.
+      // Image-relative width, so the line keeps its weight in a narrow Panel.
       this.stroke = { id: uid(), points: [this.point(event)], width: .004 };
       this.data.strokes.push(this.stroke);
-      this.surface.setPointerCapture(event.pointerId);
+      // Capture keeps the line going when the cursor leaves the webview; a host
+      // that refuses it still works, the stroke just ends at the edge.
+      try { this.surface.setPointerCapture(event.pointerId); } catch { /* not fatal */ }
       this.preparedRevision = -1; this.controls(); this.redraw();
+    } else {
+      this.closePopover();
     }
     event.preventDefault();
   }
@@ -210,86 +244,180 @@ export class GalleryEditor {
     if (!this.stroke) return;
     const next = this.point(event); const prev = this.stroke.points.at(-1)!;
     if (Math.hypot(next.x - prev.x, next.y - prev.y) < .001) return;
-    if (this.stroke.points.length < 2000 && this.data.strokes.reduce((sum, stroke) => sum + stroke.points.length, 0) < 20000) this.stroke.points.push(next);
-    this.redraw();
+    const total = this.data.strokes.reduce((sum, stroke) => sum + stroke.points.length, 0);
+    if (this.stroke.points.length < 2000 && total < MAX_POINTS) this.stroke.points.push(next);
+    this.redrawInk();
   }
 
-  private pointerUp(event: PointerEvent): void {
+  /** Ends and keeps whatever has been drawn — never throws the line away. */
+  private endStroke(event?: PointerEvent): void {
     if (!this.stroke) return;
-    this.pointerMove(event); this.stroke = null;
-    if (this.surface.hasPointerCapture(event.pointerId)) this.surface.releasePointerCapture(event.pointerId);
+    if (event) this.pointerMove(event);
+    const had = this.stroke.points.length > 1;
+    this.stroke = null;
+    if (event?.pointerId !== undefined) {
+      try { if (this.surface.hasPointerCapture?.(event.pointerId)) this.surface.releasePointerCapture(event.pointerId); } catch { /* already gone */ }
+    }
+    if (!had) this.redrawInk();
     this.changed();
   }
 
-  private cancelStroke(): void {
-    if (!this.stroke) return;
-    this.data.strokes = this.data.strokes.filter((stroke) => stroke !== this.stroke);
-    this.stroke = null; this.history.pop(); this.changed();
+  private selected(id: string): void { this.activeComment = id; }
+
+  private active(): ImageComment | undefined {
+    return this.data.comments.find((comment) => comment.id === this.activeComment);
   }
 
   private redraw(): void {
     if (!this.loaded) return;
+    this.redrawInk();
+    this.redrawPins();
+    this.positionPopover();
+  }
+
+  private redrawInk(): void {
     const layer = document.getElementById('inkLayer') as unknown as SVGSVGElement;
     const width = this.image.naturalWidth; const height = this.image.naturalHeight;
     layer.setAttribute('viewBox', `0 0 ${width} ${height}`);
     layer.replaceChildren();
     this.data.strokes.forEach((stroke) => {
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      const points = stroke.points;
-      let d = points.map((p, i) => `${i ? 'L' : 'M'}${p.x * width} ${p.y * height}`).join(' ');
-      if (points.length === 1) d += `l.01 .01`;
-      path.setAttribute('d', d); path.setAttribute('fill', 'none'); path.setAttribute('stroke', '#ef5350');
+      let d = stroke.points.map((p, i) => `${i ? 'L' : 'M'}${p.x * width} ${p.y * height}`).join(' ');
+      if (stroke.points.length === 1) d += 'l.01 .01';
+      path.setAttribute('d', d);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', '#ef5350');
       path.setAttribute('stroke-width', String(stroke.width * Math.min(width, height)));
-      path.setAttribute('stroke-linecap', 'round'); path.setAttribute('stroke-linejoin', 'round'); layer.append(path);
+      path.setAttribute('stroke-linecap', 'round');
+      path.setAttribute('stroke-linejoin', 'round');
+      layer.append(path);
     });
-    const pins = el('pins'); pins.replaceChildren();
+  }
+
+  private redrawPins(): void {
+    const pins = el('pins');
+    pins.replaceChildren();
     this.data.comments.forEach((comment, index) => {
       const pin = document.createElement('button');
-      pin.className = `pin${comment.id === this.selectedComment ? ' selected' : ''}`;
-      pin.style.left = `clamp(11px, ${comment.x * 100}%, calc(100% - 11px))`;
-      pin.style.top = `clamp(11px, ${comment.y * 100}%, calc(100% - 11px))`;
-      pin.textContent = String(index + 1); pin.dataset.comment = comment.id;
-      labelButton(pin, comment.text || t('editor.commentLabel', { n: index + 1 }));
-      pin.onclick = (event) => {
-        event.stopPropagation();
-        this.selectedComment = comment.id;
-        this.redraw();
-        [...el('commentList').querySelectorAll<HTMLTextAreaElement>('textarea')].find((input) => input.dataset.comment === comment.id)?.focus();
-      };
+      pin.type = 'button';
+      pin.className = `pin${comment.id === this.activeComment ? ' selected' : ''}`;
+      pin.dataset.comment = comment.id;
+      pin.textContent = String(index + 1);
+      this.placePin(pin, comment);
+      this.syncPinLabel(comment);
+      pin.addEventListener('pointerdown', (event) => this.startPinDrag(event, comment, pin));
+      pin.addEventListener('pointermove', (event) => this.dragPin(event, comment, pin));
+      pin.addEventListener('pointerup', () => this.endPinDrag(comment));
+      pin.addEventListener('pointercancel', () => this.endPinDrag(comment));
+      pin.addEventListener('lostpointercapture', () => this.endPinDrag(comment));
       pins.append(pin);
     });
   }
 
-  private renderComments(): void {
-    el('comments').hidden = !this.data.comments.length;
-    el('commentsTitle').textContent = t('editor.comments', { n: this.data.comments.length });
-    const list = el('commentList'); list.replaceChildren();
-    this.data.comments.forEach((comment, index) => {
-      const row = document.createElement('div'); row.className = 'comment-row';
-      const number = document.createElement('button'); number.className = 'comment-number'; number.textContent = String(index + 1);
-      labelButton(number, t('editor.commentLabel', { n: index + 1 }));
-      const input = document.createElement('textarea');
-      input.rows = 1; input.maxLength = 4000; input.dataset.comment = comment.id;
-      input.value = comment.text; input.placeholder = t('editor.commentPlaceholder');
-      input.setAttribute('aria-label', t('editor.commentLabel', { n: index + 1 }));
-      input.onfocus = () => { this.snapshot(); this.selectedComment = comment.id; this.redraw(); this.controls(); };
-      input.oninput = () => { comment.text = input.value; this.changed(false); };
-      number.onclick = () => { input.focus(); };
-      const remove = document.createElement('button'); remove.className = 'icon-button'; remove.innerHTML = icon('x');
-      labelButton(remove, t('editor.removeComment', { n: index + 1 }));
-      remove.onclick = () => {
-        this.snapshot(); this.data.comments = this.data.comments.filter((c) => c.id !== comment.id);
-        this.changed(); this.renderComments();
-      };
-      row.append(number, input, remove); list.append(row);
-    });
+  private placePin(pin: HTMLElement, comment: ImageComment): void {
+    pin.style.left = `clamp(11px, ${comment.x * 100}%, calc(100% - 11px))`;
+    pin.style.top = `clamp(11px, ${comment.y * 100}%, calc(100% - 11px))`;
+  }
+
+  private syncPinLabel(comment: ImageComment): void {
+    const index = this.data.comments.indexOf(comment) + 1;
+    const pin = el('pins').querySelector<HTMLElement>(`[data-comment="${comment.id}"]`);
+    if (pin) labelButton(pin, comment.text.trim() || t('editor.commentLabel', { n: index }));
+  }
+
+  /** Pins are draggable so a comment can be repositioned without retyping it. */
+  private startPinDrag(event: PointerEvent, comment: ImageComment, pin: HTMLElement): void {
+    if (!this.loaded || this.busy || event.button !== 0) return;
+    event.stopPropagation();
+    event.preventDefault();
+    this.snapshot();
+    this.pinDrag = { id: comment.id, moved: false };
+    this.selected(comment.id);
+    this.openPopover(comment, false);
+    pin.classList.add('dragging');
+    this.redrawPins();
+    try { el('pins').querySelector<HTMLElement>(`[data-comment="${comment.id}"]`)?.setPointerCapture?.(event.pointerId); } catch { /* not fatal */ }
+  }
+
+  private dragPin(event: PointerEvent, comment: ImageComment, pin: HTMLElement): void {
+    if (this.pinDrag?.id !== comment.id) return;
+    const next = this.point(event);
+    if (!this.pinDrag.moved && Math.hypot(next.x - comment.x, next.y - comment.y) < .002) return;
+    this.pinDrag.moved = true;
+    comment.x = next.x; comment.y = next.y;
+    const live = el('pins').querySelector<HTMLElement>(`[data-comment="${comment.id}"]`) ?? pin;
+    this.placePin(live, comment);
+    this.positionPopover();
+  }
+
+  private endPinDrag(comment: ImageComment): void {
+    if (this.pinDrag?.id !== comment.id) return;
+    const moved = this.pinDrag.moved;
+    this.pinDrag = null;
+    if (!moved) this.history.pop();
+    else this.changed();
+  }
+
+  private openPopover(comment: ImageComment, focus: boolean): void {
+    this.selected(comment.id);
+    const index = this.data.comments.indexOf(comment) + 1;
+    el('popoverIndex').textContent = t('editor.commentLabel', { n: index });
+    labelButton(el('deleteComment'), t('editor.removeComment'));
+    const text = el<HTMLTextAreaElement>('commentText');
+    if (text.dataset.comment !== comment.id) { text.value = comment.text; text.dataset.comment = comment.id; }
+    this.popover.hidden = false;
+    this.positionPopover();
+    this.redrawPins();
+    if (focus) {
+      text.focus();
+      text.setSelectionRange(text.value.length, text.value.length);
+    }
+  }
+
+  private closePopover(): void {
+    if (this.popover.hidden) return;
+    this.popover.hidden = true;
+    this.popover.removeAttribute('style');
+    el<HTMLTextAreaElement>('commentText').dataset.comment = '';
+    this.activeComment = '';
+    this.redrawPins();
+  }
+
+  /** Anchored to the pin, flipping above/below so it stays inside the stage. */
+  private positionPopover(): void {
+    if (this.popover.hidden || !this.item) return;
+    const comment = this.active();
+    if (!comment) return;
+    const stage = this.stage.getBoundingClientRect();
+    const surface = this.surface.getBoundingClientRect();
+    const width = Math.min(POPOVER_WIDTH, Math.max(160, stage.width - 16));
+    this.popover.style.width = `${width}px`;
+    const height = this.popover.offsetHeight || 92;
+    const pinX = surface.left - stage.left + comment.x * surface.width;
+    const pinY = surface.top - stage.top + comment.y * surface.height;
+    const left = between(pinX - width / 2, 6, Math.max(6, stage.width - width - 6));
+    let top = pinY - height - 16;
+    if (top < 6) top = pinY + 16;
+    top = between(top, 6, Math.max(6, stage.height - height - 6));
+    this.popover.style.left = `${left}px`;
+    this.popover.style.top = `${top}px`;
+  }
+
+  private removeActiveComment(): void {
+    const comment = this.active();
+    if (!comment) return;
+    this.snapshot();
+    this.data.comments = this.data.comments.filter((item) => item.id !== comment.id);
+    this.closePopover();
+    this.changed();
+    this.redrawPins();
   }
 
   private changed(redraw = true): void {
     if (!this.item) return;
-    this.revision++; this.preparedRevision = -1; this.noteDirty = true;
+    this.revision++; this.preparedRevision = -1; this.dirty = true;
     // Keep an in-memory draft even if a host write fails or a snapshot arrives.
-    this.item.annotations = clone(this.data); this.item.note = this.note;
+    this.item.annotations = clone(this.data); this.item.note = this.instruction;
     if (redraw) this.redraw();
     this.controls();
     cancelAnimationFrame(this.prepareFrame);
@@ -300,19 +428,28 @@ export class GalleryEditor {
 
   private undo(): void {
     if (this.busy || !this.history.length) return;
-    this.stroke = null; this.data = this.history.pop()!;
-    this.changed(); this.renderComments();
+    this.stroke = null; this.pinDrag = null;
+    this.data = this.history.pop()!;
+    if (this.activeComment && !this.active()) this.closePopover();
+    this.changed();
+    const comment = this.active();
+    if (comment) this.openPopover(comment, false);
   }
 
   private async clear(): Promise<void> {
     if (!this.api || this.busy) return;
     const { confirmed } = await this.api.ui.confirm({ title: t('editor.clearTitle'), message: t('editor.clearBody'), confirmLabel: t('editor.clear'), cancelLabel: t('cancel') });
     if (!confirmed || !this.item) return;
-    this.snapshot(); this.data = emptyAnnotations(); this.changed(); this.renderComments();
+    this.snapshot(); this.data = emptyAnnotations(); this.closePopover(); this.changed();
+  }
+
+  private grow(node: HTMLTextAreaElement): void {
+    node.style.height = 'auto';
+    node.style.height = `${Math.min(96, Math.max(34, node.scrollHeight))}px`;
   }
 
   private instructionText(): string {
-    const lines = this.note.trim() ? [this.note.trim()] : [];
+    const lines = this.instruction.trim() ? [this.instruction.trim()] : [];
     if (this.data.strokes.length) lines.push(t('editor.linesText', { n: this.data.strokes.length }));
     if (this.data.comments.length) {
       lines.push(t('editor.commentsText'));
@@ -323,27 +460,24 @@ export class GalleryEditor {
     return lines.join('\n');
   }
 
-  /** Flatten paths and numbered pins once, *before* the insert click. The
-   * Composer protocol has no freehand path type; annotation.image carries the
-   * evidence and annotation.reminder keeps the ORIGINAL file address intact.
-   * Nothing is sent automatically, and the original file is never overwritten. */
+  /**
+   * Flatten strokes and pins once, before the click: the Composer protocol has no
+   * freehand path type, so the evidence image carries the marks while
+   * `annotation.reminder` keeps the ORIGINAL file address intact. Nothing is sent
+   * automatically and the original file is never overwritten.
+   */
   private prepare(): void {
     if (!this.loaded || !this.item || this.stroke) return;
     try {
       const name = this.item.name;
       const separator = this.sourceUrl.indexOf(',');
       const mimeType = /^data:([^;]+);/.exec(this.sourceUrl)?.[1] || 'image/png';
-      this.original = {
-        type: 'annotation', label: name,
-        image: { name, mimeType, content: this.sourceUrl.slice(separator + 1) },
-        reminder: t('editor.reminder', { path: this.item.filePath }),
-      };
       const scale = Math.min(1, 2048 / Math.max(this.image.naturalWidth, this.image.naturalHeight));
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(this.image.naturalWidth * scale));
       canvas.height = Math.max(1, Math.round(this.image.naturalHeight * scale));
       const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error(t('editor.insertFailed'));
+      if (!ctx) throw new Error(t('editor.failed'));
       ctx.drawImage(this.image, 0, 0, canvas.width, canvas.height);
       const minEdge = Math.min(canvas.width, canvas.height);
       ctx.strokeStyle = '#ef5350'; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
@@ -366,40 +500,19 @@ export class GalleryEditor {
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(index + 1), x, y + .5);
       });
       const evidence = canvas.toDataURL('image/png').split(',')[1];
-      if (evidence.length > 24 * 1024 * 1024) throw new Error(t('image.large'));
-      const note = this.instructionText();
+      if (evidence.length > 24 * 1024 * 1024) throw new Error(t('editor.sendTooLarge'));
+      const text = this.instructionText();
       this.annotated = {
         type: 'annotation', label: t('editor.annotationLabel', { name }),
-        note: note || undefined, promptText: note || undefined,
+        note: text || undefined, promptText: text || undefined,
         reminder: t('editor.reminder', { path: this.item.filePath }),
         image: { name: `${name.replace(/\.[^.]+$/, '')}-annotated.png`, mimeType: 'image/png', content: evidence },
       };
       this.preparedRevision = this.revision;
       this.controls();
-    } catch (error) { this.showError(error instanceof Error ? error.message : t('editor.insertFailed')); }
-  }
-
-  private async insert(withAnnotations: boolean): Promise<void> {
-    const item = this.item;
-    if (!item || !this.api || this.busy || (this.scope !== 'session' && this.scope !== 'home')) return;
-    const context = withAnnotations ? this.annotated : this.original;
-    if (!context || (withAnnotations && this.preparedRevision !== this.revision)) return;
-    this.busy = true; this.controls(); el('editorError').hidden = true;
-    try {
-      // Do NOT await image loading, rendering or persistence here: addContexts
-      // must be invoked directly from this click's trusted user gesture.
-      const resultPromise = this.api.composer.addContexts([context]);
-      const result = await resultPromise;
-      if (this.item !== item) return;
-      if (result.added < 1) throw new Error(t('editor.insertFailed'));
-      this.flushSave(); this.close(); notice(t('editor.inserted'));
-    } catch {
-      if (this.item === item) this.showError(t('editor.insertFailed'));
-    } finally { this.busy = false; if (this.item) this.controls(); }
-  }
-
-  private showError(message: string): void {
-    el('editorError').textContent = message; el('editorError').hidden = false;
+    } catch (error) {
+      notice(error instanceof Error ? error.message : t('editor.failed'));
+    }
   }
 
   private sessionText(): string {
@@ -411,73 +524,91 @@ export class GalleryEditor {
     return parts.join('\n\n');
   }
 
-  /**
-   * App View / container scopes have no Composer draft, so the edit is sent into a
-   * Session the mini tool owns and the host is asked to open it. The backend reads
-   * the original from disk and attaches it alongside the composed preview, so this
-   * only ships the preview bytes the page already built.
-   */
-  private async send(): Promise<void> {
-    const item = this.item;
-    if (!item || !this.api || this.busy || !this.canSend) return;
+  private readyEvidence(): string | null {
     if (this.preparedRevision !== this.revision || !this.annotated?.image) this.prepare();
-    const evidence = this.annotated?.image?.content ?? '';
-    if (!evidence || this.preparedRevision !== this.revision) {
-      this.showError(t('editor.sendFailed'));
-      return;
+    return this.preparedRevision === this.revision ? this.annotated?.image?.content ?? null : null;
+  }
+
+  /**
+   * One button, two destinations: inside a Composer scope the marked preview is
+   * attached to the draft; in the App View there is no draft, so the edit is sent
+   * into a Session this mini tool owns and the host is asked to open it.
+   */
+  private async deliver(): Promise<void> {
+    const item = this.item;
+    if (!item || !this.api || this.busy) return;
+    const composer = this.scope === 'session' || this.scope === 'home';
+    if (!composer && !this.canSend) return;
+    const evidence = this.readyEvidence();
+    if (!evidence) { notice(t('editor.failed')); return; }
+    this.busy = true; this.controls();
+    try {
+      if (composer) {
+        // Invoke addContexts straight from this click: it needs the trusted
+        // gesture, so nothing may be awaited before it.
+        const result = await this.api.composer.addContexts([this.annotated!]);
+        if (this.item !== item) return;
+        if (result.added < 1) throw new Error(t('editor.failed'));
+        this.flushSave();
+        this.close();
+        notice(t('editor.attached'));
+        return;
+      }
+      this.attempt += 1;
+      const attempt = `${item.id}-${Date.now()}-${this.attempt}`;
+      // A fresh idempotency key per attempt: reusing one makes the host replay the
+      // old receipt and silently skip dispatching a new turn.
+      this.pendingSend = `send-${attempt}`;
+      this.api.postMessage({
+        type: 'sendToSession', id: item.id, requestId: this.pendingSend, evidence,
+        text: this.sessionText(), idempotencyKey: attempt,
+      });
+      clearTimeout(this.deadline);
+      this.deadline = setTimeout(() => {
+        if (this.item !== item || !this.busy) return;
+        this.busy = false; this.controls(); notice(t('editor.failed'));
+      }, 45000);
+    } catch {
+      if (this.item === item) { this.busy = false; this.controls(); notice(t('editor.failed')); }
     }
-    this.busy = true; this.controls(); el('editorError').hidden = true;
-    this.sendAttempt += 1;
-    const attempt = `${item.id}-${Date.now()}-${this.sendAttempt}`;
-    // A fresh idempotency key per attempt: reusing one makes the host replay the
-    // old receipt and silently skip dispatching a new turn.
-    this.pendingSend = `send-${attempt}`;
-    this.api.postMessage({
-      type: 'sendToSession', id: item.id, requestId: this.pendingSend, evidence,
-      text: this.sessionText(), idempotencyKey: attempt,
-    });
-    clearTimeout(this.sendTimer);
-    this.sendTimer = setTimeout(() => {
-      if (this.item !== item || !this.busy) return;
-      this.busy = false; this.showError(t('editor.sendFailed')); this.controls();
-    }, 45000);
   }
 
   onSendResult(message: Record<string, unknown>): void {
     const item = this.item;
     if (!item || message.id !== item.id) return;
     if (this.pendingSend && message.requestId && message.requestId !== this.pendingSend) return;
-    clearTimeout(this.sendTimer);
+    clearTimeout(this.deadline);
     this.busy = false;
     const error = typeof message.error === 'string' ? message.error : '';
     // 'duplicate' means the host already queued this exact message.
     if (!error || error === 'duplicate') { this.flushSave(); this.close(); notice(t('editor.sent')); return; }
-    this.showError(t(error === 'unsupported' ? 'editor.sendUnsupported' : error === 'too-large' ? 'editor.sendTooLarge' : 'editor.sendFailed'));
     this.controls();
+    notice(t(error === 'unsupported' ? 'editor.sendUnsupported' : error === 'too-large' ? 'editor.sendTooLarge' : 'editor.failed'));
   }
 
   private flushSave(): void {
     clearTimeout(this.saveTimer);
-    if (!this.item || !this.noteDirty || !this.api) return;
+    if (!this.item || !this.dirty || !this.api) return;
     this.pendingSave = `${this.item.id}:${this.revision}`;
-    this.api.postMessage({ type: 'saveAnnotations', id: this.item.id, requestId: this.pendingSave, annotations: clone(this.data), note: this.note });
-    this.noteDirty = false;
+    this.api.postMessage({ type: 'saveAnnotations', id: this.item.id, requestId: this.pendingSave, annotations: clone(this.data), note: this.instruction });
+    this.dirty = false;
     el('saveState').textContent = t('editor.saving');
   }
 
   onSaved(message: Record<string, unknown>): void {
     if (!this.item || message.id !== this.item.id || (message.requestId && message.requestId !== this.pendingSave)) return;
     if (message.type === 'panelError') {
-      this.noteDirty = true; el('saveState').textContent = t('editor.saveFailed');
+      this.dirty = true; el('saveState').textContent = t('editor.saveFailed');
     } else el('saveState').textContent = t('editor.saved');
   }
 
   private close(): void {
-    this.cancelStroke(); this.flushSave();
+    this.endStroke(); this.flushSave();
     cancelAnimationFrame(this.prepareFrame);
-    clearTimeout(this.sendTimer);
+    clearTimeout(this.deadline);
     const draft = this.item;
-    this.item = null; this.sourceUrl = ''; this.original = null; this.annotated = null;
+    this.item = null; this.sourceUrl = ''; this.annotated = null; this.activeComment = '';
+    this.closePopover();
     el('editor').hidden = true; document.body.classList.remove('editing');
     if (draft) this.onClose(draft);
   }
