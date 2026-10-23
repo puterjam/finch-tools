@@ -17,7 +17,7 @@
  */
 import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { activate, checkSize, formatApiError, readImageSize, resolveModel } from '../dist/index.js';
 
@@ -25,6 +25,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 
 let failures = 0;
+/** Replies the fake App View panel received, readable across test blocks. */
+let panelSent = [];
+/** Panel message helper, wired up once the fake panel is attached below. */
+let ask;
 function check(label, ok, detail = '') {
   if (!ok) failures += 1;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${label}${ok || !detail ? '' : ` — ${detail}`}`);
@@ -48,9 +52,36 @@ function makeCtx(storagePath) {
   const panelHandlers = [];
   const previews = [];
   const menus = { composer: {}, settings: null };
+  // App View cannot attach to a Composer, so it sends into a Session instead.
+  const sessions = { created: 0, sent: [], opened: [] };
+  let sessionCount = 0;
   const ctx = {
     storagePath,
     subscriptions: { push() {} },
+    api: { supports: (path) => path.startsWith('sessions.') },
+    navigation: {
+      async openSession(sessionId) { sessions.opened.push(sessionId); },
+    },
+    sessions: {
+      async create() {
+        sessionCount += 1;
+        sessions.created += 1;
+        return { sessionId: `sess-${sessionCount}`, owner: { type: 'minitool', minitoolId: 'image-gen' }, placement: { type: 'chat' }, activity: 'interactive' };
+      },
+      async get(sessionId) {
+        return sessions.opened.includes(sessionId) || sessions.sent.some((item) => item.sessionId === sessionId)
+          ? { sessionId }
+          : undefined;
+      },
+      async send(sessionId, message) {
+        if (sessions.failSend) throw new Error('send refused');
+        if (sessions.sent.some((item) => item.message.idempotencyKey === message.idempotencyKey)) {
+          return { sessionId, turnId: 't0', clientMessageId: 'c0', state: 'duplicate', queued: false, pendingCount: 0 };
+        }
+        sessions.sent.push({ sessionId, message });
+        return { sessionId, turnId: `turn-${sessions.sent.length}`, clientMessageId: `client-${sessions.sent.length}`, state: 'accepted', queued: false, pendingCount: 1 };
+      },
+    },
     storage: {
       async get(key) {
         return store.has(key) ? store.get(key) : null;
@@ -100,7 +131,7 @@ function makeCtx(storagePath) {
       },
     },
   };
-  return { ctx, registered, menus, store, panelHandlers, previews };
+  return { ctx, registered, menus, store, panelHandlers, previews, sessions };
 }
 
 function makeExec() {
@@ -176,7 +207,7 @@ globalThis.fetch = async (url, init) => {
 // ── run ──────────────────────────────────────────────────────────────────────
 
 const storagePath = mkdtempSync(join(tmpdir(), 'image-gen-smoke-'));
-const { ctx, registered, menus, store, panelHandlers, previews } = makeCtx(storagePath);
+const { ctx, registered, menus, store, panelHandlers, previews, sessions } = makeCtx(storagePath);
 activate(ctx);
 
 const tool = registered.image_gen_create;
@@ -359,6 +390,7 @@ const base = { prompt: 'a red square' };
   check('readImageSize shrugs at unknown formats', readImageSize(Buffer.from('nope'), 'png').width === 0);
 
   const { panel, sent, handlers } = makePanel('appView', '');
+panelSent = sent;
   panelHandlers[0](panel);
   // The push reads gallery.json, so wait for the message instead of one tick.
   for (let i = 0; i < 200 && !sent.some((m) => m.type === 'gallery'); i++) {
@@ -370,7 +402,7 @@ const base = { prompt: 'a red square' };
 
   // The host fires the panel message handler without awaiting it, so the smoke
   // test has to wait for the reply it produces rather than for the call itself.
-  const ask = async (message, expect) => {
+  ask = async (message, expect) => {
     const before = sent.length;
     await handlers[0](message);
     for (let i = 0; i < 200; i++) {
@@ -468,6 +500,51 @@ const base = { prompt: 'a red square' };
   const broken = await run(base);
   check('a broken stored default falls back instead of failing the call', broken.call.json.size === '1024x1024', broken.call.json.size);
   await store.delete('defaultSize');
+}
+
+// 12 — an App View edit has no Composer, so it is sent into a Session instead.
+{
+  const galleryFile = join(storagePath, 'gallery.json');
+  const replies = () => panelSent.filter((message) => message.type === 'annotationSendResult');
+  const fresh = await run({ prompt: 'send target' });
+  const targetPath = fresh.text.split('\n').pop().trim();
+  const targetId = JSON.parse(readFileSync(galleryFile, 'utf8')).find((item) => item.filePath === targetPath).id;
+  const targetName = basename(targetPath);
+  const evidence = PNG_1PX.toString('base64');
+  const sendsBefore = sessions.sent.length;
+
+  await ask({ type: 'sendToSession', id: targetId, requestId: 'send-1', evidence, text: 'warm light please', idempotencyKey: 'attempt-1' }, 'annotationSendResult');
+  const sent = sessions.sent.at(-1);
+  check('an App View edit is sent into a session this mini tool owns', sessions.sent.length === sendsBefore + 1 && !!sent?.sessionId, JSON.stringify(replies()));
+  check('the user is taken to that session', sessions.opened.at(-1) === sent.sessionId, JSON.stringify(sessions.opened));
+  check('the send is acknowledged with the session id', replies().at(-1)?.sessionId === sent.sessionId && !replies().at(-1)?.error, JSON.stringify(replies().at(-1)));
+  check('the original and the marked preview are both attached', sent.message.attachments.length === 2, JSON.stringify(sent.message.attachments.map((item) => item.name)));
+  check('the image to edit is attached first', sent.message.attachments[0].name === targetName && sent.message.attachments[0].kind === 'image');
+  check('the marked preview is attached second as a PNG', sent.message.attachments[1].name === `${targetName.replace(/\.png$/, '')}-annotated.png` && sent.message.attachments[1].mimeType === 'image/png');
+  check('the marked preview travels as raw base64', sent.message.attachments[1].data === evidence);
+  check('the page-authored text is sent verbatim', sent.message.text === 'warm light please', sent.message.text);
+  const persisted = JSON.parse(readFileSync(galleryFile, 'utf8')).find((item) => item.id === targetId);
+  check('the session is remembered for that image', persisted.annotationSessionId === sent.sessionId, persisted.annotationSessionId);
+
+  await ask({ type: 'sendToSession', id: targetId, evidence, text: 'more contrast', idempotencyKey: 'attempt-2' }, 'annotationSendResult');
+  check('a later edit reuses the same session', sessions.sent.at(-1).sessionId === sent.sessionId && sessions.created === 1, `${sessions.sent.at(-1).sessionId} / created ${sessions.created}`);
+  check('each attempt carries its own idempotency key', sessions.sent.at(-1).message.idempotencyKey === 'attempt-2');
+  await ask({ type: 'sendToSession', id: targetId, evidence, text: 'again', idempotencyKey: 'attempt-2' }, 'annotationSendResult');
+  check('a replayed idempotency key is reported instead of faking a new turn', replies().at(-1)?.error === 'duplicate', JSON.stringify(replies().at(-1)));
+
+  await ask({ type: 'sendToSession', id: 'ghost', evidence, text: 'x' }, 'annotationSendResult');
+  check('an unknown image is refused', replies().at(-1)?.error === 'not-found');
+
+  sessions.failSend = true;
+  await ask({ type: 'sendToSession', id: targetId, evidence, text: 'boom', idempotencyKey: 'attempt-3' }, 'annotationSendResult');
+  check('a failed send is reported and keeps the draft retryable', replies().at(-1)?.error === 'send-failed');
+  sessions.failSend = false;
+
+  const supports = ctx.api.supports;
+  ctx.api.supports = () => false;
+  await ask({ type: 'sendToSession', id: targetId, evidence, text: 'x' }, 'annotationSendResult');
+  check('hosts without session support say so', replies().at(-1)?.error === 'unsupported');
+  ctx.api.supports = supports;
 }
 
 rmSync(storagePath, { recursive: true, force: true });

@@ -33,9 +33,9 @@ await page.addInitScript(() => {
     sessionId: i % 2 ? 'session-2' : 'session-1', createdAt: Date.now() - i * 10000, note: '',
   }));
   const listeners = [];
-  const state = { records, contexts: [], rejections: [], messages: [], previews: [], view: 'session', sessionId: 'session-1', imageDelay: 0, refuseInsert: false, failImages: false };
+  const state = { records, contexts: [], rejections: [], messages: [], previews: [], view: 'session', sessionId: 'session-1', imageDelay: 0, refuseInsert: false, failImages: false, canSend: true, sends: [], failSend: false };
   const emit = (message) => listeners.forEach((fn) => fn(message));
-  const env = () => ({ view: state.view, sessionId: state.sessionId, locale: 'zh-CN' });
+  const env = () => ({ view: state.view, sessionId: state.sessionId, locale: 'zh-CN', canSend: state.canSend });
   const snapshot = () => emit({ type: 'gallery', data: state.records, env: env() });
   state.failImages = location.search.includes('image-error');
   state.imageDelay = location.search.includes('slow-image') ? 500 : 0;
@@ -62,6 +62,13 @@ await page.addInitScript(() => {
         const record = state.records.find((r) => r.id === message.id);
         record.annotations = message.annotations; record.note = message.note;
         setTimeout(() => emit({ type: 'annotationsSaved', id: message.id }), 0);
+      }
+      if (message.type === 'sendToSession') {
+        state.sends.push(message);
+        const reply = state.failSend
+          ? { error: 'send-failed' }
+          : { sessionId: 'sent-session', attached: 2 };
+        setTimeout(() => emit({ type: 'annotationSendResult', id: message.id, requestId: message.requestId, ...reply }), 0);
       }
       if (message.type === 'deleteRecord') {
         state.records = state.records.filter((r) => r.id !== message.id);
@@ -248,10 +255,51 @@ async function runEditorTests() {
   });
   await settle();
   assert.equal(await page.locator('#tabs button').count(), 1, 'App View hides the session-only tab');
+
+  // The App View has no Composer, so the edit is sent into a chat instead.
   await openEditor();
-  assert(await page.locator('#insertActions').isHidden(), 'App View has no Composer target');
-  assert(await page.locator('#scopeHint').isVisible());
+  assert(await page.locator('#insertActions').isVisible(), 'App View can still deliver the edit');
+  assert(await page.locator('#sendToSession').isVisible(), 'App View offers sending into a chat');
+  assert(await page.locator('#insertOriginal').isHidden() && await page.locator('#insertAnnotated').isHidden(), 'Composer-only actions stay hidden');
+  assert(await page.locator('#scopeHint').isHidden(), 'No dead hint while sending is possible');
+  await page.locator('#toolComment').click();
+  rect = await page.locator('#imageSurface').boundingBox();
+  await page.mouse.click(rect.x + rect.width * .3, rect.y + rect.height * .3);
+  await page.locator('.comment-row textarea').nth(0).fill('App View 评论');
+  await page.waitForFunction(() => !document.getElementById('sendToSession').disabled);
+  await page.locator('#sendToSession').click();
+  await page.waitForFunction(() => window.__host.sends.length === 1);
+  const send = await page.evaluate(() => window.__host.sends[0]);
+  assert.equal(send.type, 'sendToSession');
+  assert(send.text.includes('/gallery/picture-0.png'), 'The sent text keeps the original path');
+  assert(send.text.includes('App View 评论'), 'Every comment travels with the send');
+  assert(send.evidence.length > 100 && !send.evidence.startsWith('data:'), 'The composed preview travels as raw base64');
+  assert(!!send.idempotencyKey, 'Each attempt carries an idempotency key');
+  await page.waitForFunction(() => document.getElementById('editor').hidden, null, { timeout: 5000 });
+  console.log('ok UI: App View sends the composed edit into a chat with the original path');
+
+  // A rejected send must keep the draft instead of losing the user's work.
+  await page.evaluate(() => { window.__host.failSend = true; });
+  await openEditor();
+  assert.equal(await page.locator('.pin').count(), 1, 'The comment survived and was reopened');
+  await page.locator('#sendToSession').click();
+  await page.waitForFunction(() => !document.getElementById('editorError').hidden);
+  assert.equal(await page.locator('.pin').count(), 1, 'A failed send keeps the annotations');
+  assert(!(await page.locator('#back').isHidden()));
+  await page.evaluate(() => { window.__host.failSend = false; });
   await page.locator('#back').click();
+
+  // Hosts without session support fall back to telling the user where to go.
+  await page.evaluate(() => {
+    window.__host.canSend = false; window.__host.emit({ type: 'finch:env', ...window.__host.env() });
+  });
+  await openEditor();
+  assert(await page.locator('#insertActions').isHidden(), 'No send button without host support');
+  assert(await page.locator('#scopeHint').isVisible(), 'An actionable hint replaces the dead button');
+  await page.locator('#back').click();
+  await page.evaluate(() => {
+    window.__host.canSend = true; window.__host.emit({ type: 'finch:env', ...window.__host.env() });
+  });
 
   // Scope can change on the same live page without a reload (Home -> Session).
   await page.evaluate(() => {
@@ -259,13 +307,14 @@ async function runEditorTests() {
   });
   await openEditor();
   assert(await page.locator('#insertActions').isVisible());
+  assert(await page.locator('#insertAnnotated').isVisible() && await page.locator('#sendToSession').isHidden(), 'A Composer scope inserts instead of sending');
   await page.evaluate(() => {
     window.__host.view = 'session'; window.__host.sessionId = 'session-2';
     window.__host.emit({ type: 'finch:env', ...window.__host.env() });
   });
   assert(await page.locator('#insertActions').isVisible());
   await page.locator('#back').click();
-  console.log('ok UI: undo/clear and repeatable App View / Home / Session scope changes');
+  console.log('ok UI: undo/clear, App View sending, retry after failure, and repeatable scope changes');
 }
 
 async function runFailureAndThemeTests() {

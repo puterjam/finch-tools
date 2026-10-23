@@ -18,10 +18,14 @@ export class GalleryEditor {
   private selectedComment = '';
   private revision = 0;
   private preparedRevision = -1;
-  private original: finch.ComposerContextDraft | null = null;
-  private annotated: finch.ComposerContextDraft | null = null;
+  private original: Extract<finch.ComposerContextDraft, { type: 'annotation' }> | null = null;
+  private annotated: Extract<finch.ComposerContextDraft, { type: 'annotation' }> | null = null;
   private loaded = false;
   private busy = false;
+  private canSend = false;
+  private pendingSend = '';
+  private sendAttempt = 0;
+  private sendTimer: ReturnType<typeof setTimeout> | undefined;
   private note = '';
   private sourceUrl = '';
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -45,6 +49,7 @@ export class GalleryEditor {
     el('clear').onclick = () => { void this.clear(); };
     el('insertOriginal').onclick = () => { void this.insert(false); };
     el('insertAnnotated').onclick = () => { void this.insert(true); };
+    el('sendToSession').onclick = () => { void this.send(); };
     el<HTMLTextAreaElement>('overallNote').maxLength = 8000;
     el<HTMLTextAreaElement>('overallNote').oninput = (event) => {
       this.note = (event.target as HTMLTextAreaElement).value;
@@ -64,8 +69,9 @@ export class GalleryEditor {
     });
   }
 
-  setScope(scope: string): void {
+  setScope(scope: string, canSend = this.canSend): void {
     this.scope = scope;
+    this.canSend = canSend;
     if (this.item) { this.copy(); this.controls(); }
   }
 
@@ -76,6 +82,8 @@ export class GalleryEditor {
     this.note = item.note || '';
     this.noteDirty = false; this.pendingSave = '';
     this.loaded = false; this.busy = false; this.original = null; this.annotated = null;
+    this.pendingSend = '';
+    clearTimeout(this.sendTimer);
     this.revision++; this.preparedRevision = -1;
     this.history = []; this.stroke = null; this.selectedComment = '';
     this.mode = 'view';
@@ -122,17 +130,33 @@ export class GalleryEditor {
   }
 
   private controls(): void {
-    const insertable = this.scope === 'session' || this.scope === 'home';
-    el('insertActions').hidden = !insertable;
-    el('scopeHint').hidden = insertable;
+    const composer = this.scope === 'session' || this.scope === 'home';
+    // The App View (and container) scope own no Composer draft, so editing there
+    // is only useful if the result can be sent into a Session instead.
+    const sendable = !composer && this.canSend;
+    const actionable = composer || sendable;
+    el('insertActions').hidden = !actionable;
+    el('scopeHint').hidden = actionable;
+    el('scopeHint').textContent = t(this.canSend ? 'editor.scopeHint' : 'editor.sendUnsupported');
+    el('insertOriginal').hidden = !composer;
+    el('insertAnnotated').hidden = !composer;
+    el('sendToSession').hidden = !sendable;
+    const ready = this.loaded && !this.busy && this.preparedRevision === this.revision;
     el<HTMLButtonElement>('insertOriginal').disabled = !this.loaded || this.busy;
-    el<HTMLButtonElement>('insertAnnotated').disabled = !this.loaded || this.busy || this.preparedRevision !== this.revision;
-    const label = el('insertAnnotated').querySelector('[data-text]')!;
-    label.textContent = t(this.busy ? 'editor.inserting' : this.loaded && this.preparedRevision !== this.revision ? 'editor.preparing' : 'editor.insert');
+    el<HTMLButtonElement>('insertAnnotated').disabled = !ready;
+    el<HTMLButtonElement>('sendToSession').disabled = !ready;
+    el('insertAnnotated').querySelector('[data-text]')!.textContent = t(
+      this.busy ? 'editor.inserting' : this.loaded && this.preparedRevision !== this.revision ? 'editor.preparing' : 'editor.insert',
+    );
+    el('sendToSession').querySelector('[data-text]')!.textContent = t(
+      this.busy ? 'editor.sending' : this.loaded && this.preparedRevision !== this.revision ? 'editor.preparing' : 'editor.send',
+    );
     el('toolPen').setAttribute('aria-pressed', String(this.mode === 'pen'));
     el('toolComment').setAttribute('aria-pressed', String(this.mode === 'comment'));
     this.surface.dataset.mode = this.mode;
-    el('toolHint').textContent = t(this.mode === 'pen' ? 'editor.penHint' : this.mode === 'comment' ? 'editor.commentHint' : 'editor.viewHint');
+    el('toolHint').textContent = t(
+      this.mode === 'pen' ? 'editor.penHint' : this.mode === 'comment' ? 'editor.commentHint' : sendable ? 'editor.sendHint' : 'editor.viewHint',
+    );
     el('undo').hidden = !this.history.length;
     el('clear').hidden = !this.data.strokes.length && !this.data.comments.length;
     el('toolbar').querySelector<HTMLElement>('.divider')!.hidden = !this.history.length && !this.data.strokes.length && !this.data.comments.length;
@@ -378,6 +402,60 @@ export class GalleryEditor {
     el('editorError').textContent = message; el('editorError').hidden = false;
   }
 
+  private sessionText(): string {
+    const parts: string[] = [];
+    const body = this.instructionText();
+    if (body) parts.push(body);
+    parts.push(t('editor.reminder', { path: this.item?.filePath ?? '' }));
+    parts.push(t('editor.attachOrder'));
+    return parts.join('\n\n');
+  }
+
+  /**
+   * App View / container scopes have no Composer draft, so the edit is sent into a
+   * Session the mini tool owns and the host is asked to open it. The backend reads
+   * the original from disk and attaches it alongside the composed preview, so this
+   * only ships the preview bytes the page already built.
+   */
+  private async send(): Promise<void> {
+    const item = this.item;
+    if (!item || !this.api || this.busy || !this.canSend) return;
+    if (this.preparedRevision !== this.revision || !this.annotated?.image) this.prepare();
+    const evidence = this.annotated?.image?.content ?? '';
+    if (!evidence || this.preparedRevision !== this.revision) {
+      this.showError(t('editor.sendFailed'));
+      return;
+    }
+    this.busy = true; this.controls(); el('editorError').hidden = true;
+    this.sendAttempt += 1;
+    const attempt = `${item.id}-${Date.now()}-${this.sendAttempt}`;
+    // A fresh idempotency key per attempt: reusing one makes the host replay the
+    // old receipt and silently skip dispatching a new turn.
+    this.pendingSend = `send-${attempt}`;
+    this.api.postMessage({
+      type: 'sendToSession', id: item.id, requestId: this.pendingSend, evidence,
+      text: this.sessionText(), idempotencyKey: attempt,
+    });
+    clearTimeout(this.sendTimer);
+    this.sendTimer = setTimeout(() => {
+      if (this.item !== item || !this.busy) return;
+      this.busy = false; this.showError(t('editor.sendFailed')); this.controls();
+    }, 45000);
+  }
+
+  onSendResult(message: Record<string, unknown>): void {
+    const item = this.item;
+    if (!item || message.id !== item.id) return;
+    if (this.pendingSend && message.requestId && message.requestId !== this.pendingSend) return;
+    clearTimeout(this.sendTimer);
+    this.busy = false;
+    const error = typeof message.error === 'string' ? message.error : '';
+    // 'duplicate' means the host already queued this exact message.
+    if (!error || error === 'duplicate') { this.flushSave(); this.close(); notice(t('editor.sent')); return; }
+    this.showError(t(error === 'unsupported' ? 'editor.sendUnsupported' : error === 'too-large' ? 'editor.sendTooLarge' : 'editor.sendFailed'));
+    this.controls();
+  }
+
   private flushSave(): void {
     clearTimeout(this.saveTimer);
     if (!this.item || !this.noteDirty || !this.api) return;
@@ -397,6 +475,7 @@ export class GalleryEditor {
   private close(): void {
     this.cancelStroke(); this.flushSave();
     cancelAnimationFrame(this.prepareFrame);
+    clearTimeout(this.sendTimer);
     const draft = this.item;
     this.item = null; this.sourceUrl = ''; this.original = null; this.annotated = null;
     el('editor').hidden = true; document.body.classList.remove('editing');

@@ -26,9 +26,10 @@ Every generation lands in the gallery — open it from the **Image 2.5** entry i
 - **Edit in place** — the editor fills its Panel or App View. The image fits above a compact toolbar, with no fixed-width side panel.
 - **Draw and comment** — freehand red lines and multiple numbered comments placed by clicking the image. Add overall instructions, undo an annotation, or clear the draft.
 - **Attach edits** adds the marked preview and every comment to the input box, retaining the original file for AI editing. **Attach original** sends the unmarked image instead. Nothing is sent automatically.
+- **From the sidebar App View** there is no input box, so the editor offers **Send to a new chat** instead: it opens a chat for that image and posts the original plus the marked preview, then takes you there. Later edits of the same image continue in that same chat.
 - **Drafts are saved**, and removing an image only removes its gallery entry — the original file is kept.
 
-The attach buttons need a Composer to write into, so they appear when the gallery is opened from a session panel or Home — from the sidebar App View there is no input box to attach to, and the gallery says so instead of showing a dead button.
+The attach buttons need a Composer to write into, so they appear when the gallery is opened from a session panel or Home. From the sidebar App View, which has no input box, the editor sends the edit into a chat instead — and if your Finch does not support that, it says where to open the gallery rather than showing a dead button.
 
 ## Setup
 
@@ -102,9 +103,10 @@ Click the **settings** (gear) menu on the Image 2.5 card in Toolcase → **API B
 - **区域内全屏编辑**：填满当前 Panel 或 App View，图片自适应，工具栏在图片下方，不再被固定宽侧栏挤压。
 - **画线与多条评论**：自由画红线，点击图片放置编号评论，可逐条填写要求；也可以添加整体说明、撤销或清除标注。
 - **插入修改要求**：把带标注的预览图和所有评论附到输入框，AI 仍基于原始文件修改；**插入原图**则附上未标注的原图，不会自动发送消息。
+- **从侧边栏 App View 打开**时没有输入框，编辑器改为提供**发送到新会话**：为这张图打开一个会话，把原图和带标注的预览图一起发过去，并直接带你过去。同一张图之后继续修改仍在同一个会话里。
 - **草稿自动保存**；移除图片只移除图库记录，原始文件仍保留。
 
-插入按钮需要一个能写入的输入框，所以从会话面板或首页打开图片库时才会出现；从左侧边栏的 App View 打开时没有输入框可插，图片库会直接说明原因，而不是摆一个按了没反应的按钮。
+插入按钮需要一个能写入的输入框，所以从会话面板或首页打开图片库时才会出现。从左侧边栏的 App View 打开时没有输入框可插，编辑器会把修改发到会话里；如果你的 Finch 版本不支持直接发送，它会说明去哪里打开图片库，而不是摆一个按了没反应的按钮。
 
 ## 使用前配置
 

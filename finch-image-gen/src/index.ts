@@ -463,6 +463,11 @@ export interface GalleryRecord {
   /** Free-form user note, edited from the gallery page. */
   note: string;
   annotations?: GalleryAnnotations;
+  /**
+   * Session created for "send to a new chat" from the App View, which has no
+   * Composer to attach into. Reused across sends for the same image.
+   */
+  annotationSessionId?: string;
 }
 
 async function loadGallery(ctx: finch.MiniToolContext): Promise<GalleryRecord[]> {
@@ -547,12 +552,44 @@ export function readImageSize(buf: Buffer, format: string): { width: number; hei
 
 const livePanels = new Set<finch.AppPanel>();
 
+/** Sessions are only reachable when the host exposes them and the permission is granted. */
+function sessionsSupported(ctx: finch.MiniToolContext): boolean {
+  try {
+    return ctx.api.supports('sessions.create') && ctx.api.supports('sessions.send');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The App View owns no Composer draft, so an edited image cannot be `addContexts`-ed
+ * there. Instead the composed preview is sent into a Session this mini tool owns.
+ * Reusing one Session per image keeps repeated edits in the same conversation.
+ */
+async function resolveAnnotationSession(ctx: finch.MiniToolContext, record: GalleryRecord): Promise<string> {
+  if (record.annotationSessionId) {
+    const existing = await ctx.sessions.get(record.annotationSessionId).catch(() => undefined);
+    if (existing) return existing.sessionId;
+    record.annotationSessionId = undefined;
+  }
+  const created = await ctx.sessions.create({});
+  const sessionId = created.sessionId;
+  record.annotationSessionId = sessionId;
+  await mutateGallery(ctx, (records) => {
+    const target = records.find((item) => item.id === record.id);
+    if (target) target.annotationSessionId = sessionId;
+    return records;
+  });
+  return sessionId;
+}
+
 async function buildPanelEnv(ctx: finch.MiniToolContext, panel: finch.AppPanel): Promise<Record<string, unknown>> {
   return {
     view: panel.view ?? '',
     sessionId: panel.sessionId ?? '',
     // Fallback for older hosts; the page prefers repeatable finch:env signals.
     locale: ctx.i18n.locale,
+    canSend: sessionsSupported(ctx),
   };
 }
 
@@ -574,6 +611,52 @@ async function broadcastGallery(ctx: finch.MiniToolContext): Promise<void> {
       // Navigation is transient. Only onDidDispose removes a panel handle.
     }
   }
+}
+
+/** Per-message attachment budget, mirrored from the host's documented limits. */
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACH_TOTAL_BYTES = 20 * 1024 * 1024;
+
+/**
+ * Sends the marked preview plus the untouched original into a Session, so an
+ * App View edit can actually reach the model. The original is read from disk
+ * here — the page already shipped the preview bytes and should not resend a
+ * second copy of a possibly large file. The original is dropped, not the send
+ * itself, when the two would exceed the host's attachment budget.
+ */
+async function sendAnnotationsToSession(
+  ctx: finch.MiniToolContext,
+  record: GalleryRecord,
+  evidence: string,
+  text: string,
+  idempotencyKey: string,
+): Promise<{ sessionId?: string; error?: string; attached: number; includedOriginal: boolean }> {
+  const attachments: finch.SessionMessageAttachment[] = [];
+  let total = 0;
+  const attach = (name: string, mimeType: string, data: string): boolean => {
+    const bytes = Math.floor((data.length * 3) / 4);
+    if (attachments.length >= MAX_ATTACHMENTS || total + bytes > MAX_ATTACH_TOTAL_BYTES) return false;
+    attachments.push({ name, mimeType, data, kind: 'image' });
+    total += bytes;
+    return true;
+  };
+
+  let includedOriginal = false;
+  // Original first: it is the image to edit, the preview is only the markup.
+  const rawOriginal = await fs.readFile(record.filePath).catch(() => null);
+  if (rawOriginal) includedOriginal = attach(record.name, imageMime(record.filePath), rawOriginal.toString('base64'));
+  const evidenceName = `${record.name.replace(/\.[^.]+$/, '')}-annotated.png`;
+  if (evidence && !attach(evidenceName, 'image/png', evidence)) {
+    return { error: 'too-large', attached: attachments.length, includedOriginal };
+  }
+  if (!attachments.length) return { error: 'empty', attached: 0, includedOriginal };
+
+  const sessionId = await resolveAnnotationSession(ctx, record);
+  const receipt = await ctx.sessions.send(sessionId, { text, attachments, idempotencyKey });
+  // A replayed receipt means the host already queued this exact message; do not
+  // pretend a new turn started.
+  if (receipt.state !== 'accepted') return { sessionId, error: 'duplicate', attached: attachments.length, includedOriginal };
+  return { sessionId, attached: attachments.length, includedOriginal };
 }
 
 function imageMime(filePath: string): string {
@@ -659,6 +742,45 @@ async function handlePanelMessage(
       return records;
     });
     await panel.postMessage({ type: found ? 'annotationsSaved' : 'panelError', id, requestId: msg.requestId, ...(!found ? { error: 'not-found' } : {}) });
+    return;
+  }
+
+  if (type === 'sendToSession') {
+    const id = String(msg.id ?? '');
+    const requestId = String(msg.requestId ?? '');
+    const records = await loadGallery(ctx);
+    const record = records.find((item) => item.id === id);
+    const reply = (payload: Record<string, unknown>) =>
+      panel.postMessage({ type: 'annotationSendResult', id, requestId, ...payload });
+    if (!record) {
+      await reply({ error: 'not-found' });
+      return;
+    }
+    if (!sessionsSupported(ctx)) {
+      await reply({ error: 'unsupported' });
+      return;
+    }
+    const evidence = typeof msg.evidence === 'string' ? msg.evidence : '';
+    const text = typeof msg.text === 'string' ? msg.text.slice(0, 8000) : '';
+    // A fresh key per attempt: a replayed idempotency key would suppress the turn.
+    const idempotencyKey =
+      typeof msg.idempotencyKey === 'string' && msg.idempotencyKey
+        ? msg.idempotencyKey.slice(0, 200)
+        : `${record.id}-${Date.now()}`;
+    const result = await sendAnnotationsToSession(ctx, record, evidence, text, idempotencyKey).catch((error: unknown) => {
+      ctx.logger.warn(`sendToSession failed: ${error instanceof Error ? error.message : String(error)}`);
+      return { sessionId: undefined, error: 'send-failed', attached: 0, includedOriginal: false };
+    });
+    // 'duplicate' still means the host queued this exact message, so it is worth
+    // opening the Session; the other errors never delivered anything.
+    if (result.sessionId && (result.error === undefined || result.error === 'duplicate')) {
+      try {
+        await ctx.navigation.openSession(result.sessionId);
+      } catch (err) {
+        ctx.logger.warn(`openSession failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    await reply(result);
     return;
   }
 

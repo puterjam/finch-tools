@@ -12,6 +12,7 @@ let sessionId = '';
 let filter: 'all' | 'current' = 'all';
 let pickedFilter = false;
 let authoritativeEnv = false;
+let canSend = false;
 const cache = new Map<string, string>();
 const waiting = new Map<string, { resolve: (value: string) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
 
@@ -69,9 +70,10 @@ function applyEnv(env: Record<string, unknown>): void {
   sessionId = typeof env.sessionId === 'string' ? env.sessionId : sessionId;
   if (!view && sessionId) view = 'session';
   if (typeof env.locale === 'string') setLocale(env.locale);
+  if (typeof env.canSend === 'boolean') canSend = env.canSend;
   if (!pickedFilter) filter = view === 'session' && sessionId ? 'current' : 'all';
   if (view !== 'session' || !sessionId) filter = 'all';
-  editor.setScope(view);
+  editor.setScope(view, canSend);
   paintCopy();
 }
 
@@ -94,6 +96,8 @@ api?.onMessage((raw) => {
     } else pending?.reject(new Error(t(message.error === 'too-large' ? 'image.large' : 'image.failed')));
   } else if (message.type === 'annotationsSaved' || message.type === 'panelError') {
     editor.onSaved(message);
+  } else if (message.type === 'annotationSendResult') {
+    editor.onSendResult(message);
   } else if (message.type === 'deleteResult') {
     records = records.filter((r) => r.id !== message.id); render(); notice(t('removed'));
   }

@@ -11,6 +11,7 @@ const paths: Record<string, string> = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   x: '<path d="m18 6-12 12M6 6l12 12"/>',
   'corner-down-left': '<path d="M9 10 4 15l5 5"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/>',
+  send: '<path d="M14.54 20.6a.55.55 0 0 0 1.03-.05l6.4-17.12a.55.55 0 0 0-.7-.7L4.15 9.13a.55.55 0 0 0-.05 1.03l6.62 3.2a.55.55 0 0 1 .27.27z"/><path d="M20.5 3.5 10.7 13.3"/>',
 };
 export function icon(name: string): string {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.image}</svg>`;
