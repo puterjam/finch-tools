@@ -228,15 +228,39 @@ async function runEditorTests() {
     const stage = document.getElementById('stage').getBoundingClientRect();
     return { w: r.width, h: r.height, right: r.right, bottom: r.bottom, top: r.top, toolbarY: tools.y, toolbarBottom: tools.bottom, stageBottom: stage.bottom, scroll: document.documentElement.scrollWidth };
   });
-  assert(bounds.w > 150 && bounds.h > 100 && bounds.right <= 360 && bounds.scroll <= 360, 'Editor image is usable inside a narrow Panel');
+  assert(bounds.w > 150 && bounds.h > 100 && bounds.right <= 360 && bounds.scroll <= 360, `Editor image is usable inside a narrow Panel (${Math.round(bounds.w)}×${Math.round(bounds.h)})`);
   assert(bounds.toolbarBottom <= bounds.stageBottom + 1 && bounds.toolbarBottom > bounds.stageBottom - 60, 'The toolbar floats at the bottom of the stage');
   assert.equal(await page.locator('#insertOriginal').count(), 0, 'Insert-original is gone');
   assert.equal(await page.locator('#editorError').count(), 0, 'No inline red error text remains');
   assert.equal(await page.locator('#commentList, .comment-row').count(), 0, 'Comments no longer live in a list under the image');
 
+  // The field is a readable width with an explicit send button beside it.
+  await page.setViewportSize({ width: 1000, height: 800 }); await settle();
+  const composer = await page.evaluate(() => {
+    const fieldEl = document.getElementById('instruction');
+    fieldEl.focus();
+    const field = fieldEl.getBoundingClientRect();
+    const send = document.getElementById('send').getBoundingClientRect();
+    const style = getComputedStyle(fieldEl);
+    return {
+      width: field.width, right: field.right, centreY: field.y + field.height / 2,
+      sendLeft: send.left, sendCentreY: send.y + send.height / 2,
+      outline: style.outlineStyle, outlineWidth: style.outlineWidth,
+    };
+  });
+  assert(composer.width > 380 && composer.width <= 430.5, `The instruction field keeps a readable width (${Math.round(composer.width)}px)`);
+  assert(composer.sendLeft > composer.right, 'An explicit send button sits to the right of the field');
+  assert(Math.abs(composer.sendCentreY - composer.centreY) < 6, 'The button shares the field’s row');
+  assert(composer.outline === 'none' || composer.outlineWidth === '0px', `A focused field shows one boundary, not two (outline ${composer.outline} ${composer.outlineWidth})`);
+  await page.setViewportSize({ width: 360, height: 720 }); await settle();
+
   await page.locator('#toolPen').click();
   await drawStroke([.2, .25], [.4, .5]);
   assert.equal(await page.locator('#inkLayer path').count(), 1, 'A stroke is drawn');
+  // The frame is fitted by CSS, so the ink must still land in natural pixels.
+  const ink = await page.evaluate(() => document.querySelector('#inkLayer path').getAttribute('d'));
+  const first = /^M([\d.]+) ([\d.]+)/.exec(ink);
+  assert(first && Math.abs(Number(first[1]) - 768 * .2) < 6 && Math.abs(Number(first[2]) - 1024 * .25) < 8, `A stroke maps to image coordinates (${ink.slice(0, 18)})`);
   // Reproduces the "sometimes a line vanishes" bug: losing capture mid-stroke
   // used to discard the line; it must survive.
   await page.evaluate(() => {
@@ -255,6 +279,9 @@ async function runEditorTests() {
   await page.mouse.click(rect.x + rect.width * .3, rect.y + rect.height * .4);
   await page.waitForFunction(() => !document.getElementById('commentPopover').hidden);
   assert(await page.evaluate(() => document.activeElement?.id === 'commentText'), 'The bubble focuses its input right away');
+  // A selected pin is a soft halo, not a second hard ring around its border.
+  const pinRing = await page.evaluate(() => { const style = getComputedStyle(document.querySelector('.pin')); return { outline: style.outlineStyle, outlineWidth: style.outlineWidth }; });
+  assert(pinRing.outline === 'none' || pinRing.outlineWidth === '0px', `A selected pin shows one ring (outline ${pinRing.outline} ${pinRing.outlineWidth})`);
   await page.locator('#commentText').fill('把这里换成暖光');
   const popoverBefore = await page.locator('#commentPopover').boundingBox();
   const pin = await page.locator('.pin').first().boundingBox();
@@ -409,6 +436,10 @@ async function runFailureAndThemeTests() {
       };
     });
     assert(geometry.image.x >= 0 && geometry.image.right <= width && geometry.image.width > 0, `${width}px: image fits`);
+    // Native fitting: the frame keeps the picture's ratio instead of stretching.
+    const ratio = geometry.image.width / geometry.image.height;
+    assert(Math.abs(ratio - 768 / 1024) < .02, `${width}x${height}: the frame keeps the picture's aspect ratio (${ratio.toFixed(3)})`);
+    assert(geometry.image.height <= geometry.stage.height + 1 && geometry.image.bottom <= geometry.stage.bottom + 1, `${width}x${height}: the frame stays inside the stage`);
     // The capsule floats: it reserves no space, so the picture is centred in the
     // whole stage rather than in a stage shortened by the toolbar.
     const imageCentre = geometry.image.y + geometry.image.height / 2;

@@ -132,7 +132,11 @@ export class GalleryEditor {
       await this.image.decode();
       if (this.item !== item) return;
       this.loaded = true; this.surface.hidden = false; el('imageStatus').hidden = true;
-      this.fit(); this.redraw(); this.prepare(); this.controls();
+      // Hand the natural size to CSS once; everything else scales natively.
+      const naturalWidth = this.image.naturalWidth; const naturalHeight = this.image.naturalHeight;
+      this.surface.style.setProperty('--natural', `${naturalWidth} / ${naturalHeight}`);
+      this.surface.style.setProperty('--natural-ratio', String(naturalWidth / naturalHeight));
+      this.redraw(); this.prepare(); this.controls();
     } catch (error) {
       if (this.item !== item) return;
       el('imageStatus').textContent = error instanceof Error ? error.message : t('image.failed');
@@ -192,12 +196,11 @@ export class GalleryEditor {
     this.controls();
   }
 
+  /**
+   * The frame is fitted by CSS from the natural size, so resizing needs no
+   * per-frame maths — only the floating bubble has to be re-anchored.
+   */
   private fit(): void {
-    if (!this.item || !this.loaded) return;
-    const { width, height } = this.stage.getBoundingClientRect();
-    const scale = Math.min(width / this.image.naturalWidth, height / this.image.naturalHeight);
-    const w = this.image.naturalWidth * scale; const h = this.image.naturalHeight * scale;
-    Object.assign(this.surface.style, { width: `${w}px`, height: `${h}px`, left: `${(width - w) / 2}px`, top: `${(height - h) / 2}px` });
     this.positionPopover();
   }
 
