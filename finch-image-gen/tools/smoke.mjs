@@ -657,6 +657,35 @@ panelSent = sent;
   ctx.ui.showModalDialog = dialog;
 }
 
+// 15 — the editor toolbar writes the same size, so both surfaces agree.
+{
+  const sessionPanel = makePanel('session', 'sess-1');
+  panelHandlers[0](sessionPanel.panel);
+  for (let i = 0; i < 200 && !sessionPanel.sent.some((m) => m.type === 'gallery'); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  const env = sessionPanel.sent.find((m) => m.type === 'gallery')?.env ?? {};
+  check('the panel env carries the current size', env.defaultSize === '1024x1024', JSON.stringify(env.defaultSize));
+
+  const before = sessionPanel.sent.length;
+  await sessionPanel.handlers[0]({ type: 'setDefaultSize', size: '720x1280' });
+  for (let i = 0; i < 200 && !sessionPanel.sent.slice(before).some((m) => m.type === 'defaultSize'); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  check('choosing a size in the gallery stores it', (await store.get('defaultSize')) === '720x1280', String(await store.get('defaultSize')));
+  check('the choice is broadcast back to the panels', sessionPanel.sent.slice(before).some((m) => m.type === 'defaultSize' && m.size === '720x1280'), JSON.stringify(sessionPanel.sent.slice(before).map((m) => m.type)));
+  check('the composer menu shows the same value', (await menus.composer['image-gen-settings'].getMenu({ sessionId: 'sess-1', spaceId: '' })).find((item) => item.id === 'set-size').description === '720x1280');
+
+  const after = sessionPanel.sent.length;
+  await sessionPanel.handlers[0]({ type: 'setDefaultSize', size: 'auto' });
+  check('a rebuilt size can be cleared', (await store.get('defaultSize')) === 'auto', String(await store.get('defaultSize')));
+  await sessionPanel.handlers[0]({ type: 'setDefaultSize', size: '1024x1024' });
+  check('the built-in size clears the override again', (await store.get('defaultSize')) === undefined);
+  await sessionPanel.handlers[0]({ type: 'setDefaultSize', size: '1234x99' });
+  check('an invalid size from the gallery is refused', (await store.get('defaultSize')) === undefined, String(await store.get('defaultSize')));
+  check('a refused size is not broadcast', !sessionPanel.sent.slice(after).some((m) => m.type === 'defaultSize' && m.size === '1234x99'));
+}
+
 rmSync(storagePath, { recursive: true, force: true });
 
 console.log(`\n${failures === 0 ? 'all checks passed' : `${failures} check(s) failed`}`);

@@ -12,6 +12,10 @@ const paths: Record<string, string> = {
   x: '<path d="m18 6-12 12M6 6l12 12"/>',
   'corner-down-left': '<path d="M9 10 4 15l5 5"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/>',
   send: '<path d="M14.54 20.6a.55.55 0 0 0 1.03-.05l6.4-17.12a.55.55 0 0 0-.7-.7L4.15 9.13a.55.55 0 0 0-.05 1.03l6.62 3.2a.55.55 0 0 1 .27.27z"/><path d="M20.5 3.5 10.7 13.3"/>',
+  'image-upscale': '<path d="M16 3h5v5"/><path d="M17 2l-5 5"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7"/>',
+  square: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+  'rectangle-vertical': '<rect width="12" height="20" x="6" y="2" rx="2"/>',
+  'rectangle-horizontal': '<rect width="20" height="12" x="2" y="6" rx="2"/>',
 };
 export function icon(name: string): string {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.image}</svg>`;

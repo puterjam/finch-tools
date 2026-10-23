@@ -9,10 +9,22 @@ const clone = (data: GalleryAnnotations): GalleryAnnotations => structuredClone(
 const uid = (): string => crypto.randomUUID();
 /** Keeps the floating bubble inside the stage. */
 const between = (value: number, min: number, max: number): number => Math.min(Math.max(value, min), max);
+/** Escaping for the few places a row is built as markup rather than nodes. */
+const escapeText = (value: string): string => value.replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[ch] as string);
 const MAX_STROKES = 100;
 const MAX_COMMENTS = 50;
 const MAX_POINTS = 20000;
 const POPOVER_WIDTH = 232;
+
+/** Same aspect presets the Composer menu writes, so both surfaces agree. */
+const SIZE_OPTIONS = [
+  { size: '1024x1024', ratio: '1:1', icon: 'square', label: 'size.square' },
+  { size: '768x1024', ratio: '3:4', icon: 'rectangle-vertical', label: 'size.portrait' },
+  { size: '720x1280', ratio: '9:16', icon: 'rectangle-vertical', label: 'size.story' },
+  { size: '1024x768', ratio: '4:3', icon: 'rectangle-horizontal', label: 'size.landscape' },
+  { size: '1280x720', ratio: '16:9', icon: 'rectangle-horizontal', label: 'size.wide' },
+  { size: 'auto', ratio: '', icon: 'image-upscale', label: 'size.auto' },
+] as const;
 
 /** A route within the webview, with image-relative geometry and prebuilt evidence. */
 export class GalleryEditor {
@@ -41,6 +53,8 @@ export class GalleryEditor {
   private pendingSave = '';
   private prepareFrame = 0;
   private dirty = false;
+  /** The default output size, mirrored from the extension so both agree. */
+  private outputSize = '1024x1024';
   private readonly image = el<HTMLImageElement>('editorImage');
   private readonly surface = el('imageSurface');
   private readonly stage = el('stage');
@@ -58,6 +72,7 @@ export class GalleryEditor {
     el('clear').onclick = () => { void this.clear(); };
     el('send').onclick = () => { void this.deliver(); };
     el('deleteComment').onclick = () => this.removeActiveComment();
+    el('toolSize').onclick = () => (el('sizeMenu').hidden ? this.openSizeMenu() : this.closeSizeMenu());
     const instruction = el<HTMLTextAreaElement>('instruction');
     instruction.maxLength = 8000;
     instruction.oninput = () => { this.instruction = instruction.value; this.grow(instruction); this.changed(false); };
@@ -83,6 +98,9 @@ export class GalleryEditor {
     this.surface.addEventListener('lostpointercapture', () => this.endStroke());
     this.stage.addEventListener('pointerdown', (event) => {
       const target = event.target as HTMLElement;
+      // The toolbar and its menus manage their own open state on click.
+      if (target.closest('.toolbar') || target.closest('.tool-menu')) return;
+      this.closeSizeMenu();
       // The surface handler already decided (new pin, close, or nothing) — this
       // only closes the bubble for presses that land next to the picture.
       if (target.closest('.image-surface') || this.popover.contains(target)) return;
@@ -92,6 +110,7 @@ export class GalleryEditor {
     document.addEventListener('keydown', (event) => {
       if (!this.item) return;
       if (event.key === 'Escape') {
+        if (!el('sizeMenu').hidden) { event.stopPropagation(); this.closeSizeMenu(); return; }
         if (!this.popover.hidden) { event.stopPropagation(); this.closePopover(); return; }
         if (!(event.target instanceof HTMLInputElement)) this.close();
       }
@@ -104,6 +123,59 @@ export class GalleryEditor {
     this.scope = scope;
     this.canSend = canSend;
     if (this.item) this.controls();
+  }
+
+  /** The extension owns the value; this only mirrors what every surface shows. */
+  setOutputSize(size: string): void {
+    if (typeof size !== 'string' || !size.trim()) return;
+    this.outputSize = size.trim();
+    if (!el('sizeMenu').hidden) this.openSizeMenu();
+  }
+
+  private openSizeMenu(): void {
+    const menu = el('sizeMenu');
+    el('sizeMenuTitle').textContent = t('size.title');
+    const list = el('sizeMenuList');
+    list.replaceChildren();
+    SIZE_OPTIONS.forEach((option) => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'menu-row';
+      row.setAttribute('role', 'menuitemradio');
+      row.setAttribute('aria-checked', String(option.size === this.outputSize));
+      row.innerHTML = `<span>${icon(option.icon)}</span><span>${escapeText(t(option.label))}</span>` +
+        (option.ratio ? `<span class="menu-ratio">${option.ratio}</span>` : '');
+      row.onclick = () => { this.pickSize(option.size); };
+      list.append(row);
+    });
+    menu.hidden = false;
+    this.positionSizeMenu();
+  }
+
+  private closeSizeMenu(): void {
+    el('sizeMenu').hidden = true;
+    el('sizeMenu').removeAttribute('style');
+  }
+
+  /** Anchored above the toolbar, so it reads as part of that capsule. */
+  private positionSizeMenu(): void {
+    const menu = el('sizeMenu');
+    if (menu.hidden) return;
+    const stage = this.stage.getBoundingClientRect();
+    const anchor = el('toolSize').getBoundingClientRect();
+    const width = menu.offsetWidth;
+    const height = menu.offsetHeight;
+    const left = between(anchor.left - stage.left + anchor.width / 2 - width / 2, 6, Math.max(6, stage.width - width - 6));
+    const top = between(anchor.top - stage.top - height - 6, 6, Math.max(6, stage.height - height - 6));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  }
+
+  private pickSize(size: string): void {
+    // Optimistic: the extension validates and broadcasts the settled value back.
+    this.outputSize = size;
+    this.closeSizeMenu();
+    this.api?.postMessage({ type: 'setDefaultSize', size });
   }
 
   async open(item: GalleryItem): Promise<void> {
@@ -204,6 +276,7 @@ export class GalleryEditor {
    */
   private fit(): void {
     this.positionPopover();
+    this.positionSizeMenu();
   }
 
   private point(event: { clientX: number; clientY: number }): Point {
@@ -625,7 +698,7 @@ export class GalleryEditor {
     clearTimeout(this.deadline);
     const draft = this.item;
     this.item = null; this.sourceUrl = ''; this.annotated = null; this.activeComment = '';
-    this.closePopover();
+    this.closePopover(); this.closeSizeMenu();
     el('editor').hidden = true; document.body.classList.remove('editing');
     if (draft) this.onClose(draft);
   }

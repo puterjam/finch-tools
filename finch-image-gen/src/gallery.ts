@@ -81,6 +81,7 @@ function applyEnv(env: Record<string, unknown>): void {
   if (!view && sessionId) view = 'session';
   if (typeof env.locale === 'string') setLocale(env.locale);
   if (typeof env.canSend === 'boolean') canSend = env.canSend;
+  if (typeof env.defaultSize === 'string' && env.defaultSize) editor.setOutputSize(env.defaultSize);
   if (!pickedFilter) filter = view === 'session' && sessionId ? 'current' : 'all';
   if (view !== 'session' || !sessionId) filter = 'all';
   editor.setScope(view, canSend);
@@ -108,6 +109,9 @@ api?.onMessage((raw) => {
     editor.onSaved(message);
   } else if (message.type === 'annotationSendResult') {
     editor.onSendResult(message);
+  } else if (message.type === 'defaultSize' && typeof message.size === 'string') {
+    // The extension is the source of truth; mirror whatever it settled on.
+    editor.setOutputSize(message.size);
   } else if (message.type === 'deleteResult') {
     records = records.filter((r) => r.id !== message.id); render(); notice(t('removed'));
   }

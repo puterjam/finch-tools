@@ -25,6 +25,7 @@ Every generation lands in the gallery — open it from the **Image 2.5** entry i
 - **Less chrome** — format and pixel size at the top-left; hover for two lines of prompt over a bottom gradient, and edit/remove buttons at the top-right. Session filters sit below the title, like the Artifacts library.
 - **Edit in place** — the editor fills its Panel or App View. The picture gets the whole area and the tool capsule floats on top of it, with no fixed-width side panel.
 - **Draw and comment** — freehand red lines and any number of numbered comments. Click the picture to drop a comment, which opens a small bubble right there to type into; drag its pin to move the comment, Escape to close. The editor height never changes.
+- **Change the output shape while you edit** — the toolbar's **Size** tool lists the same aspect presets as the Composer menu, so you can pick 16:9 for a wide crop without leaving the picture. Both entries write the same default size.
 - **A slim footer** — one instruction field and one button. Inside a session panel or on Home it attaches the marked image to the input box and parks your instructions; pull them into the input with the **Image 2.5** toolbar button, where they stay editable before you send. In the sidebar App View, which has no input box, the same button **sends everything to a new chat**.
 - **Drafts are saved**, and removing an image only removes its gallery entry — the original file is kept.
 
@@ -101,6 +102,7 @@ Click the **settings** (gear) menu on the Image 2.5 card in Toolcase → **API B
 - **轻量悬停信息**：格式与尺寸在左上角，悬停后底部渐变上显示最多两行提示词，右上角出现编辑、移除按钮。标题下方的筛选沿用成果库风格，不再提供搜索框。
 - **区域内全屏编辑**：填满当前 Panel 或 App View，图片占满整个区域，工具条浮动在图片上方，不再有固定宽侧栏。
 - **画线与多条评论**：自由画红线，点击图片就地弹出小气泡输入评论；拖动编号点可以改位置，Esc 关闭。底部高度不会因此变化。
+- **编辑时顺手改画幅**：工具栏的**尺寸**按钮给出与输入框菜单同一套画幅预设，想裁成 16:9 不用离开图片；两处写的是同一个默认尺寸。
 - **精简底栏**：一个说明输入框加一个按钮。在会话面板或首页会把带标注的图片作为附件插入，并把修改说明挂起；点输入框工具栏的 **Image 2.5** → 「把修改说明填入输入框」，说明就变成可编辑的正文，发送前还能改。在侧边栏 App View 没有输入框，同一个按钮变成**发送到新会话**。
 - **草稿自动保存**；移除图片只移除图库记录，原始文件仍保留。
 

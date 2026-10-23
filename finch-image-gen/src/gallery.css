@@ -119,6 +119,15 @@ body.editing { overflow: hidden; }
 .text-button:hover { color: var(--text); }
 .popover .text-button svg { width: 14px; height: 14px; }
 
+/* Size picker: the same aspect presets the Composer menu offers. */
+.tool-menu { position: absolute; z-index: 3; display: flex; flex-direction: column; gap: 2px; padding: 6px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); box-shadow: 0 8px 26px #00000033; }
+.menu-title { padding: 0 6px 4px; font-size: 10px; font-weight: 600; color: var(--muted); }
+.menu-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font-size: 12px; font-family: inherit; text-align: left; cursor: pointer; }
+.menu-row:hover { background: var(--hover); }
+.menu-row[aria-checked=true] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.menu-row svg { width: 15px; height: 15px; flex: none; }
+.menu-row .menu-ratio { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+
 .composer { display: flex; align-items: flex-end; justify-content: center; gap: 8px; }
 /* The field is a comfortable reading width, not the whole panel; the button
    stays right next to it. */

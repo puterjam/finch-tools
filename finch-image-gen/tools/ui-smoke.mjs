@@ -234,6 +234,40 @@ async function runEditorTests() {
   assert.equal(await page.locator('#editorError').count(), 0, 'No inline red error text remains');
   assert.equal(await page.locator('#commentList, .comment-row').count(), 0, 'Comments no longer live in a list under the image');
 
+  // The toolbar can change the output size too, with the same presets.
+  await page.locator('#toolSize').click();
+  await page.waitForFunction(() => !document.getElementById('sizeMenu').hidden);
+  const sizeMenu = await page.evaluate(() => {
+    const menu = document.getElementById('sizeMenu').getBoundingClientRect();
+    const tool = document.getElementById('toolSize').getBoundingClientRect();
+    const rows = [...document.querySelectorAll('#sizeMenuList .menu-row')];
+    return {
+      above: menu.bottom <= tool.top + 1,
+      ratios: rows.map((row) => row.querySelector('.menu-ratio')?.textContent ?? ''),
+      labels: rows.map((row) => row.textContent.trim()),
+      checked: rows.filter((row) => row.getAttribute('aria-checked') === 'true').length,
+    };
+  });
+  assert(sizeMenu.above, 'The size menu opens above its toolbar button');
+  await page.screenshot({ path: join(root, 'node_modules/.ui-editor-size.png') });
+  assert.equal(sizeMenu.ratios.join('|'), '1:1|3:4|9:16|4:3|16:9|', `The size menu offers the aspect presets (${sizeMenu.ratios.join('|')})`);
+  assert.equal(sizeMenu.checked, 1, 'Exactly one size is marked as current');
+  await page.locator('#sizeMenuList .menu-row').nth(4).click();
+  await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
+  const chosen = await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'setDefaultSize').at(-1));
+  assert(chosen && chosen.size === '1280x720', `Picking a size asks the extension to store it (${JSON.stringify(chosen)})`);
+  // The extension answers with the settled value, which marks the new row.
+  await page.evaluate(() => window.__host.emit({ type: 'defaultSize', size: '1280x720' }));
+  await page.locator('#toolSize').click();
+  await page.waitForFunction(() => !document.getElementById('sizeMenu').hidden);
+  const markedRow = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#sizeMenuList .menu-row')];
+    return rows.find((row) => row.getAttribute('aria-checked') === 'true')?.textContent.trim() ?? '';
+  });
+  assert(markedRow.includes('16:9'), `The chosen size is marked as current (${markedRow})`);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
+
   // The field is a readable width with an explicit send button beside it.
   await page.setViewportSize({ width: 1000, height: 800 }); await settle();
   const composer = await page.evaluate(() => {
@@ -256,8 +290,7 @@ async function runEditorTests() {
 
   await page.locator('#toolPen').click();
   await drawStroke([.2, .25], [.4, .5]);
-  assert.equal(await page.locator('#inkLayer path').count(), 1, 'A stroke is drawn');
-  // The frame is fitted by CSS, so the ink must still land in natural pixels.
+  assert.equal(await page.locator('#inkLayer path').count(), 1, 'A stroke is drawn');  // The frame is fitted by CSS, so the ink must still land in natural pixels.
   const ink = await page.evaluate(() => document.querySelector('#inkLayer path').getAttribute('d'));
   const first = /^M([\d.]+) ([\d.]+)/.exec(ink);
   assert(first && Math.abs(Number(first[1]) - 768 * .2) < 6 && Math.abs(Number(first[2]) - 1024 * .25) < 8, `A stroke maps to image coordinates (${ink.slice(0, 18)})`);
