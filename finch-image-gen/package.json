@@ -1,7 +1,7 @@
 {
   "name": "finch-image-gen",
-  "version": "0.5.1",
-  "description": "Generate and edit images with OpenAI (or OpenAI-compatible relay) image models (text-to-image and image-to-image), right inside Finch.",
+  "version": "0.6.0",
+  "description": "Generate and edit images with OpenAI GPT Image 2.5 (or an OpenAI-compatible relay): text-to-image, image-to-image, masked edits, transparent backgrounds and custom sizes, right inside Finch.",
   "author": {
     "name": "PuterJam",
     "url": "https://github.com/puterjam"
@@ -29,14 +29,15 @@
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js",
     "typecheck": "tsc --noEmit",
+    "smoke": "npm run build && node tools/smoke.mjs",
     "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
   },
   "finch": {
     "manifestVersion": 1,
     "id": "image-gen",
     "name": "Image Gen (OpenAI)",
-    "description": "Generate and edit images with OpenAI (or an OpenAI-compatible relay) image models: text-to-image and image-to-image.",
-    "systemPrompt": "Use image_gen_create to generate images with OpenAI's image API. Text-to-image: pass only prompt. Image-to-image / reference-guided editing: also pass reference_image_paths (local absolute file paths). size controls aspect ratio/resolution. Generated images are saved locally as absolute file paths in the tool result — use wechat_send or Session attach to show or share them with the user afterward; do not re-download or re-encode them. If the tool reports the OpenAI API key is missing, tell the user to click the Image Gen settings button (gear icon) in the Composer toolbar and choose \"OpenAI API Key\" to paste it in directly — no need to hunt through Toolcase. Use the same settings button's \"API Base URL\" item to switch to a proxy/relay endpoint instead of the official api.openai.com (or pass base_url on a single image_gen_create call for a one-off override).",
+    "description": "Generate and edit images with OpenAI GPT Image 2.5 (or an OpenAI-compatible relay): text-to-image, image-to-image, masked edits, transparent backgrounds and custom sizes.",
+    "systemPrompt": "Use image_gen_create to generate images with OpenAI's image API. Text-to-image: pass only prompt. Image-to-image / reference-guided editing: also pass reference_image_paths (local absolute file paths); add mask_path to limit the edit to a masked area. size takes 'auto' or WIDTHxHEIGHT (1024x1024, 1536x1024, 1024x1536, 2048x2048, 2560x1440, 3840x2160 …) and quality goes low → medium → high → xhigh → max; use low for quick drafts and high/max only for final assets, since quality and size drive cost and latency. Set background='transparent' (with png or webp) when the user needs a cut-out. For a long, high-quality single render, pass partial_images 1-3 so progress stays visible. Generated images are saved locally as absolute file paths in the tool result — use wechat_send or Session attach to show or share them afterward; do not re-download or re-encode them. If the tool reports the OpenAI API key is missing, tell the user to click the Image Gen settings button (gear icon) in the Composer toolbar and choose \"OpenAI API Key\" to paste it in directly — no need to hunt through Toolcase. The same settings button also sets the default model (gpt-image-2.5-sunburst for editing precision, gpt-image-2.5-flare for fast everyday generation), the default quality, and the \"API Base URL\" for a proxy/relay endpoint instead of api.openai.com (or pass base_url on a single image_gen_create call for a one-off override). When a request is blocked or rejected, the tool returns the API error code and a remediation hint — follow the hint instead of retrying the identical request.",
     "main": "dist/index.js",
     "activationEvents": [
       "onStartup"
@@ -66,7 +67,7 @@
     }
   },
   "devDependencies": {
-    "@finchtoys/minitool-api": "^0.2.9",
+    "@finchtoys/minitool-api": "^0.3.13",
     "@types/node": "^26.1.0",
     "esbuild": "^0.28.1",
     "typescript": "^6.0.3"
