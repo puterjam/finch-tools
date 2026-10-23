@@ -42,6 +42,13 @@ const editor = new GalleryEditor(api, getImage, (draft) => {
   el('app').hidden = false;
   render();
 });
+/**
+ * Cards and their already-decoded images survive a re-layout. Rebuilding them
+ * would blank every picture and force a fresh decode, which reads as the image
+ * "reloading and flashing" on every window resize.
+ */
+const cardCache = new Map<string, HTMLElement>();
+
 const lazy = new IntersectionObserver((entries) => {
   entries.forEach((entry) => {
     if (!entry.isIntersecting) return;
@@ -50,9 +57,12 @@ const lazy = new IntersectionObserver((entries) => {
     const img = card.querySelector('img');
     const filePath = card.dataset.path;
     if (!img || !filePath) return;
+    // A reused card keeps its decoded bitmap: never re-assign a live src.
+    if (img.dataset.loaded === '1') return;
     getImage(filePath).then((dataUrl) => {
-      if (!img.isConnected) return;
+      if (!img.isConnected || img.dataset.loaded === '1') return;
       img.onload = () => {
+        img.dataset.loaded = '1';
         const record = records.find((r) => r.filePath === filePath);
         if (record && (!record.width || !record.height)) {
           record.width = img.naturalWidth; record.height = img.naturalHeight;
@@ -121,23 +131,39 @@ function render(): void {
     button.onclick = () => { pickedFilter = true; filter = key; render(); };
     tabs.append(button);
   });
-  lazy.disconnect(); grid.replaceChildren();
+  const { columns, width } = masonryMetrics(grid.clientWidth);
+  layoutColumns = columns;
+  layoutWidth = grid.clientWidth;
+  grid.style.setProperty('--columns', String(columns));
+  grid.style.setProperty('--card-width', `${width}px`);
   el('empty').hidden = items.length > 0;
   el('emptyTitle').textContent = t(filter === 'current' ? 'empty.current' : 'empty.title');
   el('emptyHint').textContent = t('empty.hint');
-  const { columns, width } = masonryMetrics(grid.clientWidth);
-  grid.style.setProperty('--columns', String(columns));
-  grid.style.setProperty('--card-width', `${width}px`);
+  // Keep the nodes of items that are still shown: their <img> elements hold the
+  // decoded bitmap, so moving them into new columns costs no reload.
+  lazy.disconnect();
+  const live = new Set(items.map((record) => record.id));
+  cardCache.forEach((node, id) => { if (!live.has(id)) { node.remove(); cardCache.delete(id); } });
+  grid.replaceChildren();
   const heights = Array<number>(columns).fill(0);
   const columnNodes = Array.from({ length: columns }, () => {
     const column = document.createElement('div'); column.className = 'column'; grid.append(column); return column;
   });
   items.forEach((record) => {
     const index = heights.indexOf(Math.min(...heights));
-    columnNodes[index].append(buildCard(record));
+    columnNodes[index].append(cardFor(record));
     const dimensions = imageDimensions(record);
     heights[index] += width * dimensions.height / dimensions.width + 12;
   });
+}
+
+/** Reuses an existing card (and its loaded image) instead of rebuilding it. */
+function cardFor(record: GalleryItem): HTMLElement {
+  const existing = cardCache.get(record.id);
+  const card = existing ?? buildCard(record);
+  cardCache.set(record.id, card);
+  lazy.observe(card);
+  return card;
 }
 
 function buildCard(record: GalleryItem): HTMLElement {
@@ -164,7 +190,6 @@ function buildCard(record: GalleryItem): HTMLElement {
     if (api?.appView) void api.appView.openPreview(record.filePath).catch(() => api.postMessage({ type: 'openPreview', filePath: record.filePath }));
   };
   card.onkeydown = (event) => { if (event.target === card && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); card.click(); } };
-  lazy.observe(card);
   return card;
 }
 
@@ -176,12 +201,20 @@ async function removeRecord(record: GalleryItem): Promise<void> {
 
 let layoutFrame = 0;
 let layoutWidth = -1;
+let layoutColumns = 0;
 new ResizeObserver(([entry]) => {
   const width = entry.contentRect.width;
   // Image decoding and route changes affect height, not column packing. Do
   // not rebuild focused/hovered cards on those changes or while hidden.
   if (el('app').hidden || width <= 0 || Math.abs(width - layoutWidth) < .5) return;
   layoutWidth = width;
+  const { columns, width: cardWidth } = masonryMetrics(width);
+  if (columns === layoutColumns && layoutColumns > 0) {
+    // Same packing, only narrower cards: a pure CSS change. Rebuilding here is
+    // what made every picture blank out and flash while resizing.
+    grid.style.setProperty('--card-width', `${cardWidth}px`);
+    return;
+  }
   cancelAnimationFrame(layoutFrame);
   layoutFrame = requestAnimationFrame(render);
 }).observe(grid);

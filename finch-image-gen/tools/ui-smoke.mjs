@@ -137,7 +137,36 @@ async function runGalleryTests() {
     }
     console.log(`ok UI: ${width}px gallery, ${layout.columns} columns, all cards <=220px`);
   }
+
+  // Resizing must not reload or re-decode anything: every picture stays painted.
   await page.setViewportSize({ width: 1200, height: 850 }); await settle();
+  await page.evaluate(() => {
+    window.__adds = 0;
+    window.__known = new Set(document.querySelectorAll('.card img'));
+    window.__observer = new MutationObserver((records) => {
+      records.forEach((record) => record.addedNodes.forEach((node) => { if (node.nodeType === 1) window.__adds += 1; }));
+    });
+    window.__observer.observe(document.getElementById('grid'), { childList: true, subtree: true });
+    document.querySelector('.card img').__tag = 'keep';
+  });
+  for (const [width, height] of [[1180, 850], [1150, 840], [1200, 860], [1100, 820]]) {
+    await page.setViewportSize({ width, height }); await settle();
+  }
+  // Same column count: the packing is untouched, so the grid is not rebuilt.
+  assert.equal(await page.evaluate(() => window.__adds), 0, 'Resizing within the same column count rebuilds nothing');
+  assert(await page.evaluate(() => { const img = document.querySelector('.card img'); return img.__tag === 'keep' && img.naturalWidth > 0; }), 'Pictures stay decoded while resizing');
+  // Crossing a column boundary re-flows the columns, but must move the very same
+  // elements — a fresh <img> would have to decode again and visibly flash.
+  await page.setViewportSize({ width: 500, height: 850 }); await settle();
+  const reuse = await page.evaluate(() => {
+    const images = [...document.querySelectorAll('.card img')];
+    return { total: images.length, reused: images.filter((img) => window.__known.has(img)).length, loaded: images.filter((img) => img.naturalWidth > 0).length };
+  });
+  assert.equal(reuse.reused, reuse.total, `A re-layout reuses every existing image element (${reuse.reused}/${reuse.total})`);
+  assert(reuse.loaded > 0, 'A re-layout never blanks the picture');
+  await page.evaluate(() => window.__observer.disconnect());
+  await page.setViewportSize({ width: 1200, height: 850 }); await settle();
+  console.log('ok UI: resizing never re-creates or reloads gallery images');
   await page.mouse.move(1190, 10);
   await page.waitForFunction(() => getComputedStyle(document.querySelector('.card .prompt-overlay')).opacity === '0');
   await page.locator('.card').first().hover();
