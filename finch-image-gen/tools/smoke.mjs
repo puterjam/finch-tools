@@ -15,7 +15,7 @@
  *
  * Run with: npm run smoke   (builds first, then runs this)
  */
-import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -229,11 +229,18 @@ function makePanel(view = 'appView', sessionId = '') {
   const panel = {
     view,
     sessionId,
+    revealed: 0,
+    async reveal() { panel.revealed += 1; },
     async postMessage(message) { sent.push(message); },
     onDidReceiveMessage(handler) { handlers.push(handler); return { dispose() {} }; },
     onDidDispose() { return { dispose() {} }; },
   };
   return { panel, sent, handlers };
+}
+
+/** Panel messages are handled fire-and-forget, so wait for the reply instead. */
+async function until(predicate) {
+  for (let i = 0; i < 300 && !predicate(); i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
 }
 
 async function run(input, reply) {
@@ -684,6 +691,54 @@ panelSent = sent;
   await sessionPanel.handlers[0]({ type: 'setDefaultSize', size: '1234x99' });
   check('an invalid size from the gallery is refused', (await store.get('defaultSize')) === undefined, String(await store.get('defaultSize')));
   check('a refused size is not broadcast', !sessionPanel.sent.slice(after).some((m) => m.type === 'defaultSize' && m.size === '1234x99'));
+}
+
+// 16 — the App View hands the image over to the Session it came from.
+{
+  const appView = makePanel('appView', '');
+  panelHandlers[0](appView.panel);
+  const sessionPanel = makePanel('session', 'sess-1');
+  panelHandlers[0](sessionPanel.panel);
+  const records = JSON.parse(readFileSync(join(storagePath, 'gallery.json'), 'utf8'));
+  const record = records[0];
+
+  const unknown = appView.sent.length;
+  await appView.handlers[0]({ type: 'adjustImage', id: 'no-such-image' });
+  await until(() => appView.sent.length > unknown);
+  check('an unknown image cannot be adjusted', appView.sent.slice(unknown).at(-1)?.error === 'not-found', JSON.stringify(appView.sent.slice(unknown)));
+
+  const before = appView.sent.length;
+  const opened = sessions.opened.length;
+  await appView.handlers[0]({ type: 'adjustImage', id: record.id });
+  await until(() => appView.sent.length > before);
+  check('adjusting opens the Session that produced the image', sessions.opened.slice(opened).join(',') === 'sess-1', sessions.opened.join(','));
+  check('that Session’s gallery panel is revealed', sessionPanel.panel.revealed === 1, String(sessionPanel.panel.revealed));
+  check('the panel is asked to open the editor', sessionPanel.sent.some((m) => m.type === 'editImage' && m.id === record.id), JSON.stringify(sessionPanel.sent.map((m) => m.type)));
+  check('the App View is told where the image went', appView.sent.slice(before).some((m) => m.type === 'adjustResult' && m.sessionId === 'sess-1' && !m.error), JSON.stringify(appView.sent.slice(before)));
+
+  // An image with no Session behind it has nowhere to go.
+  const galleryFile = join(storagePath, 'gallery.json');
+  const patched = JSON.parse(readFileSync(galleryFile, 'utf8'));
+  const original = patched[0].sessionId;
+  patched[0].sessionId = '';
+  writeFileSync(galleryFile, JSON.stringify(patched), 'utf8');
+  const orphan = appView.sent.length;
+  const openedBefore = sessions.opened.length;
+  await appView.handlers[0]({ type: 'adjustImage', id: record.id });
+  await until(() => appView.sent.length > orphan);
+  check('an image without a Session reports it', appView.sent.slice(orphan).at(-1)?.error === 'no-session', JSON.stringify(appView.sent.slice(orphan)));
+  check('nothing is opened for an image without a Session', sessions.opened.length === openedBefore);
+  patched[0].sessionId = original;
+  writeFileSync(galleryFile, JSON.stringify(patched), 'utf8');
+
+  // A host that refuses to navigate must not leave the click silent.
+  const failing = ctx.navigation.openSession;
+  ctx.navigation.openSession = async () => { throw new Error('nope'); };
+  const failed = appView.sent.length;
+  await appView.handlers[0]({ type: 'adjustImage', id: record.id });
+  await until(() => appView.sent.length > failed);
+  check('a refused navigation is reported back', appView.sent.slice(failed).at(-1)?.error === 'open-failed', JSON.stringify(appView.sent.slice(failed)));
+  ctx.navigation.openSession = failing;
 }
 
 rmSync(storagePath, { recursive: true, force: true });

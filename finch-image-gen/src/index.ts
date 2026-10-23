@@ -850,6 +850,40 @@ async function handlePanelMessage(
     return;
   }
 
+  if (type === 'adjustImage') {
+    const id = String(msg.id ?? '');
+    const records = await loadGallery(ctx);
+    const record = records.find((item) => item.id === id);
+    if (!record) {
+      await panel.postMessage({ type: 'adjustResult', id, error: 'not-found' });
+      return;
+    }
+    if (!record.sessionId) {
+      await panel.postMessage({ type: 'adjustResult', id, error: 'no-session' });
+      return;
+    }
+    try {
+      await ctx.navigation.openSession(record.sessionId);
+    } catch (err) {
+      ctx.logger.warn(`openSession failed: ${err instanceof Error ? err.message : String(err)}`);
+      await panel.postMessage({ type: 'adjustResult', id, error: 'open-failed' });
+      return;
+    }
+    // The image is edited where it can be delivered: a gallery panel already
+    // open in that Session is revealed and dropped straight into the editor.
+    for (const target of livePanels) {
+      if (target === panel || target.view !== 'session' || target.sessionId !== record.sessionId) continue;
+      try {
+        await target.reveal();
+        await target.postMessage({ type: 'editImage', id });
+      } catch (err) {
+        ctx.logger.warn(`editImage push failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    await panel.postMessage({ type: 'adjustResult', id, sessionId: record.sessionId });
+    return;
+  }
+
   if (type === 'stagePrompt') {
     const text = typeof msg.text === 'string' ? msg.text.trim() : '';
     const scope = composerScopeId(panel.sessionId, panel.spaceId);

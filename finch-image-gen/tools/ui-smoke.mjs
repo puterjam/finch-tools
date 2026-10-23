@@ -47,7 +47,8 @@ await page.addInitScript(() => {
       if (message.type === 'requestGallery') setTimeout(snapshot, 0);
       if (message.type === 'requestImage') setTimeout(() => {
         if (state.failImages) return emit({ type: 'imageData', filePath: message.filePath, error: 'unreadable' });
-        const record = records.find((r) => r.filePath === message.filePath);
+        // A card can be dropped again while its bytes are still in flight.
+        const record = records.find((r) => r.filePath === message.filePath) ?? { width: 640, height: 480 };
         const canvas = document.createElement('canvas');
         canvas.width = record.width; canvas.height = record.height;
         const ctx = canvas.getContext('2d');
@@ -393,15 +394,63 @@ async function runEditorTests() {
   await settle();
   assert.equal(await page.locator('#tabs button').count(), 1, 'App View hides the session-only tab');
 
-  // The App View has no Composer, so the same button sends into a chat instead.
+  // The App View browses: it has no Composer, so its cards hand the image over
+  // to the Session that produced it instead of opening an editor here.
+  assert.equal(await page.locator('.card-action[data-act="edit"]').count(), 0, 'The App View offers no editing entry');
+  const adjustButtons = page.locator('.card-action[data-act="adjust"]');
+  assert.equal(await adjustButtons.count(), 16, `Every card offers to adjust it in its session (${await adjustButtons.count()})`);
+  assert.equal(await adjustButtons.first().getAttribute('aria-label'), '调整', 'The button reads 调整, not 编辑');
+  await page.locator('.card').first().hover();
+  await page.screenshot({ path: join(root, 'node_modules/.ui-appview-adjust.png') });
+  await adjustButtons.first().click();
+  await page.waitForFunction(() => window.__host.messages.some((m) => m.type === 'adjustImage'));
+  const adjust = await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'adjustImage').at(-1));
+  assert.equal(adjust.id, 'image-0', `Adjusting names the image the extension should open (${JSON.stringify(adjust)})`);
+  assert(await page.locator('#editor').isHidden(), 'No editor opens in the App View');
+
+  // An image that was never generated in a Session has nowhere to be adjusted.
+  await page.evaluate(() => {
+    const orphan = { ...window.__host.records[0], id: 'image-orphan', filePath: '/gallery/orphan.png', name: 'orphan.png', sessionId: '' };
+    window.__host.records = [orphan, ...window.__host.records];
+    window.__host.snapshot();
+  });
+  await settle();
+  assert.equal(await page.locator('.card-action[data-act="adjust"]').count(), 16, 'The other cards still offer adjusting');
+  assert.equal(await page.locator('.card[data-id="image-orphan"] .card-action').count(), 1, 'A card with no Session offers no dead button');
+  await page.evaluate(() => {
+    window.__host.records = window.__host.records.filter((r) => r.id !== 'image-orphan');
+    window.__host.snapshot();
+  });
+  await settle();
+  assert.equal(await page.locator('.card').count(), 16, 'The orphan card is dropped again');
+
+  // The extension can also ask a Session panel to open the editor directly.
+  await page.evaluate(() => {
+    window.__host.view = 'session'; window.__host.sessionId = 'session-1';
+    window.__host.emit({ type: 'finch:env', ...window.__host.env() });
+    window.__host.emit({ type: 'editImage', id: 'image-2' });
+  });
+  await page.waitForFunction(() => !document.getElementById('editor').hidden);
+  assert.equal(await page.locator('#editorTitle').textContent(), '编辑图片', 'A handed-over image opens in the session panel editor');
+  await page.locator('#back').click();
+  await settle();
+  console.log('ok UI: the App View hands images over instead of editing them');
+
+  // A Panel scope with no Composer of its own (the session container) still
+  // sends the composed edit into a chat, so the editor stays reachable there.
+  await page.evaluate(() => {
+    window.__host.view = 'container'; window.__host.sessionId = '';
+    window.__host.emit({ type: 'finch:env', ...window.__host.env() });
+  });
+  await settle();
   await openEditor();
-  assert(await page.locator('#send').isVisible(), 'App View can still deliver the edit');
+  assert(await page.locator('#send').isVisible(), 'A Composer-less Panel scope can still deliver the edit');
   assert.equal((await page.locator('#sendLabel').textContent()).trim(), '发送到新会话', 'The button switches meaning outside a Composer');
   assert(await page.locator('#scopeHint').isHidden(), 'No dead hint while sending is possible');
   await page.locator('#toolComment').click();
   rect = await page.locator('#imageSurface').boundingBox();
   await page.mouse.click(rect.x + rect.width * .3, rect.y + rect.height * .3);
-  await page.locator('#commentText').fill('App View 评论');
+  await page.locator('#commentText').fill('容器评论');
   await page.locator('#instruction').fill('整体保持构图');
   await page.waitForFunction(() => !document.getElementById('send').disabled);
   await page.locator('#send').click();
@@ -409,12 +458,12 @@ async function runEditorTests() {
   const send = await page.evaluate(() => window.__host.sends[0]);
   assert.equal(send.type, 'sendToSession');
   assert(send.text.includes('/gallery/picture-0.png'), 'The sent text keeps the original path');
-  assert(send.text.includes('App View 评论') && send.text.includes('整体保持构图'), 'Every comment and the instruction travel with the send');
+  assert(send.text.includes('容器评论') && send.text.includes('整体保持构图'), 'Every comment and the instruction travel with the send');
   assert(send.text.includes('第 1 张是要修改的原图'), 'The attachment order is explained to the model');
   assert(send.evidence.length > 100 && !send.evidence.startsWith('data:'), 'The composed preview travels as raw base64');
   assert(!!send.idempotencyKey, 'Each attempt carries an idempotency key');
   await page.waitForFunction(() => document.getElementById('editor').hidden, null, { timeout: 5000 });
-  console.log('ok UI: App View sends the composed edit into a chat with the original path');
+  console.log('ok UI: a Composer-less Panel scope sends the composed edit into a chat with the original path');
 
   // A rejected send must keep the draft instead of losing the user's work.
   await page.evaluate(() => { window.__host.failSend = true; });
@@ -452,7 +501,7 @@ async function runEditorTests() {
   });
   assert(await page.locator('#send').isVisible());
   await page.locator('#back').click();
-  console.log('ok UI: undo/clear, App View sending, retry after failure, and repeatable scope changes');
+  console.log('ok UI: undo/clear, Composer-less sending, retry after failure, and repeatable scope changes');
 }
 
 async function runFailureAndThemeTests() {

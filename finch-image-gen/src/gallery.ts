@@ -48,6 +48,16 @@ const editor = new GalleryEditor(api, getImage, (draft) => {
  * "reloading and flashing" on every window resize.
  */
 const cardCache = new Map<string, HTMLElement>();
+let pendingEdit = '';
+
+/** Opens the editor for one record, whether the click or the extension asked. */
+function openEditorFor(id: string): void {
+  const record = records.find((item) => item.id === id);
+  if (!record) { pendingEdit = id; return; }
+  pendingEdit = '';
+  el('app').hidden = true;
+  void editor.open(record);
+}
 
 const lazy = new IntersectionObserver((entries) => {
   entries.forEach((entry) => {
@@ -75,7 +85,17 @@ const lazy = new IntersectionObserver((entries) => {
   });
 }, { rootMargin: '240px' });
 
+/**
+ * Editing happens where the edit can be delivered. The App View is a browsing
+ * surface with no Composer, so its cards jump to the Session that produced the
+ * image instead; the right-side Panel is where the editor opens.
+ */
+function editableHere(): boolean {
+  return view !== 'appView';
+}
+
 function applyEnv(env: Record<string, unknown>): void {
+  const wasEditable = editableHere();
   view = typeof env.view === 'string' ? env.view : view;
   sessionId = typeof env.sessionId === 'string' ? env.sessionId : sessionId;
   if (!view && sessionId) view = 'session';
@@ -84,6 +104,9 @@ function applyEnv(env: Record<string, unknown>): void {
   if (typeof env.defaultSize === 'string' && env.defaultSize) editor.setOutputSize(env.defaultSize);
   if (!pickedFilter) filter = view === 'session' && sessionId ? 'current' : 'all';
   if (view !== 'session' || !sessionId) filter = 'all';
+  // A card action depends on the surface, and cards are cached: a scope change
+  // must rebuild them or the previous button stays on screen.
+  if (wasEditable !== editableHere()) cardCache.clear();
   editor.setScope(view, canSend);
   paintCopy();
 }
@@ -97,6 +120,7 @@ api?.onMessage((raw) => {
     if (Array.isArray(message.data)) records = message.data as GalleryItem[];
     if (!authoritativeEnv && message.env && typeof message.env === 'object') applyEnv(message.env as Record<string, unknown>);
     render();
+    if (pendingEdit) openEditorFor(pendingEdit);
   } else if (message.type === 'imageData' && typeof message.filePath === 'string') {
     const pending = waiting.get(message.filePath);
     if (pending) { clearTimeout(pending.timer); waiting.delete(message.filePath); }
@@ -112,6 +136,10 @@ api?.onMessage((raw) => {
   } else if (message.type === 'defaultSize' && typeof message.size === 'string') {
     // The extension is the source of truth; mirror whatever it settled on.
     editor.setOutputSize(message.size);
+  } else if (message.type === 'editImage' && typeof message.id === 'string') {
+    openEditorFor(message.id);
+  } else if (message.type === 'adjustResult' && typeof message.error === 'string') {
+    notice(t(message.error === 'no-session' ? 'adjust.noSession' : 'adjust.failed'));
   } else if (message.type === 'deleteResult') {
     records = records.filter((r) => r.id !== message.id); render(); notice(t('removed'));
   }
@@ -182,13 +210,22 @@ function buildCard(record: GalleryItem): HTMLElement {
   badges.append(textNode('span', format, 'badge'), textNode('span', `${width}×${height}`, 'badge'));
   badges.title = `${record.model} · ${record.quality} · ${format} · ${width}×${height}`;
   const actions = card.querySelector<HTMLElement>('.card-actions')!;
-  const edit = document.createElement('button'); edit.className = 'card-action'; edit.dataset.act = 'edit'; edit.innerHTML = icon('pencil-line');
-  labelButton(edit, t('card.edit'));
-  edit.onclick = (event) => { event.stopPropagation(); el('app').hidden = true; void editor.open(record); };
+  if (editableHere()) {
+    const edit = document.createElement('button'); edit.className = 'card-action'; edit.dataset.act = 'edit'; edit.innerHTML = icon('pencil-line');
+    labelButton(edit, t('card.edit'));
+    edit.onclick = (event) => { event.stopPropagation(); openEditorFor(record.id); };
+    actions.append(edit);
+  } else if (record.sessionId) {
+    // No Composer here, so the card opens the Session instead of the editor.
+    const adjust = document.createElement('button'); adjust.className = 'card-action'; adjust.dataset.act = 'adjust'; adjust.innerHTML = icon('sliders-horizontal');
+    labelButton(adjust, t('card.adjust'));
+    adjust.onclick = (event) => { event.stopPropagation(); api?.postMessage({ type: 'adjustImage', id: record.id }); };
+    actions.append(adjust);
+  }
   const remove = document.createElement('button'); remove.className = 'card-action danger'; remove.dataset.act = 'remove'; remove.innerHTML = icon('trash-2');
   labelButton(remove, t('card.remove'));
   remove.onclick = (event) => { event.stopPropagation(); void removeRecord(record); };
-  actions.append(edit, remove);
+  actions.append(remove);
   card.querySelector<HTMLElement>('.prompt')!.textContent = record.prompt;
   card.onclick = () => {
     if (api?.appView) void api.appView.openPreview(record.filePath).catch(() => api.postMessage({ type: 'openPreview', filePath: record.filePath }));
