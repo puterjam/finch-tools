@@ -787,12 +787,10 @@ panelSent = sent;
   const normal = (svg) => String(svg).replace(/\s+/g, '');
   const changed = usedNames().filter((name) => normal(committed[name]) !== normal(fresh[name]));
   check('every gallery icon is the real lucide-static shape', changed.length === 0, `${changed.join(', ')} — run npm run icons`);
-  check('the icon set has no unused leftovers', Object.keys(committed).length === usedNames().length, Object.keys(committed).join(', '));
-  // A name that is missing silently falls back to the generic picture, which is
-  // exactly how a wrong icon slips through review.
-  const sources = readdirSync(join(root, 'src')).filter((f) => f.endsWith('.ts')).map((f) => readFileSync(join(root, 'src', f), 'utf8')).join('\n');
-  const asked = new Set([...sources.matchAll(/icon\(\s*'([a-z0-9-]+)'/g)].map((m) => m[1]));
-  check('every requested icon exists', [...asked].every((name) => name in committed), [...asked].filter((name) => !(name in committed)).join(', '));
+  // A name the generator never saw, or one it keeps after the last use, means
+  // something renders the generic fallback picture instead of its own icon.
+  const drifted = [...usedNames()].filter((name) => !(name in committed)).concat(Object.keys(committed).filter((name) => !usedNames().includes(name)));
+  check('the icon set matches exactly what the page uses', drifted.length === 0, drifted.join(', '));
 }
 
 rmSync(storagePath, { recursive: true, force: true });

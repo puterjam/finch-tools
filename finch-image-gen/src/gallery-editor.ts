@@ -254,7 +254,10 @@ export class GalleryEditor {
     button.hidden = !(composer || sendable);
     button.disabled = !ready;
     el('sendLabel').textContent = t(this.busy ? 'editor.delivering' : this.deliverLabel());
-    el('sendIcon').innerHTML = icon(composer ? 'corner-down-left' : 'send');
+    const sendIcon = el('sendIcon');
+    // Keep the attribute in step: the painter re-reads it on the next env change.
+    sendIcon.dataset.icon = composer ? 'corner-down-left' : 'send';
+    sendIcon.innerHTML = icon(sendIcon.dataset.icon ?? 'send');
     el('scopeHint').hidden = composer || sendable;
     el('scopeHint').textContent = t(this.canSend ? 'editor.scopeHint' : 'editor.sendUnsupported');
     el('toolPen').setAttribute('aria-pressed', String(this.mode === 'pen'));

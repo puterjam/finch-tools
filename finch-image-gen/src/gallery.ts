@@ -94,8 +94,19 @@ function editableHere(): boolean {
   return view !== 'appView';
 }
 
+/** Only a scope with a Composer of its own can take an attachment. */
+function composerHere(): boolean {
+  return view === 'session' || view === 'home';
+}
+
+/** Which actions a card offers depends on the surface, so a scope change must
+ * rebuild the cached cards or the previous buttons stay on screen. */
+function cardSurface(): string {
+  return `${editableHere() ? 'edit' : 'adjust'}${composerHere() ? '+insert' : ''}`;
+}
+
 function applyEnv(env: Record<string, unknown>): void {
-  const wasEditable = editableHere();
+  const wasSurface = cardSurface();
   view = typeof env.view === 'string' ? env.view : view;
   sessionId = typeof env.sessionId === 'string' ? env.sessionId : sessionId;
   if (!view && sessionId) view = 'session';
@@ -103,9 +114,7 @@ function applyEnv(env: Record<string, unknown>): void {
   if (typeof env.canSend === 'boolean') canSend = env.canSend;
   if (!pickedFilter) filter = view === 'session' && sessionId ? 'current' : 'all';
   if (view !== 'session' || !sessionId) filter = 'all';
-  // A card action depends on the surface, and cards are cached: a scope change
-  // must rebuild them or the previous button stays on screen.
-  if (wasEditable !== editableHere()) cardCache.clear();
+  if (wasSurface !== cardSurface()) cardCache.clear();
   editor.setScope(view, canSend);
   paintCopy();
 }
@@ -202,6 +211,17 @@ function buildCard(record: GalleryItem): HTMLElement {
   card.style.aspectRatio = `${width} / ${height}`;
   card.innerHTML = `<span class="image-placeholder">${icon('image')}</span><img alt="" draggable="false"><div class="card-actions"></div><div class="prompt-overlay"><div class="prompt"></div></div>`;
   const actions = card.querySelector<HTMLElement>('.card-actions')!;
+  if (composerHere()) {
+    // Quick path for the common case: no edits, just hand the picture to the
+    // Composer. The bytes come from the same cache the card's own image uses.
+    const insert = document.createElement('button'); insert.className = 'card-action'; insert.dataset.act = 'insert'; insert.innerHTML = icon('paperclip');
+    labelButton(insert, t('card.insert'));
+    insert.onclick = (event) => { event.stopPropagation(); attachToComposer(record); };
+    actions.append(insert);
+    // addContexts needs the bytes at click time (a real gesture), so warm them
+    // while the pointer is on the card rather than discovering a miss then.
+    card.onpointerenter = () => { if (!cache.has(record.filePath)) void getImage(record.filePath).catch(() => {}); };
+  }
   if (editableHere()) {
     const edit = document.createElement('button'); edit.className = 'card-action'; edit.dataset.act = 'edit'; edit.innerHTML = icon('pencil-line');
     labelButton(edit, t('card.edit'));
@@ -209,7 +229,7 @@ function buildCard(record: GalleryItem): HTMLElement {
     actions.append(edit);
   } else if (record.sessionId) {
     // No Composer here, so the card opens the Session instead of the editor.
-    const adjust = document.createElement('button'); adjust.className = 'card-action'; adjust.dataset.act = 'adjust'; adjust.innerHTML = icon('sliders-horizontal');
+    const adjust = document.createElement('button'); adjust.className = 'card-action'; adjust.dataset.act = 'adjust'; adjust.innerHTML = icon('arrow-up-right');
     labelButton(adjust, t('card.adjust'));
     adjust.onclick = (event) => { event.stopPropagation(); api?.postMessage({ type: 'adjustImage', id: record.id }); };
     actions.append(adjust);
@@ -230,6 +250,37 @@ async function removeRecord(record: GalleryItem): Promise<void> {
   if (!api) return;
   const { confirmed } = await api.ui.confirm({ title: t('remove.title'), message: t('remove.body'), confirmLabel: t('remove.confirm'), cancelLabel: t('cancel'), variant: 'danger' });
   if (confirmed) api.postMessage({ type: 'deleteRecord', id: record.id, deleteFile: false });
+}
+
+/**
+ * Hands the original picture to the Composer as a plain image attachment, with
+ * its file path in the reminder so the same picture can still be edited by
+ * reference. Deliberately synchronous up to `addContexts`: the call needs the
+ * live user gesture, so the bytes have to be ready before the click.
+ */
+function attachToComposer(record: GalleryItem): void {
+  if (!api) return;
+  const dataUrl = cache.get(record.filePath);
+  if (!dataUrl) {
+    // Rare: the bytes were evicted or are still arriving. Warm them back up and
+    // say so, instead of silently doing nothing.
+    notice(t('insert.loading'));
+    void getImage(record.filePath).catch(() => {});
+    return;
+  }
+  const comma = dataUrl.indexOf(',');
+  const mimeType = /^data:([^;,]+)/.exec(dataUrl)?.[1] ?? 'image/png';
+  void api.composer
+    .addContexts([
+      {
+        type: 'annotation',
+        label: record.name,
+        reminder: t('insert.reminder', { path: record.filePath }),
+        image: { name: record.name, mimeType, content: dataUrl.slice(comma + 1) },
+      },
+    ])
+    .then(() => notice(t('insert.done', { name: record.name })))
+    .catch(() => notice(t('insert.failed')));
 }
 
 let layoutFrame = 0;

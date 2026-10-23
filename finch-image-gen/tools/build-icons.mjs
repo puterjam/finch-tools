@@ -18,19 +18,27 @@ const SRC = join(root, 'src');
 const SHAPE = /<(?:path|circle|rect|line|polyline|polygon|ellipse)\b[^>]*\/>/g;
 
 /**
- * Every icon name the gallery page mentions: `icon('x')` calls, `icon: 'x'`
- * presets and `data-icon="x"` markup. Reading them from the sources means a
- * new icon is picked up on its own, and a typo fails the build instead of
- * silently rendering the generic picture.
+ * Every icon name the gallery page mentions: `icon(...)` calls (including the
+ * branches of a ternary), `data-icon="x"` / `dataset.icon = 'x'`, and `icon: 'x'`
+ * presets. Reading them from the sources means a new icon is picked up on its
+ * own, and a typo fails the build instead of silently rendering the generic
+ * picture — which is exactly what a missed name looks like on screen.
  */
 export function usedNames() {
   const files = readdirSync(SRC).filter((name) => name === 'gallery.html' || /^gallery.*\.ts$/.test(name));
   const names = new Set();
   for (const file of files) {
     const text = readFileSync(join(SRC, file), 'utf8');
-    for (const match of text.matchAll(/icon\(\s*'([a-z0-9-]+)'/g)) names.add(match[1]);
+    for (const call of text.matchAll(/\bicon\(([^()]*)\)/g)) {
+      for (const name of call[1].matchAll(/'([a-z0-9-]+)'/g)) names.add(name[1]);
+    }
     for (const match of text.matchAll(/\bicon:\s*'([a-z0-9-]+)'/g)) names.add(match[1]);
-    for (const match of text.matchAll(/data-icon="([a-z0-9-]+)"/g)) names.add(match[1]);
+    // An icon may also be named through the attribute the painter reads back.
+    for (const line of text.split('\n')) {
+      if (!/data-icon|dataset\.icon/.test(line)) continue;
+      for (const name of line.matchAll(/data-icon="([a-z0-9-]+)"/g)) names.add(name[1]);
+      for (const name of line.matchAll(/'([a-z0-9-]+)'/g)) names.add(name[1]);
+    }
   }
   return [...names].sort();
 }

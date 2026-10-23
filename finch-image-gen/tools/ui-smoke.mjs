@@ -2,11 +2,18 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+/** The generated Lucide geometry, so an icon can be asserted by shape. */
+const lucide = JSON.parse(readFileSync(join(root, 'src/lucide-icons.json'), 'utf8'));
+/** Compare icon geometry only: the DOM re-serializes self-closing shapes. */
+const flat = (markup) => [...String(markup).matchAll(/<(?:path|rect|circle|line|polyline|polygon|ellipse)\b([^>]*?)\/?>/g)]
+  .map((match) => match[1].replace(/\s+/g, ''))
+  .join('|');
 const server = createServer(async (req, res) => {
   const pathname = new URL(req.url, 'http://localhost').pathname;
   if (pathname.includes('..')) { res.writeHead(403).end(); return; }
@@ -179,6 +186,23 @@ async function runGalleryTests() {
   assert.equal(hover.lineClamp, '2');
   assert(hover.actionsTop < 10 && hover.actionsRight < 10);
   assert.equal(await page.locator('.card .badges, .card .badge').count(), 0, 'Cards carry no format/size pills');
+
+  // A Panel with a Composer of its own gets one extra hover action: hand the
+  // picture straight to the input box, with no editing detour.
+  const firstCard = page.locator('.card').first();
+  await firstCard.hover();
+  assert.equal(await firstCard.locator('.card-action').count(), 3, 'A session card offers insert, edit and remove');
+  await firstCard.locator('[data-act="insert"]').click();
+  await page.waitForFunction(() => window.__host.contexts.length === 1);
+  const attached = await page.evaluate(() => window.__host.contexts[0]);
+  assert.equal(attached.type, 'annotation');
+  assert.equal(attached.label, 'picture-0.png', 'The chip is named after the file');
+  assert(attached.image?.mimeType === 'image/png' && attached.image.content.length > 100 && !attached.image.content.startsWith('data:'), 'The attachment carries raw image bytes');
+  assert(attached.reminder.includes('/gallery/picture-0.png'), 'The original path still travels with the attachment');
+  assert(attached.note === undefined && attached.promptText === undefined, 'A quick insert is a plain image, not an edit');
+  assert(await page.locator('#editor').isHidden(), 'Attaching never opens the editor');
+  await page.screenshot({ path: join(root, 'node_modules/.ui-card-actions.png') });
+  await page.evaluate(() => { window.__host.contexts.length = 0; });
   const card = await page.locator('.card').first().boundingBox();
   await page.mouse.click(card.x + card.width / 2, card.y + card.height / 2);
   assert.equal(await page.evaluate(() => window.__host.previews.length), 1, 'Click opens the native preview');
@@ -405,9 +429,12 @@ async function runEditorTests() {
   // The App View browses: it has no Composer, so its cards hand the image over
   // to the Session that produced it instead of opening an editor here.
   assert.equal(await page.locator('.card-action[data-act="edit"]').count(), 0, 'The App View offers no editing entry');
+  assert.equal(await page.locator('.card-action[data-act="insert"]').count(), 0, 'The App View has no input box to attach into');
   const adjustButtons = page.locator('.card-action[data-act="adjust"]');
   assert.equal(await adjustButtons.count(), 16, `Every card offers to adjust it in its session (${await adjustButtons.count()})`);
   assert.equal(await adjustButtons.first().getAttribute('aria-label'), '调整', 'The button reads 调整, not 编辑');
+  // The action leaves this surface, so it is drawn as a jump, not a slider.
+  assert.equal(flat(await adjustButtons.first().locator('svg').innerHTML()), flat(lucide['arrow-up-right']), 'Adjusting is drawn as a jump arrow');
   await page.locator('.card').first().hover();
   await page.screenshot({ path: join(root, 'node_modules/.ui-appview-adjust.png') });
   await adjustButtons.first().click();
@@ -454,6 +481,8 @@ async function runEditorTests() {
   await openEditor();
   assert(await page.locator('#send').isVisible(), 'A Composer-less Panel scope can still deliver the edit');
   assert.equal((await page.locator('#sendLabel').textContent()).trim(), '发送到新会话', 'The button switches meaning outside a Composer');
+  // The button swaps its icon with the scope, so the markup must follow too.
+  assert.equal(flat(await page.locator('#sendIcon').innerHTML()), flat(lucide.send), 'The send button keeps its own icon');
   assert(await page.locator('#scopeHint').isHidden(), 'No dead hint while sending is possible');
   await page.locator('#toolComment').click();
   rect = await page.locator('#imageSurface').boundingBox();
