@@ -26,7 +26,7 @@ Every generation lands in the gallery — open it from the **Image 2.5** entry i
 - **Less chrome** — the card is just the picture; hover brings up two lines of prompt over a bottom gradient plus the action buttons, and click opens Finch's native preview. Session filters sit below the title, like the Artifacts library.
 - **Attach in one click** — inside a session Panel, hovering a card offers **Attach**: the picture goes straight into the input box as an image attachment, with its file path in the reminder so it can still be edited by reference afterwards. No editor detour for "look at this picture".
 - **Edit in place** — the editor fills its Panel. The picture gets the whole area and the tool capsule floats on top of it, with no fixed-width side panel.
-- **Draw and comment** — freehand red lines and any number of numbered comments. Click the picture to drop a comment, which opens a small bubble right there to type into; drag its pin to move the comment, Escape to close. The editor height never changes.
+- **Draw and comment** — freehand red lines and any number of numbered comments. Click the picture to drop a comment, which opens a small bubble right there to type into; drag its pin to move the comment, Escape to close. The editor height never changes. The capsule keeps the tools in the order you use them: **annotate / comment / size**, a divider, then **undo / clear** — clearing shows a delete mark, not a rubber, which in a picture editor reads as erasing the image itself.
 - **Ask for a different shape while you edit** — the toolbar's **Size** tool writes the aspect into the instructions ("Output size: 16:9 (1280x720)"), so the request carries its own size instead of quietly changing the tool's defaults. One size line at a time, and it stays editable.
 - **Adjust from the App View** — the sidebar gallery browses; its cards hand an image back to the session that produced it. Click **Adjust** and Finch opens that session, with an already-open gallery panel dropping straight into the editor.
 - **A slim footer** — one instruction field and one button. Inside a session panel or on Home, **Attach image + request** puts the marked picture into the input box as a normal image attachment: the pins become its regions and your request becomes its note — every comment with its position, the overall instruction and the original file path — so it is all visible in the hover card and reaches the model with the picture. No second click, no parked text. A panel scope with no input box of its own sends everything to a new chat instead.
@@ -107,7 +107,7 @@ Click the **settings** (gear) menu on the Image 2.5 card in Toolcase → **API B
 - **轻量卡片**：卡片上只有图片本身，悬停时底部渐变上显示两行提示词、右上角出现操作按钮，点击图片用内置预览器查看。标题下方的筛选沿用成果库风格，不再提供搜索框。
 - **一键插入**：在会话面板里悬停卡片会多出一个**插入**按钮，直接把这张图作为图片附件放进输入框，并把原图路径写在 reminder 里，之后还能按参考图继续改；只想「让助手看看这张图」时不用绕进编辑器。
 - **区域内全屏编辑**：填满当前 Panel，图片占满整个区域，工具条浮动在图片上方，不再有固定宽侧栏。
-- **画线与多条评论**：自由画红线，点击图片就地弹出小气泡输入评论；拖动编号点可以改位置，Esc 关闭。底部高度不会因此变化。
+- **画线与多条评论**：自由画红线，点击图片就地弹出小气泡输入评论；拖动编号点可以改位置，Esc 关闭。底部高度不会因此变化。工具条按使用顺序排：**标注 / 评论 / 尺寸**，一条分割线，然后是**撤销 / 清除**——清除用删除图标而不是橡皮，图片编辑器里的橡皮会被读成「擦掉图片本身」。
 - **编辑时顺手改画幅**：工具栏的**尺寸**按钮把想要的画幅写进修改说明（如「输出尺寸：16:9（1280x720）」），这次请求自带尺寸，不去改工具的默认值；同一时间只留一行，随时可改。
 - **在 App View 里调整**：侧边栏图库只管浏览，卡片会把图片交回生成它的会话。点**调整**就会打开对应会话，已经开着图片库面板的会话还会直接进入编辑。
 - **精简底栏**：一个说明输入框加一个按钮。在会话面板或首页点**插入图片和说明**，带标注的图片会作为普通图片附件进入输入框——编号点变成它的 regions，你的要求变成它的 note（每条评论带坐标、整体说明、原图路径），悬停就能看到，也会随图片一起给到模型；不用再点第二次，也没有被挂起的文字。在没有自有输入框的面板作用域里，同一个按钮会改成**发送到新会话**。

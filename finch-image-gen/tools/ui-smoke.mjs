@@ -352,6 +352,13 @@ async function runEditorTests() {
   assert.equal(await page.locator('#editorError').count(), 0, 'No inline red error text remains');
   assert.equal(await page.locator('#commentList, .comment-row').count(), 0, 'Comments no longer live in a list under the image');
 
+  // Tools in the order they are used: mark the picture, then take marks back.
+  const tools = await page.evaluate(() => [...document.getElementById('toolbar').children].map((node) => node.id));
+  assert.equal(tools.join(','), 'toolPen,toolComment,toolSize,toolDivider,undo,clear', `The size tool sits between the comment tool and the divider (${tools.join(',')})`);
+  // A rubber is a tool that removes pixels; this button clears marks, so it must
+  // not look like something that rubs out the picture.
+  assert.equal(await page.locator('#clear').getAttribute('data-icon'), 'trash-2', 'Clearing marks is a delete, not an eraser');
+
   // The toolbar can change the output size too, with the same presets.
   await page.locator('#toolSize').click();
   await page.waitForFunction(() => !document.getElementById('sizeMenu').hidden);
