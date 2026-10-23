@@ -13,18 +13,18 @@ export async function insertImagePrompt(
   api: finch.WebviewBridgeApi,
   image: ImageContext,
   text: string,
-): Promise<'editable' | 'annotation'> {
+): Promise<void> {
   if ('fillText' in api.composer && typeof api.composer.fillText === 'function') {
     // Both capabilities ship together in the host; old hosts keep the fully
     // typed annotation path below. No SDK update or version-string guess.
     const insert = api.composer.addContexts as EditableContextInsert;
     const result = await insert.call(api.composer, [image], { text, mode: 'append' });
     if (result.added !== 1) throw new Error('The Composer did not accept the image');
-    return 'editable';
+    return;
   }
   // Old hosts' plain attachments only update a draft projection, not the live
-  // Composer. Use the proven annotation route and explicitly label the downgrade
-  // in the calling UI; do not claim this put editable text in the input box.
+  // Composer. Use the proven annotation route; the host then announces the
+  // added context itself, so the caller shows nothing on success.
   const result = await api.composer.addContexts([{
     type: 'annotation', label: image.name, promptText: text,
     image: { name: image.name, mimeType: image.mimeType, content: image.content },
@@ -32,5 +32,4 @@ export async function insertImagePrompt(
   if (result.added < 1 && !(result as { annotations?: number }).annotations) {
     throw new Error('The Composer did not accept the annotation');
   }
-  return 'annotation';
 }

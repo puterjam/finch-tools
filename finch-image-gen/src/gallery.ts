@@ -352,11 +352,12 @@ function attachToComposer(record: GalleryItem): void {
   const mimeType = /^data:([^;,]+)/.exec(dataUrl)?.[1] ?? 'image/png';
   // The attachment *is* the original file, so the request carries only the
   // prompt: repeating the path in the text would just be noise the user deletes.
+  // No success toast of our own: Finch already confirms the added context, and a
+  // second bubble on top of the host's reads as a duplicated message.
   void insertImagePrompt(api, {
     type: 'image-region', name: record.name, mimeType,
     content: dataUrl.slice(comma + 1), regions: [],
   }, record.prompt)
-    .then((mode) => notice(t(mode === 'annotation' ? 'insert.legacy' : 'insert.done', { name: record.name })))
     .catch(() => notice(t('insert.failed')));
 }
 

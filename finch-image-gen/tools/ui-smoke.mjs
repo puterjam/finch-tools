@@ -250,6 +250,10 @@ async function runGalleryTests() {
   assert.equal(cardText, await page.evaluate(() => window.__host.records[0].prompt), 'A card inserts its prompt only: the attachment is already the original');
   assert(!cardText.includes('/gallery/picture-0.png'), 'The redundant original-path line is gone');
   assert(await page.locator('#editor').isHidden(), 'Attaching never opens the editor');
+  assert.equal(await page.evaluate(() => window.__host.fills[0]?.mode), 'append', 'A card also passes the prompt as appended text');
+  // A leftover toast from an earlier step may still be fading out, so check what
+  // it says instead of whether the bubble is visible.
+  assert(!(await page.evaluate(() => document.getElementById('notice').hidden ? '' : document.getElementById('notice').textContent)).startsWith('已插入'), 'Inserting a card adds no success toast of our own');
   await page.screenshot({ path: join(root, 'node_modules/.ui-card-actions.png') });
   await page.evaluate(() => { window.__host.contexts.length = 0; window.__host.fills.length = 0; });
   const card = await page.locator('.card').first().boundingBox();
@@ -616,7 +620,7 @@ async function runEditorTests() {
   const legacy = await page.evaluate(() => window.__host.contexts[2]);
   assert.equal(legacy.type, 'annotation', 'Old hosts use the known-working annotation route, not the broken plain attachment projection');
   assert(legacy.image?.content?.length > 100 && String(legacy.promptText || '').includes('保留这个轮廓') && legacy.promptText.includes('/gallery/picture-0.png'), 'Legacy annotation retains both the image and request');
-  assert.equal(await page.locator('#notice').textContent(), '已插入图片和批注。', 'Old hosts are supported without an upgrade requirement or false editable-text claim');
+  assert(!(await page.evaluate(() => document.getElementById('notice').hidden ? '' : document.getElementById('notice').textContent)).startsWith('已插入'), 'No success toast of our own: the host already confirms the added context');
   assert.equal(await page.evaluate(() => window.__host.fills.length), fillsBeforeFallback, 'The fallback writes no text of its own');
   await assertCleared();
   await page.evaluate(() => { window.finch.composer.fillText = window.__host.fillText; });

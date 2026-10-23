@@ -679,13 +679,13 @@ export class GalleryEditor {
     this.busy = true; this.controls();
     try {
       if (composer) {
-        const mode = await insertImagePrompt(this.api, this.attachment!, this.requestText());
+        await insertImagePrompt(this.api, this.attachment!, this.requestText());
         if (this.item !== item) return;
         // Only clear after the host accepted the marked image and full request.
+        // The host confirms the added context itself, so no toast of our own.
         this.busy = false;
         this.clearAnnotations();
         this.flushSave();
-        notice(t(mode === 'annotation' ? 'insert.legacy' : 'editor.attached'));
         return;
       }
       this.attempt += 1;
