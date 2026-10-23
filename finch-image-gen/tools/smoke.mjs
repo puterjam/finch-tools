@@ -523,6 +523,22 @@ panelSent = sent;
   // Offering a size the tool would reject would be a trap.
   const offered = sizeRow.children.map((child) => child.id.replace(/^size:/, ''));
   check('every offered size passes local validation', offered.every((value) => checkSize(value).ok), offered.filter((value) => !checkSize(value).ok).join(','));
+  // Long model names made the menu unreadable: the row is the variant name with
+  // its family as the trailing text, and the explanation moved to hover.
+  const expectedModels = [
+    `${locale['model.flare']}|Image 2.5`,
+    `${locale['model.sunburst']}|Image 2.5`,
+    `${locale['model.previous']}|Image 2`,
+    `${locale['model.legacy']}|Image 1.5`,
+  ].join(',');
+  const modelRows = modelRow.children.map((child) => `${child.label}|${child.description}`).join(',');
+  check('model rows are the variant plus its family', modelRows === expectedModels, modelRows);
+  check('the model row still explains itself on hover', modelRow.children.every((child) => typeof child.hoverText === 'string' && child.hoverText.length > 0 && child.hoverText !== child.label));
+  check('the model row shows the short name', modelRow.description === locale['model.flare'], modelRow.description);
+  await store.set('defaultModel', 'my-relay-model');
+  const relayMenu = await menus.composer['image-gen-settings'].getMenu({});
+  check('a relay model id has no short name and keeps its own', relayMenu.find((item) => item.id === 'set-model').description === 'my-relay-model', relayMenu.find((item) => item.id === 'set-model').description);
+  await store.delete('defaultModel');
 
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).finch.contributes;
   const declared = Object.keys(manifest.icons ?? {});
@@ -722,20 +738,23 @@ panelSent = sent;
   panelHandlers[0](sessionPanel.panel);
   const records = JSON.parse(readFileSync(join(storagePath, 'gallery.json'), 'utf8'));
   const record = records[0];
+  // The panel's own gallery push can land between these replies, so match on
+  // the message type rather than on what happened to arrive last.
+  const adjustment = (from) => appView.sent.slice(from).find((m) => m.type === 'adjustResult');
 
   const unknown = appView.sent.length;
   await appView.handlers[0]({ type: 'adjustImage', id: 'no-such-image' });
-  await until(() => appView.sent.length > unknown);
-  check('an unknown image cannot be adjusted', appView.sent.slice(unknown).at(-1)?.error === 'not-found', JSON.stringify(appView.sent.slice(unknown)));
+  await until(() => adjustment(unknown));
+  check('an unknown image cannot be adjusted', adjustment(unknown)?.error === 'not-found', JSON.stringify(adjustment(unknown)));
 
   const before = appView.sent.length;
   const opened = sessions.opened.length;
   await appView.handlers[0]({ type: 'adjustImage', id: record.id });
-  await until(() => appView.sent.length > before);
+  await until(() => adjustment(before));
   check('adjusting opens the Session that produced the image', sessions.opened.slice(opened).join(',') === 'sess-1', sessions.opened.join(','));
   check('that Session’s gallery panel is revealed', sessionPanel.panel.revealed === 1, String(sessionPanel.panel.revealed));
   check('the panel is asked to open the editor', sessionPanel.sent.some((m) => m.type === 'editImage' && m.id === record.id), JSON.stringify(sessionPanel.sent.map((m) => m.type)));
-  check('the App View is told where the image went', appView.sent.slice(before).some((m) => m.type === 'adjustResult' && m.sessionId === 'sess-1' && !m.error), JSON.stringify(appView.sent.slice(before)));
+  check('the App View is told where the image went', adjustment(before)?.sessionId === 'sess-1' && !adjustment(before)?.error, JSON.stringify(adjustment(before)));
 
   // An image with no Session behind it has nowhere to go.
   const galleryFile = join(storagePath, 'gallery.json');
@@ -746,8 +765,8 @@ panelSent = sent;
   const orphan = appView.sent.length;
   const openedBefore = sessions.opened.length;
   await appView.handlers[0]({ type: 'adjustImage', id: record.id });
-  await until(() => appView.sent.length > orphan);
-  check('an image without a Session reports it', appView.sent.slice(orphan).at(-1)?.error === 'no-session', JSON.stringify(appView.sent.slice(orphan)));
+  await until(() => adjustment(orphan));
+  check('an image without a Session reports it', adjustment(orphan)?.error === 'no-session', JSON.stringify(adjustment(orphan)));
   check('nothing is opened for an image without a Session', sessions.opened.length === openedBefore);
   patched[0].sessionId = original;
   writeFileSync(galleryFile, JSON.stringify(patched), 'utf8');
@@ -757,8 +776,8 @@ panelSent = sent;
   ctx.navigation.openSession = async () => { throw new Error('nope'); };
   const failed = appView.sent.length;
   await appView.handlers[0]({ type: 'adjustImage', id: record.id });
-  await until(() => appView.sent.length > failed);
-  check('a refused navigation is reported back', appView.sent.slice(failed).at(-1)?.error === 'open-failed', JSON.stringify(appView.sent.slice(failed)));
+  await until(() => adjustment(failed));
+  check('a refused navigation is reported back', adjustment(failed)?.error === 'open-failed', JSON.stringify(adjustment(failed)));
   ctx.navigation.openSession = failing;
 }
 

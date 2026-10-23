@@ -50,12 +50,16 @@ const SIZE_CHOICES = [
  * Model ids offered in the settings menu. Anything else is forwarded verbatim so
  * relay/proxy endpoints can expose their own ids — only the shorthands below are
  * expanded, never guessed at.
+ *
+ * The row stays short (the variant name, with its family as the small trailing
+ * text) because the full names made the menu unreadable; what each variant is
+ * good for lives in the hover text instead.
  */
-const MODEL_CHOICES: Array<{ id: string; label: string }> = [
-  { id: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare — cheapest, everyday generation (default)' },
-  { id: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst — editing precision' },
-  { id: 'gpt-image-2', label: 'GPT Image 2 — previous generation' },
-  { id: 'gpt-image-1.5', label: 'GPT Image 1.5 — legacy' },
+const MODEL_CHOICES: Array<{ id: string; labelKey: string; hintKey: string; family: string }> = [
+  { id: 'gpt-image-2.5-flare', labelKey: 'model.flare', hintKey: 'model.flare.hint', family: 'Image 2.5' },
+  { id: 'gpt-image-2.5-sunburst', labelKey: 'model.sunburst', hintKey: 'model.sunburst.hint', family: 'Image 2.5' },
+  { id: 'gpt-image-2', labelKey: 'model.previous', hintKey: 'model.previous.hint', family: 'Image 2' },
+  { id: 'gpt-image-1.5', labelKey: 'model.legacy', hintKey: 'model.legacy.hint', family: 'Image 1.5' },
 ];
 
 const MODEL_ALIASES: Record<string, string> = {
@@ -1294,6 +1298,7 @@ export function activate(ctx: finch.MiniToolContext): void {
         const storedSize = await ctx.storage.get<string>(SIZE_STORAGE_KEY);
         const effectiveSize = storedSize && checkSize(storedSize).ok ? storedSize.trim() : DEFAULT_SIZE;
         const pending = pendingPrompts.get(composerScopeId(actionCtx.sessionId, actionCtx.spaceId));
+        const knownModel = MODEL_CHOICES.find((choice) => choice.id === effectiveModel);
         return [
           ...(pending
             ? [
@@ -1310,12 +1315,14 @@ export function activate(ctx: finch.MiniToolContext): void {
             id: 'set-model',
             label: t('menu.model'),
             iconName: 'ext:image-gen-icons/cpu-ai',
-            description: effectiveModel,
-            hoverText: t('menu.current', { value: effectiveModel }),
+            // A relay's own model id has no short name, so it stays as-is.
+            description: knownModel ? t(knownModel.labelKey) : effectiveModel,
+            hoverText: effectiveModel,
             children: MODEL_CHOICES.map((choice) => ({
               id: `model:${choice.id}`,
-              label: choice.label,
-              description: choice.id,
+              label: t(choice.labelKey),
+              description: choice.family,
+              hoverText: t(choice.hintKey),
               current: choice.id === effectiveModel,
             })),
           },
