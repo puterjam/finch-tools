@@ -33,8 +33,8 @@ The attach buttons need a Composer to write into, so they appear when the galler
 ## Setup
 
 1. Install and enable this mini tool in Finch's Toolcase.
-2. In any Composer, click the **Image Gen settings** button (gear icon) in the toolbar → **OpenAI API Key**, paste your key, and save.
-3. (Optional) Same menu to set a **Default model**, a **Default quality**, or an **API Base URL** if you want to use an OpenAI-compatible proxy/relay instead of the official `https://api.openai.com/v1`. Leave the URL empty to use the default.
+2. On the Image Gen card in Toolcase, click its **settings** (gear) menu → **OpenAI API Key**, paste your key, and save. The same menu has **API Base URL** if you want an OpenAI-compatible proxy or relay instead of the official `https://api.openai.com/v1` — leave it empty to use the default.
+3. (Optional) In any Composer, the **Image Gen** toolbar button holds the everyday generation defaults: **Default model**, **Default quality**, **Default size**. Those are only fallbacks — asking in chat still overrides them for a single request.
 4. That's it. Just ask Finch to generate an image.
 
 ## Example prompts
@@ -62,7 +62,7 @@ Quality and size both drive cost and waiting time, so it's worth drafting low an
 
 ## Using a proxy / relay endpoint
 
-Click the **Image Gen settings** button (gear icon) in the Composer toolbar → **API Base URL**, type the endpoint, and save. It applies to every future generation until you change it again (leave the field empty and save to go back to the official endpoint). For a one-off different endpoint on a single request, you can also just ask in chat, e.g. "这次用 https://my-relay.example.com/v1 生成" — that overrides only that call without touching the saved setting.
+Click the **settings** (gear) menu on the Image Gen card in Toolcase → **API Base URL**, type the endpoint, and save. It applies to every future generation until you change it again (leave the field empty and save to go back to the official endpoint). For a one-off different endpoint on a single request, you can also just ask in chat, e.g. "这次用 https://my-relay.example.com/v1 生成" — that overrides only that call without touching the saved setting.
 
 ## Notes
 
@@ -109,8 +109,8 @@ Click the **Image Gen settings** button (gear icon) in the Composer toolbar → 
 ## 使用前配置
 
 1. 在 Finch 工具箱（Toolcase）中安装并启用本小工具。
-2. 在任意对话的输入框工具栏里，点击 **Image Gen 设置**（齿轮图标）→ **OpenAI API Key**，粘贴你的 Key 并保存。
-3. （可选）同一个菜单里可以设置 **默认模型**、**默认画质**，以及 **API Base URL**——想用兼容 OpenAI 接口格式的代理/中转站代替官方地址 `https://api.openai.com/v1` 时填这里；留空即用官方默认地址。
+2. 在工具箱里的 Image Gen 卡片上点它的**设置**（齿轮）菜单 → **OpenAI API Key**，粘贴你的 Key 并保存。同一个菜单里还有 **API Base URL**——想用兼容 OpenAI 接口格式的代理/中转站代替官方地址 `https://api.openai.com/v1` 就填这里；留空即用官方默认地址。
+3. （可选）任意对话的输入框工具栏里的 **Image Gen** 按钮，管的是日常生图默认参数：**默认模型**、**默认画质**、**默认尺寸**。它们只是兜底值——在聊天里直接说仍然会覆盖本次请求。
 4. 之后直接让 Finch 帮你生成图片即可。
 
 ## 尺寸与画质
@@ -138,7 +138,7 @@ Click the **Image Gen settings** button (gear icon) in the Composer toolbar → 
 
 ## 使用中转站/代理接口
 
-点击输入框工具栏里的 **Image Gen 设置**（齿轮图标）→ **API Base URL**，填入地址后保存即可——修改后对之后每次生成都生效，直到你再次修改（清空后保存即恢复官方地址）。如果只想某一次请求临时换个地址，也可以直接在聊天里说，例如 "这次用 https://my-relay.example.com/v1 生成"，这只影响这一次调用，不会改动已保存的设置。
+点击工具箱里 Image Gen 卡片上的**设置**（齿轮）菜单 → **API Base URL**，填入地址后保存即可——修改后对之后每次生成都生效，直到你再次修改（清空后保存即恢复官方地址）。如果只想某一次请求临时换个地址，也可以直接在聊天里说，例如 "这次用 https://my-relay.example.com/v1 生成"，这只影响这一次调用，不会改动已保存的设置。
 
 ## 说明
 

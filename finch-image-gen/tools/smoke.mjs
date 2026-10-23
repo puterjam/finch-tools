@@ -15,7 +15,7 @@
  *
  * Run with: npm run smoke   (builds first, then runs this)
  */
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,6 +47,7 @@ function makeCtx(storagePath) {
   const composer = {};
   const panelHandlers = [];
   const previews = [];
+  const menus = { composer: {}, settings: null };
   const ctx = {
     storagePath,
     subscriptions: { push() {} },
@@ -81,7 +82,12 @@ function makeCtx(storagePath) {
     },
     composerActions: {
       register(id, handlers) {
-        composer[id] = handlers;
+        menus.composer[id] = handlers;
+      },
+    },
+    settingsMenu: {
+      register(handlers) {
+        menus.settings = handlers;
       },
     },
     ui: {
@@ -94,7 +100,7 @@ function makeCtx(storagePath) {
       },
     },
   };
-  return { ctx, registered, composer, store, panelHandlers, previews };
+  return { ctx, registered, menus, store, panelHandlers, previews };
 }
 
 function makeExec() {
@@ -170,7 +176,7 @@ globalThis.fetch = async (url, init) => {
 // ── run ──────────────────────────────────────────────────────────────────────
 
 const storagePath = mkdtempSync(join(tmpdir(), 'image-gen-smoke-'));
-const { ctx, registered, store, panelHandlers, previews } = makeCtx(storagePath);
+const { ctx, registered, menus, store, panelHandlers, previews } = makeCtx(storagePath);
 activate(ctx);
 
 const tool = registered.image_gen_create;
@@ -400,6 +406,43 @@ const base = { prompt: 'a red square' };
   const before = sent.length;
   await run({ prompt: 'pushed automatically' });
   check('a new generation broadcasts to open panels', sent.slice(before).some((m) => m.type === 'gallery'));
+}
+
+// 10 — which menu owns which setting, and do the icons actually exist.
+{
+  const composerMenu = await menus.composer['image-gen-settings'].getMenu({});
+  const composerIds = composerMenu.map((item) => item.id);
+  const settingsItems = await menus.settings.getMenu({ surface: 'toolcase', minitoolId: 'image-gen' });
+  const settingsIds = settingsItems.map((item) => item.id);
+  check('Composer menu holds the generation defaults', composerIds.join(',') === 'set-model,set-quality,set-size', composerIds.join(','));
+  check('Composer menu no longer offers the endpoint', !composerIds.includes('set-api-key') && !composerIds.includes('set-base-url'));
+  check('Toolcase settings menu holds the endpoint', settingsIds.join(',') === 'set-api-key,set-base-url', settingsIds.join(','));
+  check('key status is reported in the settings menu', settingsItems[0].description === locale['status.notSet'], settingsItems[0].description);
+
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).finch.contributes;
+  const declared = Object.keys(manifest.icons ?? {});
+  const used = [...composerMenu, ...settingsItems]
+    .map((item) => item.iconName)
+    .concat([manifest.appPanel.icon, manifest.appView.icon, manifest.settingsMenu.icon, manifest.composerActions[0].icon]);
+  const unresolved = used.filter((ref) => !String(ref).startsWith('ext:')).concat(
+    used.filter((ref) => String(ref).startsWith('ext:')).map((ref) => ref.slice(4)).filter((id) => !declared.includes(id)),
+  );
+  check('every icon reference is an ext: id declared in the manifest', unresolved.length === 0, unresolved.join(', '));
+  const missingFiles = declared.filter((id) => !existsSync(join(root, manifest.icons[id].svg)));
+  check('every declared icon ships a real SVG', missingFiles.length === 0, missingFiles.join(', '));
+}
+
+// 11 — the stored default size behaves like the other defaults.
+{
+  await store.set('defaultSize', '1536x1024');
+  const stored = await run(base);
+  check('stored default size is used', stored.call.json.size === '1536x1024', stored.call.json.size);
+  const explicit = await run({ ...base, size: '1024x1536' });
+  check('an explicit size still wins over the default', explicit.call.json.size === '1024x1536', explicit.call.json.size);
+  await store.set('defaultSize', 'nonsense');
+  const broken = await run(base);
+  check('a broken stored default falls back instead of failing the call', broken.call.json.size === '1024x1024', broken.call.json.size);
+  await store.delete('defaultSize');
 }
 
 rmSync(storagePath, { recursive: true, force: true });

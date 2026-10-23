@@ -17,6 +17,7 @@ const BASE_URL_STORAGE_KEY = 'baseUrl';
 const API_KEY_STORAGE_KEY = 'openaiApiKey';
 const MODEL_STORAGE_KEY = 'defaultModel';
 const QUALITY_STORAGE_KEY = 'defaultQuality';
+const SIZE_STORAGE_KEY = 'defaultSize';
 
 /**
  * Model ids offered in the settings menu. Anything else is forwarded verbatim so
@@ -790,7 +791,11 @@ export function activate(ctx: finch.MiniToolContext): void {
             : (DEFAULT_QUALITY as QualityOption),
         );
 
-        const sizeCheck = checkSize(input.size);
+        // A stored default size is only trusted if it still passes the same
+        // local rules a caller-supplied size has to pass.
+        const storedSize = await ctx.storage.get<string>(SIZE_STORAGE_KEY);
+        const sizeFallback = storedSize && checkSize(storedSize).ok ? storedSize.trim() : DEFAULT_SIZE;
+        const sizeCheck = checkSize(input.size, sizeFallback);
         if (!sizeCheck.ok) {
           return { content: [{ type: 'text', text: sizeCheck.error }], isError: true };
         }
@@ -946,58 +951,50 @@ export function activate(ctx: finch.MiniToolContext): void {
   ctx.subscriptions.push(
     ctx.composerActions.register('image-gen-settings', {
       async getMenu() {
-        const storedBaseUrl = await ctx.storage.get<string>(BASE_URL_STORAGE_KEY);
-        const effectiveBaseUrl = storedBaseUrl && storedBaseUrl.trim() ? normalizeBaseUrl(storedBaseUrl) : DEFAULT_BASE_URL;
-        const hasKeychainKey = !!(await ctx.secrets.get('OPENAI_API_KEY'));
-        const hasStoredKey = !!(await ctx.storage.get<string>(API_KEY_STORAGE_KEY));
-        const keyStatus = hasKeychainKey || hasStoredKey ? t('status.configured') : t('status.notSet');
         const storedModel = await ctx.storage.get<string>(MODEL_STORAGE_KEY);
         const effectiveModel = storedModel && storedModel.trim() ? storedModel.trim() : DEFAULT_MODEL;
         const storedQuality = await ctx.storage.get<string>(QUALITY_STORAGE_KEY);
         const effectiveQuality = storedQuality && storedQuality.trim() ? storedQuality.trim() : DEFAULT_QUALITY;
+        const storedSize = await ctx.storage.get<string>(SIZE_STORAGE_KEY);
+        const effectiveSize = storedSize && checkSize(storedSize).ok ? storedSize.trim() : DEFAULT_SIZE;
         return [
-          {
-            id: 'set-api-key',
-            label: t('menu.apiKey'),
-            iconName: 'settings',
-            description: keyStatus,
-            hoverText: `${t('menu.apiKey.hint')} ${t('menu.current', { value: keyStatus })}`,
-          },
           {
             id: 'set-model',
             label: t('menu.model'),
-            iconName: 'image',
+            iconName: 'ext:cpu-ai',
             description: effectiveModel,
             hoverText: t('menu.current', { value: effectiveModel }),
           },
           {
             id: 'set-quality',
             label: t('menu.quality'),
-            iconName: 'sparkles',
+            iconName: 'ext:paintbrush',
             description: effectiveQuality,
             hoverText: t('menu.current', { value: effectiveQuality }),
           },
           {
-            id: 'set-base-url',
-            label: t('menu.baseUrl'),
-            iconName: 'globe',
-            description: effectiveBaseUrl,
-            hoverText: `${t('menu.baseUrl.hint')} ${t('menu.current', { value: effectiveBaseUrl })}`,
+            id: 'set-size',
+            label: t('menu.size'),
+            iconName: 'ext:image-upscale',
+            description: effectiveSize,
+            hoverText: t('menu.current', { value: effectiveSize }),
           },
         ];
       },
       async execute(_actionCtx, itemId) {
-        if (itemId === 'set-api-key') {
+        if (itemId === 'set-size') {
+          const stored = await ctx.storage.get<string>(SIZE_STORAGE_KEY);
+          const current = stored && checkSize(stored).ok ? stored.trim() : DEFAULT_SIZE;
           const result = await ctx.ui.showModalDialog({
-            title: t('menu.apiKey'),
-            description: t('dialog.apiKey.desc'),
+            title: t('menu.size'),
+            description: t('dialog.size.desc', { default: DEFAULT_SIZE }),
             fields: [
               {
-                key: 'apiKey',
-                label: t('menu.apiKey'),
-                type: 'password',
-                secret: true,
-                placeholder: 'sk-...',
+                key: 'size',
+                label: t('menu.size'),
+                type: 'text',
+                placeholder: DEFAULT_SIZE,
+                default: current,
               },
             ],
             actions: [
@@ -1006,12 +1003,21 @@ export function activate(ctx: finch.MiniToolContext): void {
             ],
           });
           if (result.action !== 'save') return;
-          const value = String(result.values?.apiKey ?? '').trim();
+          const value = String(result.values?.size ?? '').trim();
           if (!value) {
-            await ctx.storage.delete(API_KEY_STORAGE_KEY);
+            await ctx.storage.delete(SIZE_STORAGE_KEY);
             return;
           }
-          await ctx.storage.set(API_KEY_STORAGE_KEY, value);
+          const check = checkSize(value);
+          if (!check.ok) {
+            await ctx.ui.showModalDialog({
+              title: t('dialog.invalidSize.title'),
+              message: check.error ?? '',
+              actions: [{ id: 'ok', label: t('dialog.ok'), variant: 'primary' }],
+            });
+            return;
+          }
+          await ctx.storage.set(SIZE_STORAGE_KEY, check.size);
           return;
         }
 
@@ -1072,6 +1078,66 @@ export function activate(ctx: finch.MiniToolContext): void {
             return;
           }
           await ctx.storage.set(QUALITY_STORAGE_KEY, value);
+          return;
+        }
+
+      },
+    }),
+  );
+
+  // The endpoint is setup, not a knob you flip between generations, so the key
+  // and the base URL live in the Toolcase / container settings menu.
+  ctx.subscriptions.push(
+    ctx.settingsMenu.register({
+      async getMenu() {
+        const storedBaseUrl = await ctx.storage.get<string>(BASE_URL_STORAGE_KEY);
+        const effectiveBaseUrl = storedBaseUrl && storedBaseUrl.trim() ? normalizeBaseUrl(storedBaseUrl) : DEFAULT_BASE_URL;
+        const hasKeychainKey = !!(await ctx.secrets.get('OPENAI_API_KEY'));
+        const hasStoredKey = !!(await ctx.storage.get<string>(API_KEY_STORAGE_KEY));
+        const keyStatus = hasKeychainKey || hasStoredKey ? t('status.configured') : t('status.notSet');
+        return [
+          {
+            id: 'set-api-key',
+            label: t('menu.apiKey'),
+            iconName: 'ext:key-round',
+            description: keyStatus,
+            hoverText: `${t('menu.apiKey.hint')} ${t('menu.current', { value: keyStatus })}`,
+          },
+          {
+            id: 'set-base-url',
+            label: t('menu.baseUrl'),
+            iconName: 'ext:link',
+            description: effectiveBaseUrl,
+            hoverText: `${t('menu.baseUrl.hint')} ${t('menu.current', { value: effectiveBaseUrl })}`,
+          },
+        ];
+      },
+      async execute(_actionCtx, itemId) {
+        if (itemId === 'set-api-key') {
+          const result = await ctx.ui.showModalDialog({
+            title: t('menu.apiKey'),
+            description: t('dialog.apiKey.desc'),
+            fields: [
+              {
+                key: 'apiKey',
+                label: t('menu.apiKey'),
+                type: 'password',
+                secret: true,
+                placeholder: 'sk-...',
+              },
+            ],
+            actions: [
+              { id: 'cancel', label: t('dialog.cancel') },
+              { id: 'save', label: t('dialog.save'), variant: 'primary' },
+            ],
+          });
+          if (result.action !== 'save') return;
+          const value = String(result.values?.apiKey ?? '').trim();
+          if (!value) {
+            await ctx.storage.delete(API_KEY_STORAGE_KEY);
+            return;
+          }
+          await ctx.storage.set(API_KEY_STORAGE_KEY, value);
           return;
         }
 
