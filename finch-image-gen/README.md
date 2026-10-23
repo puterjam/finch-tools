@@ -34,7 +34,7 @@ The attach buttons need a Composer to write into, so they appear when the galler
 
 1. Install and enable this mini tool in Finch's Toolcase.
 2. On the Image 2.5 card in Toolcase, click its **settings** (gear) menu → **OpenAI API Key**, paste your key, and save. The same menu has **API Base URL** if you want an OpenAI-compatible proxy or relay instead of the official `https://api.openai.com/v1` — leave it empty to use the default.
-3. (Optional) In any Composer, the **Image 2.5** toolbar button holds the everyday generation defaults: **Default model**, **Default quality**, **Default size**. Those are only fallbacks — asking in chat still overrides them for a single request.
+3. (Optional) In any Composer, the **Image 2.5** toolbar button holds the everyday generation defaults — **Default model**, **Default quality** and **Default size** — as hover submenus, so a change is one click and never a dialog. The size list is by aspect ratio (square 1:1, portrait 3:4, story 9:16, landscape 4:3, wide 16:9, or let the model decide). Those are only fallbacks — asking in chat still overrides them for a single request.
 4. That's it. Just ask Finch to generate an image.
 
 ## Example prompts
@@ -110,7 +110,7 @@ Click the **settings** (gear) menu on the Image 2.5 card in Toolcase → **API B
 
 1. 在 Finch 工具箱（Toolcase）中安装并启用本小工具。
 2. 在工具箱里的 Image 2.5 卡片上点它的**设置**（齿轮）菜单 → **OpenAI API Key**，粘贴你的 Key 并保存。同一个菜单里还有 **API Base URL**——想用兼容 OpenAI 接口格式的代理/中转站代替官方地址 `https://api.openai.com/v1` 就填这里；留空即用官方默认地址。
-3. （可选）任意对话的输入框工具栏里的 **Image 2.5** 按钮，管的是日常生图默认参数：**默认模型**、**默认画质**、**默认尺寸**。它们只是兜底值——在聊天里直接说仍然会覆盖本次请求。
+3. （可选）任意对话的输入框工具栏里的 **Image 2.5** 按钮，管的是日常生图默认参数：**默认模型**、**默认画质**、**默认尺寸**——都是悬停展开的二级菜单，选一下就生效，不再弹窗。尺寸按画幅列：正方形 1:1、竖向 3:4、故事版式 9:16、横向 4:3、宽屏 16:9，也可以交给模型决定。它们只是兜底值——在聊天里直接说仍然会覆盖本次请求。
 4. 之后直接让 Finch 帮你生成图片即可。
 
 ## 尺寸与画质

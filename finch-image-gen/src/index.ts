@@ -11,7 +11,10 @@ import { parseAnnotations, type GalleryAnnotations } from './gallery-model';
  * every reference silently resolves to nothing and no icon renders.
  */
 const ICON_PACK_ID = 'image-gen-icons';
-const ICON_FILES = ['book-image', 'image', 'cpu-ai', 'paintbrush', 'image-upscale', 'settings', 'key-round', 'link'] as const;
+const ICON_FILES = [
+  'book-image', 'image', 'cpu-ai', 'paintbrush', 'image-upscale', 'settings', 'key-round', 'link',
+  'square', 'rectangle-vertical', 'rectangle-horizontal',
+] as const;
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 /**
@@ -29,6 +32,19 @@ const API_KEY_STORAGE_KEY = 'openaiApiKey';
 const MODEL_STORAGE_KEY = 'defaultModel';
 const QUALITY_STORAGE_KEY = 'defaultQuality';
 const SIZE_STORAGE_KEY = 'defaultSize';
+
+/**
+ * Aspect-ratio entries for the Composer size submenu. Every one has to pass the
+ * same local validation a caller-supplied size passes — the smoke suite checks
+ * each — so what is offered can never drift from what the API accepts.
+ */
+const SIZE_CHOICES = [
+  { size: '1024x1024', ratio: '1:1', icon: 'square', label: 'size.square' },
+  { size: '768x1024', ratio: '3:4', icon: 'rectangle-vertical', label: 'size.portrait' },
+  { size: '720x1280', ratio: '9:16', icon: 'rectangle-vertical', label: 'size.story' },
+  { size: '1024x768', ratio: '4:3', icon: 'rectangle-horizontal', label: 'size.landscape' },
+  { size: '1280x720', ratio: '16:9', icon: 'rectangle-horizontal', label: 'size.wide' },
+] as const;
 
 /**
  * Model ids offered in the settings menu. Anything else is forwarded verbatim so
@@ -1203,6 +1219,12 @@ export function activate(ctx: finch.MiniToolContext): void {
             iconName: 'ext:image-gen-icons/cpu-ai',
             description: effectiveModel,
             hoverText: t('menu.current', { value: effectiveModel }),
+            children: MODEL_CHOICES.map((choice) => ({
+              id: `model:${choice.id}`,
+              label: choice.label,
+              description: choice.id,
+              current: choice.id === effectiveModel,
+            })),
           },
           {
             id: 'set-quality',
@@ -1210,6 +1232,11 @@ export function activate(ctx: finch.MiniToolContext): void {
             iconName: 'ext:image-gen-icons/paintbrush',
             description: effectiveQuality,
             hoverText: t('menu.current', { value: effectiveQuality }),
+            children: QUALITY_ENUM.map((value) => ({
+              id: `quality:${value}`,
+              label: value,
+              current: value === effectiveQuality,
+            })),
           },
           {
             id: 'set-size',
@@ -1217,6 +1244,24 @@ export function activate(ctx: finch.MiniToolContext): void {
             iconName: 'ext:image-gen-icons/image-upscale',
             description: effectiveSize,
             hoverText: t('menu.current', { value: effectiveSize }),
+            // Aspect-ratio presets, each resolved to a valid pixel size.
+            children: [
+              ...SIZE_CHOICES.map((preset) => ({
+                id: `size:${preset.size}`,
+                label: t(preset.label),
+                iconName: `ext:image-gen-icons/${preset.icon}`,
+                description: preset.ratio,
+                hoverText: preset.size,
+                current: preset.size === effectiveSize,
+              })),
+              {
+                id: 'size:auto',
+                label: t('size.auto'),
+                description: 'auto',
+                hoverText: t('size.auto.hint'),
+                current: effectiveSize === 'auto',
+              },
+            ],
           },
         ];
       },
@@ -1233,102 +1278,28 @@ export function activate(ctx: finch.MiniToolContext): void {
           return;
         }
 
-        if (itemId === 'set-size') {
-          const stored = await ctx.storage.get<string>(SIZE_STORAGE_KEY);
-          const current = stored && checkSize(stored).ok ? stored.trim() : DEFAULT_SIZE;
-          const result = await ctx.ui.showModalDialog({
-            title: t('menu.size'),
-            description: t('dialog.size.desc', { default: DEFAULT_SIZE }),
-            fields: [
-              {
-                key: 'size',
-                label: t('menu.size'),
-                type: 'text',
-                placeholder: DEFAULT_SIZE,
-                default: current,
-              },
-            ],
-            actions: [
-              { id: 'cancel', label: t('dialog.cancel') },
-              { id: 'save', label: t('dialog.save'), variant: 'primary' },
-            ],
-          });
-          if (result.action !== 'save') return;
-          const value = String(result.values?.size ?? '').trim();
-          if (!value) {
-            await ctx.storage.delete(SIZE_STORAGE_KEY);
-            return;
-          }
-          const check = checkSize(value);
-          if (!check.ok) {
-            await ctx.ui.showModalDialog({
-              title: t('dialog.invalidSize.title'),
-              message: check.error ?? '',
-              actions: [{ id: 'ok', label: t('dialog.ok'), variant: 'primary' }],
-            });
-            return;
-          }
-          await ctx.storage.set(SIZE_STORAGE_KEY, check.size);
+        // Submenu rows save straight away — no dialog to confirm a single choice.
+        const [kind, ...rest] = itemId.split(':');
+        const chosen = rest.join(':');
+        if (kind === 'model' && chosen) {
+          if (chosen === DEFAULT_MODEL) await ctx.storage.delete(MODEL_STORAGE_KEY);
+          else await ctx.storage.set(MODEL_STORAGE_KEY, chosen);
+          composerMenu?.notifyUpdate();
           return;
         }
-
-        if (itemId === 'set-model') {
-          const stored = await ctx.storage.get<string>(MODEL_STORAGE_KEY);
-          const current = stored && stored.trim() ? stored.trim() : DEFAULT_MODEL;
-          const result = await ctx.ui.showModalDialog({
-            title: t('menu.model'),
-            description: t('dialog.model.desc'),
-            fields: [
-              {
-                key: 'model',
-                label: t('menu.model'),
-                type: 'select',
-                default: current,
-                options: MODEL_CHOICES.map((choice) => ({ value: choice.id, label: choice.label })),
-              },
-            ],
-            actions: [
-              { id: 'cancel', label: t('dialog.cancel') },
-              { id: 'save', label: t('dialog.save'), variant: 'primary' },
-            ],
-          });
-          if (result.action !== 'save') return;
-          const value = String(result.values?.model ?? '').trim();
-          if (!value) {
-            await ctx.storage.delete(MODEL_STORAGE_KEY);
-            return;
-          }
-          await ctx.storage.set(MODEL_STORAGE_KEY, value);
+        if (kind === 'quality' && QUALITY_ENUM.includes(chosen as QualityOption)) {
+          if (chosen === DEFAULT_QUALITY) await ctx.storage.delete(QUALITY_STORAGE_KEY);
+          else await ctx.storage.set(QUALITY_STORAGE_KEY, chosen);
+          composerMenu?.notifyUpdate();
           return;
         }
-
-        if (itemId === 'set-quality') {
-          const stored = await ctx.storage.get<string>(QUALITY_STORAGE_KEY);
-          const current = stored && stored.trim() ? stored.trim() : DEFAULT_QUALITY;
-          const result = await ctx.ui.showModalDialog({
-            title: t('menu.quality'),
-            description: t('dialog.quality.desc'),
-            fields: [
-              {
-                key: 'quality',
-                label: t('menu.quality'),
-                type: 'select',
-                default: current,
-                options: QUALITY_ENUM.map((value) => ({ value, label: value })),
-              },
-            ],
-            actions: [
-              { id: 'cancel', label: t('dialog.cancel') },
-              { id: 'save', label: t('dialog.save'), variant: 'primary' },
-            ],
-          });
-          if (result.action !== 'save') return;
-          const value = String(result.values?.quality ?? '').trim();
-          if (!value || value === DEFAULT_QUALITY) {
-            await ctx.storage.delete(QUALITY_STORAGE_KEY);
-            return;
-          }
-          await ctx.storage.set(QUALITY_STORAGE_KEY, value);
+        if (kind === 'size') {
+          // Only a preset or a validated size is ever stored.
+          const check = checkSize(chosen);
+          if (!check.ok) return;
+          if (check.size === DEFAULT_SIZE) await ctx.storage.delete(SIZE_STORAGE_KEY);
+          else await ctx.storage.set(SIZE_STORAGE_KEY, check.size);
+          composerMenu?.notifyUpdate();
           return;
         }
       },

@@ -483,10 +483,24 @@ panelSent = sent;
   check('Toolcase settings menu holds the endpoint', settingsIds.join(',') === 'set-api-key,set-base-url', settingsIds.join(','));
   check('key status is reported in the settings menu', settingsItems[0].description === locale['status.notSet'], settingsItems[0].description);
 
+  // Submenus instead of a dialog: one hover, one click, no confirm step.
+  const modelRow = composerMenu.find((item) => item.id === 'set-model');
+  const qualityRow = composerMenu.find((item) => item.id === 'set-quality');
+  const sizeRow = composerMenu.find((item) => item.id === 'set-size');
+  check('model, quality and size are submenus', [modelRow, qualityRow, sizeRow].every((row) => Array.isArray(row.children) && row.children.length > 1));
+  check('every submenu row carries its own id', [modelRow, qualityRow, sizeRow].every((row) => row.children.every((child) => typeof child.id === 'string' && child.id.includes(':'))));
+  check('no submenu row is left unlabelled', [modelRow, qualityRow, sizeRow].every((row) => row.children.every((child) => typeof child.label === 'string' && child.label.length > 0)));
+  check('the current value is marked in each submenu', [modelRow, qualityRow, sizeRow].every((row) => row.children.filter((child) => child.current).length === 1));
+  check('size offers the aspect-ratio presets', sizeRow.children.map((child) => child.description).join(',') === '1:1,3:4,9:16,4:3,16:9,auto', sizeRow.children.map((child) => child.description).join(','));
+  // Offering a size the tool would reject would be a trap.
+  const offered = sizeRow.children.map((child) => child.id.replace(/^size:/, ''));
+  check('every offered size passes local validation', offered.every((value) => checkSize(value).ok), offered.filter((value) => !checkSize(value).ok).join(','));
+
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).finch.contributes;
   const declared = Object.keys(manifest.icons ?? {});
-  const used = [...composerMenu, ...settingsItems]
+  const used = [...composerMenu, ...composerMenu.flatMap((item) => item.children ?? []), ...settingsItems]
     .map((item) => item.iconName)
+    .filter(Boolean)
     .concat([manifest.appPanel.icon, manifest.appView.icon, manifest.settingsMenu.icon, manifest.composerActions[0].icon]);
   // `ext:id` and `ext:<packId>/id` both have to land on a declared icon.
   const bareIconId = (ref) => String(ref).replace(/^ext:/, '').split('/').pop();
@@ -502,8 +516,8 @@ panelSent = sent;
   const registeredIcons = icons.packs[manifest.iconPacks[0].id] ?? {};
   const registeredIds = Object.keys(registeredIcons);
   check('the icon pack is registered at runtime', registeredIds.length === Object.keys(manifest.icons).length, `${registeredIds.length}/${Object.keys(manifest.icons).length}`);
-  check('every referenced icon id is registered', used.map(bareIconId).every((id) => registeredIds.includes(id)), registeredIds.join(', '));
-  check('registered icons carry real SVG markup', registeredIds.every((id) => registeredIcons[id].svg.includes('<svg') && registeredIcons[id].svg.includes('path')), JSON.stringify(registeredIcons.bookImage ?? null));
+  check('every referenced icon id is registered', used.map(bareIconId).every((id) => registeredIds.includes(id)), used.filter((ref) => !registeredIds.includes(bareIconId(ref))).join(', '));
+  check('registered icons carry real SVG markup', registeredIds.every((id) => registeredIcons[id].svg.includes('<svg') && /<(path|rect|circle|line|polyline)\b/.test(registeredIcons[id].svg)), registeredIds.filter((id) => !/<(path|rect|circle|line|polyline)\b/.test(registeredIcons[id].svg)).join(', '));
   check('registration does not depend on the manifest file map', registerIcons(ctx) === registeredIds.length, String(registerIcons(ctx)));
 }
 
@@ -608,6 +622,39 @@ panelSent = sent;
   // Home has no session id, so its draft is keyed by Space instead of being lost.
   await ask({ type: 'stagePrompt', id: 'y', name: 'home.png', text: 'home prompt' }, 'promptStaged');
   check('the Home draft is staged per-composer', (await composerMenu.getBadge({ sessionId: undefined, spaceId: '', surface: 'home', cwd: '/tmp' }))?.text === '1');
+}
+
+// 14 — picking a submenu row saves it directly, with no dialog in the way.
+{
+  const composerMenu = menus.composer['image-gen-settings'];
+  const scoped = { sessionId: 'sess-1', spaceId: '', surface: 'session', cwd: '/tmp' };
+  const dialogs = [];
+  const dialog = ctx.ui.showModalDialog;
+  ctx.ui.showModalDialog = async (spec) => { dialogs.push(spec.title); return { action: 'dismissed' }; };
+
+  await composerMenu.execute(scoped, 'size:1280x720', { composer: {}, navigation: {} });
+  check('choosing a size preset stores it directly', (await store.get('defaultSize')) === '1280x720', String(await store.get('defaultSize')));
+  await composerMenu.execute(scoped, 'quality:high', { composer: {}, navigation: {} });
+  check('choosing a quality stores it directly', (await store.get('defaultQuality')) === 'high', String(await store.get('defaultQuality')));
+  await composerMenu.execute(scoped, 'model:gpt-image-2.5-sunburst', { composer: {}, navigation: {} });
+  check('choosing a model stores it directly', (await store.get('defaultModel')) === 'gpt-image-2.5-sunburst', String(await store.get('defaultModel')));
+  check('no dialog interrupts a submenu pick', dialogs.length === 0, dialogs.join(','));
+  const rows = await composerMenu.getMenu(scoped);
+  check('the submenu marks what was just chosen', rows.find((item) => item.id === 'set-size').children.find((child) => child.current)?.id === 'size:1280x720');
+  check('the parent row shows the chosen value', rows.find((item) => item.id === 'set-size').description === '1280x720', rows.find((item) => item.id === 'set-size').description);
+
+  // A default value is stored as "no override" so the built-in default can change.
+  await composerMenu.execute(scoped, 'size:1024x1024', { composer: {}, navigation: {} });
+  await composerMenu.execute(scoped, 'quality:low', { composer: {}, navigation: {} });
+  await composerMenu.execute(scoped, 'model:gpt-image-2.5-flare', { composer: {}, navigation: {} });
+  check('choosing a built-in default clears the override', (await store.get('defaultSize')) === undefined && (await store.get('defaultQuality')) === undefined && (await store.get('defaultModel')) === undefined);
+
+  // Garbage ids must not reach storage.
+  await composerMenu.execute(scoped, 'size:1000x1000', { composer: {}, navigation: {} });
+  await composerMenu.execute(scoped, 'quality:nonsense', { composer: {}, navigation: {} });
+  check('an invalid submenu id is ignored', (await store.get('defaultSize')) === undefined && (await store.get('defaultQuality')) === undefined);
+
+  ctx.ui.showModalDialog = dialog;
 }
 
 rmSync(storagePath, { recursive: true, force: true });

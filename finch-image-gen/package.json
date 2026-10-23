@@ -1,6 +1,6 @@
 {
   "name": "finch-image-gen",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Generate and edit images with OpenAI GPT Image 2.5 (or an OpenAI-compatible relay): text-to-image, image-to-image, masked edits, transparent backgrounds and custom sizes, right inside Finch.",
   "author": {
     "name": "PuterJam",
@@ -88,6 +88,18 @@
         "link": {
           "description": "Link (API base URL menu item)",
           "svg": "./icons/link.svg"
+        },
+        "square": {
+          "description": "Square frame (1:1 size preset)",
+          "svg": "./icons/square.svg"
+        },
+        "rectangle-vertical": {
+          "description": "Portrait frame (3:4 and 9:16 size presets)",
+          "svg": "./icons/rectangle-vertical.svg"
+        },
+        "rectangle-horizontal": {
+          "description": "Landscape frame (4:3 and 16:9 size presets)",
+          "svg": "./icons/rectangle-horizontal.svg"
         }
       },
       "settingsMenu": {
