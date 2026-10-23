@@ -38,7 +38,8 @@
 - 版本按用户要求从 `0.1.0` 重新开始，保留原 0.25.3 的全部功能与修复；下文 0.25.x 是开发历史，不作为后续版本递增起点。小程序展示名改为「生图工具」（英文 Image Tool），菜单项一律不带 hoverText——悬停气泡会盖住相邻行，说明直接写在行内 `description`。
 - 兼容性优先：开发依赖固定为已发布 `@finchtoys/minitool-api@0.3.15`，不发布/升级 SDK；可选正文插入契约局限在 gallery-composer 的能力适配器里，运行时探测宿主能力，旧宿主保留完整 annotation。提示仅说「已插入图片和批注」，不能宣称正文可编辑或要求升级才能使用。必须用 npm ci 替换曾被手工覆盖的声明，再跑两条插入路径。
 
-- 0.25 的「写附件投影 + 单独 fillText」未真正更新已挂载输入框；假 Bridge 收到参数不等于用户看见内容。新版用一次 `composer.addContexts([image], { text, mode: 'append' })`，等真实 Composer 接收端落盘并同时提交图片和正文后再报成功；卡片也必须带 `record.prompt` 和原图路径。
+- 0.1.x：卡片「插入」只带原始提示词——附件本身就是原图，不再在正文里重复原图路径（`insert.source` 已删）；编辑器仍保留原图路径，因为附件是标注预览而不是原图。
+- 0.25 的「写附件投影 + 单独 fillText」未真正更新已挂载输入框；假 Bridge 收到参数不等于用户看见内容。新版用一次 `composer.addContexts([image], { text, mode: 'append' })`，等真实 Composer 接收端落盘并同时提交图片和正文后再报成功。
 - `fillText` 与组合插入能力同批新增；旧 Finch 缺少它时必须走原来可用的 `annotation.image + promptText`，提示明确这是图片批注，不声称填入了可编辑正文，不要求更新才能使用。不要再退回旧版普通附件写投影或 note（会出现「已添加，输入框仍空」）。
 - 0.25.1 还去掉 tool definition 的 `progressMode: 'indeterminate'`：仅延迟 report 不够，显式 progressMode 会让宿主在接口前先显示默认进度条。
 - 0.25.3：尺寸菜单点选后直接 deliver；Composer 插入成功不 close 编辑器（busy 必须复位，保留整体说明），收到宿主成功回执后自动清除标记和撤销记录，失败则保留以便重试。手动清除与自动清除共用 clearAnnotations，不可通过按钮或 Ctrl+Z 恢复已清除标记。清除图标使用 Lucide `brush-cleaning`（替代 trash-2），二次确认仍是 warning「确认清除标记」按钮，Esc/点外部/4s 超时取消，不弹 modal。标注/评论仅显示短 tooltip，无底部 toolHint；插入统一用 `copy-plus`，不用 paperclip。

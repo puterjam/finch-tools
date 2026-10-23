@@ -333,9 +333,10 @@ async function removeRecord(record: GalleryItem): Promise<void> {
 }
 
 /**
- * Hands the original picture to the Composer as a plain image attachment.
- * Deliberately synchronous up to `addContexts`: the call needs the live user
- * gesture, so the bytes have to be ready before the click.
+ * Hands the original picture to the Composer as a plain image attachment, with
+ * the prompt that produced it as editable text. Deliberately synchronous up to
+ * `addContexts`: the call needs the live user gesture, so the bytes have to be
+ * ready before the click.
  */
 function attachToComposer(record: GalleryItem): void {
   if (!api) return;
@@ -349,11 +350,12 @@ function attachToComposer(record: GalleryItem): void {
   }
   const comma = dataUrl.indexOf(',');
   const mimeType = /^data:([^;,]+)/.exec(dataUrl)?.[1] ?? 'image/png';
-  const text = [record.prompt, t('insert.source', { path: record.filePath })].filter(Boolean).join('\n\n');
+  // The attachment *is* the original file, so the request carries only the
+  // prompt: repeating the path in the text would just be noise the user deletes.
   void insertImagePrompt(api, {
     type: 'image-region', name: record.name, mimeType,
     content: dataUrl.slice(comma + 1), regions: [],
-  }, text)
+  }, record.prompt)
     .then((mode) => notice(t(mode === 'annotation' ? 'insert.legacy' : 'insert.done', { name: record.name })))
     .catch(() => notice(t('insert.failed')));
 }

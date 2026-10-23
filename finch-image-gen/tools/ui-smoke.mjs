@@ -247,7 +247,8 @@ async function runGalleryTests() {
   assert(!attached.note, 'The picture goes in alone: a note would arrive as a separate text attachment');
   assert.equal(attached.regions.length, 0, 'A plain attach marks no regions');
   const cardText = await page.evaluate(() => window.__host.fills[0]?.text);
-  assert(cardText?.includes('/gallery/picture-0.png') && cardText.includes(await page.evaluate(() => window.__host.records[0].prompt)), 'A card inserts its prompt and original path with the picture');
+  assert.equal(cardText, await page.evaluate(() => window.__host.records[0].prompt), 'A card inserts its prompt only: the attachment is already the original');
+  assert(!cardText.includes('/gallery/picture-0.png'), 'The redundant original-path line is gone');
   assert(await page.locator('#editor').isHidden(), 'Attaching never opens the editor');
   await page.screenshot({ path: join(root, 'node_modules/.ui-card-actions.png') });
   await page.evaluate(() => { window.__host.contexts.length = 0; window.__host.fills.length = 0; });
