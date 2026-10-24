@@ -40,7 +40,7 @@ await page.addInitScript(() => {
     sessionId: i % 2 ? 'session-2' : 'session-1', createdAt: Date.now() - i * 10000, note: '',
   }));
   const listeners = [];
-  const state = { records, contexts: [], fills: [], rejections: [], messages: [], previews: [], confirmations: [], motions: [], view: 'session', sessionId: 'session-1', imageDelay: 0, refuseInsert: false, failImages: false, canSend: true, sends: [], failSend: false, thumbs: new Map(), savedThumbs: [], imageVariants: [], refuseFill: false };
+  const state = { records, contexts: [], fills: [], calls: [], rejections: [], messages: [], previews: [], confirmations: [], motions: [], view: 'session', sessionId: 'session-1', imageDelay: 0, refuseInsert: false, failImages: false, canSend: true, sends: [], failSend: false, thumbs: new Map(), savedThumbs: [], imageVariants: [], refuseFill: false };
   const emit = (message) => listeners.forEach((fn) => fn(message));
   const env = () => ({ view: state.view, sessionId: state.sessionId, locale: 'zh-CN', canSend: state.canSend });
   const snapshot = () => emit({ type: 'gallery', data: state.records, env: env() });
@@ -105,13 +105,18 @@ await page.addInitScript(() => {
       }
     },
     composer: {
+      // References arrive as text: `[quote]…[/quote]` renders as an image
+      // reference when its body is a local image path.
       fillText(text, options) {
-        throw new Error('Gallery must insert image and text atomically, not call fillText separately');
+        if (state.refuseFill) return Promise.reject(new Error('no composer on screen'));
+        state.fills.push({ text, mode: options?.mode ?? 'replace' });
+        return Promise.resolve();
       },
       addContexts(contexts, options) {
-        if (!navigator.userActivation.isActive) return Promise.reject(new Error('user-gesture-required'));
+        state.calls.push('addContexts:' + contexts.length + ':' + (options === undefined ? 'no-options' : 'options'));
         if (state.refuseInsert) return Promise.reject(new Error('host rejected insertion'));
-        if (options?.text !== undefined && state.refuseFill) return Promise.reject(new Error('no composer on screen'));
+        if (options !== undefined) return Promise.reject(new Error('text must travel as a reference, not as context options'));
+        if (!navigator.userActivation.isActive) { state.rejections.push('no-gesture'); return Promise.reject(new Error('user-gesture-required')); }
         for (const item of contexts) {
           if (item.type === 'image-region' && item.regions.some((r) => [r.x, r.y, r.width, r.height].some((v) => v < 0 || v > 1))) {
             state.rejections.push('image-region requires normalized coordinates');
@@ -120,7 +125,6 @@ await page.addInitScript(() => {
           if (item.image && (!item.image.content || item.image.content.startsWith('data:'))) return Promise.reject(new Error('raw base64 required'));
         }
         state.contexts.push(...contexts);
-        if (options?.text !== undefined) state.fills.push({ text: options.text, mode: options.mode ?? 'append' });
         return Promise.resolve({ added: contexts.length });
       },
     },
@@ -239,18 +243,15 @@ async function runGalleryTests() {
   assert.equal(await firstCard.locator('.card-action').count(), 3, 'A session card offers insert, edit and remove');
   assert.equal(flat(await firstCard.locator('[data-act="insert"] svg').innerHTML()), flat(lucide['copy-plus']), 'Insert is a copy action, not a paperclip');
   await firstCard.locator('[data-act="insert"]').click();
-  await page.waitForFunction(() => window.__host.contexts.length === 1);
-  const attached = await page.evaluate(() => window.__host.contexts[0]);
-  assert.equal(attached.type, 'image-region', 'The picture is attached as an image, not a chip token');
-  assert.equal(attached.name, 'picture-0.png', 'The attachment is named after the file');
-  assert(attached.mimeType === 'image/png' && attached.content.length > 100 && !attached.content.startsWith('data:'), 'The attachment carries raw image bytes');
-  assert(!attached.note, 'The picture goes in alone: a note would arrive as a separate text attachment');
-  assert.equal(attached.regions.length, 0, 'A plain attach marks no regions');
+  await page.waitForFunction(() => window.__host.fills.length === 1);
   const cardText = await page.evaluate(() => window.__host.fills[0]?.text);
-  assert.equal(cardText, await page.evaluate(() => window.__host.records[0].prompt), 'A card inserts its prompt only: the attachment is already the original');
-  assert(!cardText.includes('/gallery/picture-0.png'), 'The redundant original-path line is gone');
+  const cardPrompt = await page.evaluate(() => window.__host.records[0].prompt);
+  // One quote carries both the picture (its `src`) and the original prompt.
+  assert.equal(cardText, `[quote src="/gallery/picture-0.png"]\n${cardPrompt}\n[/quote]`, `A card quotes its picture and its prompt:\n${cardText}`);
+  assert.equal(await page.evaluate(() => window.__host.fills[0]?.mode), 'append', 'A card appends instead of replacing what the user typed');
+  assert.equal(await page.evaluate(() => window.__host.contexts.length), 0, 'No attachment is needed: the reference carries the picture');
+  assert.equal(await page.evaluate(() => window.__host.calls.join(',')), '', 'Nothing is added as a context: only the reference is inserted');
   assert(await page.locator('#editor').isHidden(), 'Attaching never opens the editor');
-  assert.equal(await page.evaluate(() => window.__host.fills[0]?.mode), 'append', 'A card also passes the prompt as appended text');
   // A leftover toast from an earlier step may still be fading out, so check what
   // it says instead of whether the bubble is visible.
   assert(!(await page.evaluate(() => document.getElementById('notice').hidden ? '' : document.getElementById('notice').textContent)).startsWith('已插入'), 'Inserting a card adds no success toast of our own');
@@ -450,7 +451,8 @@ async function runEditorTests() {
   await page.locator('#sizeMenuList .menu-row').nth(4).click();
   await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
   assert.equal(await page.locator('#instruction').inputValue(), '输出尺寸：16:9（1280x720）', 'Picking a size writes it into the instructions');
-  await page.waitForFunction(() => window.__host.contexts.length === 1);
+  await page.waitForFunction(() => window.__host.fills.length === 1, null, { timeout: 8000 });
+  await page.waitForFunction(() => window.__host.contexts.length === 1, null, { timeout: 8000 });
   assert((await page.evaluate(() => window.__host.fills.at(-1).text)).includes('16:9（1280x720）'), 'A size click immediately inserts the image and size request');
   assert(await page.locator('#editor').isVisible(), 'Size insertion stays in the editor');
   assert.equal(await page.evaluate(() => window.__host.messages.some((m) => m.type === 'setDefaultSize')), false, 'The gallery never writes the tool default');
@@ -553,10 +555,11 @@ async function runEditorTests() {
   await page.waitForFunction(() => !document.getElementById('send').disabled);
   assert.equal((await page.locator('#sendLabel').textContent()).trim(), '插入图片和说明', 'A Composer scope offers attaching the picture with its request');
   await page.locator('#send').click();
+  await page.waitForFunction(() => window.__host.fills.length === 1);
   await page.waitForFunction(() => window.__host.contexts.length === 1);
   const context = await page.evaluate(() => window.__host.contexts[0]);
   const fill = await page.evaluate(() => window.__host.fills[0]);
-  // The picture goes in as a plain image attachment, not an annotation token…
+  // The marked preview only exists as bytes, so it still rides as an attachment…
   assert.equal(context.type, 'image-region');
   assert.equal(context.mimeType, 'image/png');
   assert.equal(context.name, 'picture-0-annotated.png', 'The attachment says it is the marked preview, not the original');
@@ -564,15 +567,11 @@ async function runEditorTests() {
   // …with nothing drawn onto it and no note: the marks are already in the bytes.
   assert.equal(context.regions.length, 0, 'Finch draws nothing of its own onto the marked preview');
   assert(!context.note, 'No note: a note would arrive as a second text attachment the user cannot edit');
-  // The request goes into the input box as editable text, where the user can
-  // reword it before sending; it lists every comment, its position, the
-  // instruction and the original path to pass as reference_image_paths.
-  assert(fill && fill.mode === 'append', 'The request is appended to whatever the user already typed');
-  assert(fill.text.includes('把这里换成暖光') && fill.text.includes('保留这个轮廓') && fill.text.includes('保持构图'), 'Every comment and the instruction are in the input box');
-  assert(fill.text.includes('/gallery/picture-0.png'), 'The source path is in the text for reference_image_paths');
-  // Just the instruction, the numbered comments and one path line: no header
-  // sentence, no stroke count — the systemPrompt already explains the preview.
-  assert(/^保持构图\n1\. （\d+%, \d+%）：把这里换成暖光\n2\. （\d+%, \d+%）：保留这个轮廓\n原图：/m.test(fill.text), `The inserted text stays this short:\n${fill.text}`);
+  // Everything else travels as one reference: `src` names the file to edit and
+  // the numbered comments are its body; only the user's wording stays prose.
+  assert.equal(fill && fill.mode, 'append', 'The request is appended to whatever the user already typed');
+  assert(/^保持构图\n\[quote src="\/gallery\/picture-0\.png"\]\n1\. （\d+%, \d+%）：把这里换成暖光\n2\. （\d+%, \d+%）：保留这个轮廓\n\[\/quote\]$/.test(fill.text), `The request reads as prose plus one quote:\n${fill.text}`);
+  assert.equal(await page.evaluate(() => window.__host.calls.at(-1)), 'addContexts:1:no-options', 'The marked preview is the only context, and it carries no text options');
   const notePercent = /（(\d+)%, (\d+)%）/.exec(fill.text) ?? /\((\d+)%, (\d+)%\)/.exec(fill.text);
   assert(notePercent && Number(notePercent[1]) > 40, `The dragged comment reports its new position (${notePercent?.[1]}%)`);
   assert.equal(await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'stagePrompt').length), 0, 'Nothing is parked for a second click anymore');

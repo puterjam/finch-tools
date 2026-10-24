@@ -2,7 +2,7 @@ import type * as finch from 'finch';
 import { el, icon, labelButton, tooltipButton, notice } from './gallery-dom';
 import { clamp, emptyAnnotations, parseAnnotations, type GalleryAnnotations, type GalleryItem, type ImageComment, type Point, type Stroke } from './gallery-model';
 import { t } from './gallery-i18n';
-import { insertImagePrompt } from './gallery-composer';
+import { insertComposerRequest } from './gallery-composer';
 
 type Mode = 'view' | 'pen' | 'comment';
 type ImageRegionDraft = Extract<finch.ComposerContextDraft, { type: 'image-region' }>;
@@ -576,22 +576,41 @@ export class GalleryEditor {
   }
 
   /**
-   * Everything the model needs, in the order a person reads it: what the user
-   * typed, then each pin with its percentage, then the file to edit. Headers and
-   * counts are left out — the attached preview already shows the marks, and the
-   * manifest's systemPrompt explains how to treat it. Inside a Composer this is
-   * the draft text, so the user can reword it before sending.
+   * The numbered comments, exactly as the model should read them. Generated
+   * detail: it travels as a quote instead of editable prose.
+   */
+  private commentsText(): string {
+    return this.data.comments
+      .map((comment, index) => t('editor.commentText', { n: index + 1, x: Math.round(comment.x * 100), y: Math.round(comment.y * 100), text: comment.text.trim() }))
+      .join('\n');
+  }
+
+  /**
+   * The plain request text: what a host without reference syntax gets, and what
+   * the App View sends as an ordinary chat message. Inside a Composer the same
+   * pieces travel as quotes instead (see `composerPlan`).
    */
   private requestText(): string {
     const parts: string[] = [];
     const body = this.instruction.trim();
     if (body) parts.push(body);
-    this.data.comments.forEach((comment, index) => {
-      parts.push(t('editor.commentText', { n: index + 1, x: Math.round(comment.x * 100), y: Math.round(comment.y * 100), text: comment.text.trim() }));
-    });
-    // The attachment is the marked preview, so the original has to be named here.
+    const comments = this.commentsText();
+    if (comments) parts.push(comments);
+    // The attachment is the marked preview, so the original is named here.
     parts.push(t('editor.reminder', { path: this.item?.filePath ?? '' }));
     return parts.join('\n');
+  }
+
+  /** What a Composer gets: the user's wording editable, the rest as quotes. */
+  private composerPlan() {
+    return {
+      text: this.instruction.trim(),
+      quoted: this.commentsText(),
+      imagePath: this.item?.filePath ?? '',
+      attachment: this.attachment ?? undefined,
+      attachBytes: true,
+      legacyText: this.requestText(),
+    };
   }
 
   private sessionText(): string {
@@ -678,7 +697,7 @@ export class GalleryEditor {
     this.busy = true; this.controls();
     try {
       if (composer) {
-        await insertImagePrompt(this.api, this.attachment!, this.requestText());
+        await insertComposerRequest(this.api, this.composerPlan());
         if (this.item !== item) return;
         // Only clear after the host accepted the marked image and full request.
         // The host confirms the added context itself, so no toast of our own.

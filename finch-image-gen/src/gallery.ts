@@ -3,7 +3,7 @@ import { el, icon, labelButton, notice, paintIcons, textNode, installTooltips } 
 import { imageDimensions, masonryMetrics, type GalleryItem } from './gallery-model';
 import { setLocale, t } from './gallery-i18n';
 import { GalleryEditor } from './gallery-editor';
-import { insertImagePrompt } from './gallery-composer';
+import { insertComposerRequest } from './gallery-composer';
 import { captureCards, animateCards } from './gallery-motion';
 
 const api = (window as Window & { finch?: finch.WebviewBridgeApi }).finch;
@@ -333,10 +333,10 @@ async function removeRecord(record: GalleryItem): Promise<void> {
 }
 
 /**
- * Hands the original picture to the Composer as a plain image attachment, with
- * the prompt that produced it as editable text. Deliberately synchronous up to
- * `addContexts`: the call needs the live user gesture, so the bytes have to be
- * ready before the click.
+ * Hands the original picture to the Composer as a quoted reference (the host
+ * turns `[quote]<path>[/quote]` into an image reference), with the prompt that
+ * produced it as quoted detail. Deliberately synchronous up to the insert call:
+ * it needs the live user gesture, so the bytes have to be ready before the click.
  */
 function attachToComposer(record: GalleryItem): void {
   if (!api) return;
@@ -350,15 +350,18 @@ function attachToComposer(record: GalleryItem): void {
   }
   const comma = dataUrl.indexOf(',');
   const mimeType = /^data:([^;,]+)/.exec(dataUrl)?.[1] ?? 'image/png';
-  // The attachment *is* the original file, so the request carries only the
-  // prompt: repeating the path in the text would just be noise the user deletes.
-  // No success toast of our own: Finch already confirms the added context, and a
-  // second bubble on top of the host's reads as a duplicated message.
-  void insertImagePrompt(api, {
-    type: 'image-region', name: record.name, mimeType,
-    content: dataUrl.slice(comma + 1), regions: [],
-  }, record.prompt)
-    .catch(() => notice(t('insert.failed')));
+  // No toast of our own: the new reference appears in the input box, and an
+  // outdated host still announces the annotation it had to fall back to.
+  void insertComposerRequest(api, {
+    quoted: record.prompt,
+    imagePath: record.filePath,
+    // Bytes only matter to hosts that have no reference syntax yet.
+    attachment: {
+      type: 'image-region', name: record.name, mimeType,
+      content: dataUrl.slice(comma + 1), regions: [],
+    },
+    legacyText: record.prompt,
+  }).catch(() => notice(t('insert.failed')));
 }
 
 let layoutFrame = 0;
