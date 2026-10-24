@@ -519,6 +519,13 @@ const MAX_EMBED_BYTES = 12 * 1024 * 1024;
  */
 const THUMB_DIR = 'thumbs';
 const MAX_THUMB_BYTES = 400 * 1024;
+/**
+ * The marked preview is drawn in the page, so it has no file until the page
+ * hands us the bytes. Keeping one file per record lets a Composer reference
+ * point at a path, which is what keeps the marked picture to a single image.
+ */
+const ANNOTATED_DIR = 'annotated';
+const MAX_ANNOTATED_BYTES = 12 * 1024 * 1024;
 const currentThumbs = new Map<string, string>();
 
 /** Thumbnails live beside the gallery index, keyed by the original path. */
@@ -831,6 +838,28 @@ async function handlePanelMessage(
     await fs.writeFile(tmp, buf);
     await fs.rename(tmp, target);
     currentThumbs.set(target, encoded[1]);
+    return;
+  }
+
+  if (type === 'saveAnnotated') {
+    const id = typeof msg.id === 'string' ? msg.id : '';
+    const content = typeof msg.content === 'string' ? msg.content : '';
+    if (!id || !/^[A-Za-z0-9+/=]+$/.test(content)) return;
+    const records = await loadGallery(ctx);
+    if (!records.some((record) => record.id === id)) return;
+    const buf = Buffer.from(content, 'base64');
+    if (buf.length < 64 || buf.length > MAX_ANNOTATED_BYTES) {
+      await panel.postMessage({ type: 'annotatedSaved', id, error: 'too-large' });
+      return;
+    }
+    const dir = path.join(ctx.storagePath, ANNOTATED_DIR);
+    await fs.mkdir(dir, { recursive: true });
+    // One file per record: the newest preview always wins, and nothing piles up.
+    const target = path.join(dir, `${createHash('sha1').update(id).digest('hex').slice(0, 20)}.png`);
+    const tmp = `${target}.tmp`;
+    await fs.writeFile(tmp, buf);
+    await fs.rename(tmp, target);
+    await panel.postMessage({ type: 'annotatedSaved', id, path: target });
     return;
   }
 

@@ -209,6 +209,8 @@ api?.onMessage((raw) => {
     } else pending?.reject(new Error(t(message.error === 'too-large' ? 'image.large' : 'image.failed')));
   } else if (message.type === 'annotationsSaved' || message.type === 'panelError') {
     editor.onSaved(message);
+  } else if (message.type === 'annotatedSaved') {
+    editor.onAnnotatedSaved(message);
   } else if (message.type === 'annotationSendResult') {
     editor.onSendResult(message);
   } else if (message.type === 'editImage' && typeof message.id === 'string') {

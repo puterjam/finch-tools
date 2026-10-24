@@ -40,7 +40,7 @@ await page.addInitScript(() => {
     sessionId: i % 2 ? 'session-2' : 'session-1', createdAt: Date.now() - i * 10000, note: '',
   }));
   const listeners = [];
-  const state = { records, contexts: [], fills: [], calls: [], rejections: [], messages: [], previews: [], confirmations: [], motions: [], view: 'session', sessionId: 'session-1', imageDelay: 0, refuseInsert: false, failImages: false, canSend: true, sends: [], failSend: false, thumbs: new Map(), savedThumbs: [], imageVariants: [], refuseFill: false };
+  const state = { records, contexts: [], fills: [], calls: [], annotated: [], rejections: [], messages: [], previews: [], confirmations: [], motions: [], view: 'session', sessionId: 'session-1', imageDelay: 0, refuseInsert: false, failImages: false, canSend: true, sends: [], failSend: false, thumbs: new Map(), savedThumbs: [], imageVariants: [], refuseFill: false };
   const emit = (message) => listeners.forEach((fn) => fn(message));
   const env = () => ({ view: state.view, sessionId: state.sessionId, locale: 'zh-CN', canSend: state.canSend });
   const snapshot = () => emit({ type: 'gallery', data: state.records, env: env() });
@@ -83,6 +83,10 @@ await page.addInitScript(() => {
         ctx.arc(canvas.width * .5, canvas.height * .48, canvas.width * .22, 0, Math.PI * 2); ctx.fill();
         emit({ type: 'imageData', filePath: message.filePath, variant: 'full', dataUrl: canvas.toDataURL() });
       }, state.imageDelay);
+      if (message.type === 'saveAnnotated') {
+        state.annotated.push({ id: message.id, content: message.content });
+        setTimeout(() => emit({ type: 'annotatedSaved', id: message.id, path: `/gallery/annotated-${message.id}.png` }), 0);
+      }
       if (message.type === 'saveThumb') {
         state.thumbs.set(message.filePath, message.dataUrl);
         state.savedThumbs.push(message.filePath);
@@ -452,7 +456,7 @@ async function runEditorTests() {
   await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
   assert.equal(await page.locator('#instruction').inputValue(), '输出尺寸：16:9（1280x720）', 'Picking a size writes it into the instructions');
   await page.waitForFunction(() => window.__host.fills.length === 1, null, { timeout: 8000 });
-  await page.waitForFunction(() => window.__host.contexts.length === 1, null, { timeout: 8000 });
+  assert.equal(await page.evaluate(() => window.__host.contexts.length), 0, 'A size pick inserts a reference, not an attachment');
   assert((await page.evaluate(() => window.__host.fills.at(-1).text)).includes('16:9（1280x720）'), 'A size click immediately inserts the image and size request');
   assert(await page.locator('#editor').isVisible(), 'Size insertion stays in the editor');
   assert.equal(await page.evaluate(() => window.__host.messages.some((m) => m.type === 'setDefaultSize')), false, 'The gallery never writes the tool default');
@@ -462,7 +466,8 @@ async function runEditorTests() {
   await page.locator('#sizeMenuList .menu-row').nth(0).click();
   await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
   assert.equal(await page.locator('#instruction').inputValue(), '把天空换成黄昏\n输出尺寸：1:1（1024x1024）', 'A second pick replaces the size line and keeps the request');
-  await page.waitForFunction(() => window.__host.contexts.length === 2);
+  await page.waitForFunction(() => window.__host.fills.length === 2, null, { timeout: 8000 });
+  assert.equal(await page.evaluate(() => window.__host.contexts.length), 0, 'The second pick is a reference too');
   assert((await page.evaluate(() => window.__host.fills.at(-1).text)).includes('把天空换成黄昏'), 'The direct size action also keeps the user instruction');
   await page.locator('#toolSize').click();
   await page.waitForFunction(() => !document.getElementById('sizeMenu').hidden);
@@ -556,22 +561,16 @@ async function runEditorTests() {
   assert.equal((await page.locator('#sendLabel').textContent()).trim(), '插入图片和说明', 'A Composer scope offers attaching the picture with its request');
   await page.locator('#send').click();
   await page.waitForFunction(() => window.__host.fills.length === 1);
-  await page.waitForFunction(() => window.__host.contexts.length === 1);
-  const context = await page.evaluate(() => window.__host.contexts[0]);
   const fill = await page.evaluate(() => window.__host.fills[0]);
-  // The marked preview only exists as bytes, so it still rides as an attachment…
-  assert.equal(context.type, 'image-region');
-  assert.equal(context.mimeType, 'image/png');
-  assert.equal(context.name, 'picture-0-annotated.png', 'The attachment says it is the marked preview, not the original');
-  assert(context.content.length > 100 && !context.content.startsWith('data:'));
-  // …with nothing drawn onto it and no note: the marks are already in the bytes.
-  assert.equal(context.regions.length, 0, 'Finch draws nothing of its own onto the marked preview');
-  assert(!context.note, 'No note: a note would arrive as a second text attachment the user cannot edit');
-  // Everything else travels as one reference: `src` names the file to edit and
-  // the numbered comments are its body; only the user's wording stays prose.
+  // One picture, not two: the marked preview is written to disk and the quote
+  // points at it, so nothing is attached next to the original any more.
+  assert.equal(await page.evaluate(() => window.__host.contexts.length), 0, 'A reference that names a real file needs no attachment');
+  assert.equal(await page.evaluate(() => window.__host.calls.length), 0, 'Nothing is added as a context at all');
+  await page.waitForFunction(() => window.__host.annotated.length >= 1);
+  assert.equal(await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'saveAnnotated').length >= 1), true, 'The marked preview is handed to the backend for saving');
+  // The reference carries `src` (the marked preview) and the original path.
   assert.equal(fill && fill.mode, 'append', 'The request is appended to whatever the user already typed');
-  assert(/^保持构图\n\[quote src="\/gallery\/picture-0\.png"\]\n1\. （\d+%, \d+%）：把这里换成暖光\n2\. （\d+%, \d+%）：保留这个轮廓\n\[\/quote\]$/.test(fill.text), `The request reads as prose plus one quote:\n${fill.text}`);
-  assert.equal(await page.evaluate(() => window.__host.calls.at(-1)), 'addContexts:1:no-options', 'The marked preview is the only context, and it carries no text options');
+  assert(/^保持构图\n\[quote src="\/gallery\/annotated-image-0\.png"\]\n1\. （\d+%, \d+%）：把这里换成暖光\n2\. （\d+%, \d+%）：保留这个轮廓\n原图：\/gallery\/picture-0\.png\n\[\/quote\]$/.test(fill.text), `The request reads as prose plus one quote:\n${fill.text}`);
   const notePercent = /（(\d+)%, (\d+)%）/.exec(fill.text) ?? /\((\d+)%, (\d+)%\)/.exec(fill.text);
   assert(notePercent && Number(notePercent[1]) > 40, `The dragged comment reports its new position (${notePercent?.[1]}%)`);
   assert.equal(await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'stagePrompt').length), 0, 'Nothing is parked for a second click anymore');
@@ -583,8 +582,8 @@ async function runEditorTests() {
     let redPixels = 0;
     for (let i = 0; i < pixels.length; i += 4) if (pixels[i] > 210 && pixels[i + 1] < 130 && pixels[i + 2] < 130) redPixels++;
     return redPixels;
-  }, context.content);
-  assert(marked > 100, 'The attached evidence contains actual red pen/pin pixels');
+  }, (await page.evaluate(() => window.__host.annotated.at(-1).content)));
+  assert(marked > 100, 'The saved preview contains actual red pen/pin pixels');
   await page.waitForFunction(() => !document.getElementById('send').disabled);
   assert(await page.locator('#editor').isVisible(), 'A successful insertion stays on this picture');
   await assertCleared();
@@ -593,33 +592,29 @@ async function runEditorTests() {
   await assertCleared();
   assert.equal(await page.locator('#instruction').inputValue(), '保持构图', 'Only the marks are cleared, not the instruction');
   await markForRetry();
-  await page.evaluate(() => { window.__host.refuseInsert = true; });
-  await page.locator('#send').click();
-  await page.waitForFunction(() => !document.getElementById('notice').hidden);
-  assert.equal(await page.locator('.pin').count(), 2, 'A rejected deliver does not lose the draft');
-  await page.evaluate(() => { window.__host.refuseInsert = false; });
-  await page.waitForFunction(() => !document.getElementById('send').disabled);
-  await page.locator('#send').click();
-  await page.waitForFunction(() => window.__host.contexts.length === 2);
-  assert.equal(await page.evaluate(() => window.__host.contexts[1].name), 'picture-0-annotated.png', 'A retry re-attaches the same marked preview');
-  await assertCleared();
-  // When the input box itself is not open, the text call fails first and the
-  // picture is never attached — no half-done delivery.
-  await openEditor();
-  await markForRetry();
+  // When the input box is not open the fill fails first, and nothing else is
+  // half-written around it.
   await page.evaluate(() => { window.__host.refuseFill = true; });
   await page.locator('#send').click();
   await page.waitForFunction(() => !document.getElementById('notice').hidden);
-  assert.equal(await page.evaluate(() => window.__host.contexts.length), 2, 'A refused text fill attaches nothing');
-  assert.equal(await page.locator('.pin').count(), 2, 'A refused text fill keeps the draft');
+  assert.equal(await page.locator('.pin').count(), 2, 'A refused deliver does not lose the draft');
+  assert.equal(await page.evaluate(() => window.__host.contexts.length), 0, 'A refused text fill attaches nothing');
   await page.evaluate(() => { window.__host.refuseFill = false; });
+  await page.waitForFunction(() => !document.getElementById('send').disabled);
+  await page.locator('#send').click();
+  await page.waitForFunction(() => window.__host.fills.length === 2);
+  assert.equal(await page.evaluate(() => window.__host.fills[1].text.includes('把这里换成暖光')), true, 'A retry inserts the same request again');
+  assert.equal(await page.evaluate(() => window.__host.contexts.length), 0, 'A retry never adds a second picture');
+  await assertCleared();
   // Older Finch builds ship no `composer.fillText` at all (mini tools update
   // independently of the app): preserve the working annotation protocol.
+  await openEditor();
+  await markForRetry();
   const fillsBeforeFallback = await page.evaluate(() => window.__host.fills.length);
   await page.evaluate(() => { window.__host.fillText = window.finch.composer.fillText; delete window.finch.composer.fillText; });
   await page.locator('#send').click();
-  await page.waitForFunction(() => window.__host.contexts.length === 3);
-  const legacy = await page.evaluate(() => window.__host.contexts[2]);
+  await page.waitForFunction(() => window.__host.contexts.length === 1);
+  const legacy = await page.evaluate(() => window.__host.contexts[0]);
   assert.equal(legacy.type, 'annotation', 'Old hosts use the known-working annotation route, not the broken plain attachment projection');
   assert(legacy.image?.content?.length > 100 && String(legacy.promptText || '').includes('保留这个轮廓') && legacy.promptText.includes('/gallery/picture-0.png'), 'Legacy annotation retains both the image and request');
   assert(!(await page.evaluate(() => document.getElementById('notice').hidden ? '' : document.getElementById('notice').textContent)).startsWith('已插入'), 'No success toast of our own: the host already confirms the added context');
@@ -855,7 +850,8 @@ async function runFailureAndThemeTests() {
   assert.equal(await page.evaluate(() => window.__host.contexts.length), 0, 'Loading never auto-attaches');
   await page.waitForFunction(() => !document.getElementById('send').disabled);
   await page.locator('#send').click();
-  await page.waitForFunction(() => window.__host.contexts.length === 1);
+  await page.waitForFunction(() => window.__host.fills.length === 1, null, { timeout: 8000 });
+  assert.equal(await page.evaluate(() => window.__host.contexts.length), 0, 'A finished read inserts one reference and no attachment');
 
   await page.goto(`${origin}/?image-error`);
   await page.locator('.card').first().locator('[data-act="edit"]').click({ force: true });

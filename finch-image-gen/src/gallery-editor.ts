@@ -41,6 +41,10 @@ export class GalleryEditor {
   private preparedRevision = -1;
   /** The flattened marked preview, base64 PNG without a data-URL prefix. */
   private evidence = '';
+  /** Where the marked preview was last written, so a quote can point at it. */
+  private annotatedPath = '';
+  /** The evidence already sent for saving; avoids rewriting the same bytes. */
+  private savedEvidence = '';
   /** What a Composer gets: the marked picture, with the request as draft text. */
   private attachment: ImageRegionDraft | null = null;
   private loaded = false;
@@ -201,6 +205,7 @@ export class GalleryEditor {
     this.requested = SIZE_OPTIONS.find((option) => this.instruction.includes(option.size))?.size ?? '';
     this.dirty = false; this.pendingSave = ''; this.pendingSend = '';
     this.loaded = false; this.busy = false; this.attachment = null; this.evidence = '';
+    this.annotatedPath = ''; this.savedEvidence = '';
     this.revision++; this.preparedRevision = -1;
     this.history = []; this.stroke = null; this.pinDrag = null; this.activeComment = '';
     this.mode = 'view';
@@ -603,12 +608,19 @@ export class GalleryEditor {
 
   /** What a Composer gets: the user's wording editable, the rest as quotes. */
   private composerPlan() {
+    const original = this.item?.filePath ?? '';
+    const comments = this.commentsText();
+    const annotated = this.annotatedPath;
     return {
       text: this.instruction.trim(),
-      quoted: this.commentsText(),
-      imagePath: this.item?.filePath ?? '',
+      // With the marked preview on disk the reference points at it, so the
+      // Composer shows one picture (the one carrying the marks); the original
+      // path travels in the quote body. Without it the preview has to ride as an
+      // attachment, and the reference points at the original instead.
+      imagePath: annotated || original,
+      quoted: annotated ? [comments, t('editor.reminder', { path: original })].filter(Boolean).join('\n') : comments,
       attachment: this.attachment ?? undefined,
-      attachBytes: true,
+      attachBytes: !annotated,
       legacyText: this.requestText(),
     };
   }
@@ -670,10 +682,27 @@ export class GalleryEditor {
         regions: [],
       };
       this.preparedRevision = this.revision;
+      this.saveEvidence(evidence);
       this.controls();
     } catch (error) {
       notice(error instanceof Error ? error.message : t('editor.failed'));
     }
+  }
+
+  /**
+   * The marked preview only exists in this page, so keep a copy on disk: a
+   * reference can then point at one file instead of a second image being
+   * attached next to the original.
+   */
+  private saveEvidence(evidence: string): void {
+    if (!this.api || !this.item || evidence === this.savedEvidence) return;
+    this.savedEvidence = evidence;
+    this.api.postMessage({ type: 'saveAnnotated', id: this.item.id, content: evidence });
+  }
+
+  onAnnotatedSaved(message: Record<string, unknown>): void {
+    if (!this.item || message.id !== this.item.id) return;
+    this.annotatedPath = typeof message.path === 'string' ? message.path : '';
   }
 
   private readyEvidence(): string | null {
@@ -761,6 +790,7 @@ export class GalleryEditor {
     clearTimeout(this.deadline);
     const draft = this.item;
     this.item = null; this.attachment = null; this.evidence = ''; this.activeComment = '';
+    this.annotatedPath = ''; this.savedEvidence = '';
     this.closePopover(); this.closeSizeMenu();
     el('editor').hidden = true; document.body.classList.remove('editing');
     if (draft) this.onClose(draft);

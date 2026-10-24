@@ -505,6 +505,26 @@ panelSent = sent;
   await handlers[0]({ type: 'saveThumb', filePath, dataUrl: `data:image/webp;base64,${Buffer.alloc(600 * 1024).toString('base64')}` });
   check('an oversized thumbnail is refused', thumbFiles().length === 1);
 
+  // The marked preview: the page draws it, so it hands us the bytes and a quote
+  // can point at one file instead of a second image riding as an attachment.
+  const annotatedFiles = () => { try { return readdirSync(join(storagePath, 'annotated')); } catch { return []; } };
+  const marked = Buffer.alloc(200, 7).toString('base64');
+  const beforeMarked = sent.length;
+  await handlers[0]({ type: 'saveAnnotated', id: record.id, content: marked });
+  await until(() => annotatedFiles().length > 0);
+  const markedFiles = annotatedFiles();
+  const markedReply = sent.slice(beforeMarked).find((m) => m.type === 'annotatedSaved');
+  check('the marked preview is written as one png', markedFiles.length === 1 && markedFiles[0].endsWith('.png'), markedFiles.join(','));
+  check('the saved preview path comes back to the page', typeof markedReply?.path === 'string' && markedReply.path.endsWith(markedFiles[0]), JSON.stringify(markedReply).slice(0, 60));
+  check('the marked preview is readable where it landed', readFileSync(markedReply.path).length === 200);
+  await handlers[0]({ type: 'saveAnnotated', id: record.id, content: Buffer.alloc(300, 9).toString('base64') });
+  await until(() => readFileSync(markedReply.path).length === 300);
+  check('a newer preview overwrites the same file instead of piling up', annotatedFiles().length === 1);
+  await handlers[0]({ type: 'saveAnnotated', id: 'no-such-record', content: marked });
+  check('a preview for an unknown image is ignored', annotatedFiles().length === 1);
+  await handlers[0]({ type: 'saveAnnotated', id: record.id, content: Buffer.alloc(13 * 1024 * 1024, 1).toString('base64') });
+  check('an oversized preview is refused', annotatedFiles().length === 1 && readFileSync(markedReply.path).length === 300);
+
   await ask({ type: 'openPreview', filePath });
   check('preview falls back to the host API', previews.includes(filePath), JSON.stringify(previews));
 
