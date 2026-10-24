@@ -1,6 +1,6 @@
 import type * as finch from 'finch';
 import { createHash } from 'node:crypto';
-import { promises as fs, readFileSync } from 'node:fs';
+import { promises as fs, existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseAnnotations, type GalleryAnnotations } from './gallery-model';
@@ -521,17 +521,30 @@ const THUMB_DIR = 'thumbs';
 const MAX_THUMB_BYTES = 400 * 1024;
 /**
  * The marked preview is drawn in the page, so it has no file until the page
- * hands us the bytes. Keeping one file per record lets a Composer reference
- * point at a path, which is what keeps the marked picture to a single image.
+ * hands us the bytes. One snapshot per content — never one mutable file per
+ * record: an inserted reference must keep the marks it was inserted with even
+ * after the editor clears them or the user draws something new.
  */
 const ANNOTATED_DIR = 'annotated';
 const MAX_ANNOTATED_BYTES = 12 * 1024 * 1024;
+/** Snapshots kept per image; older ones are pruned as new ones arrive. */
+const ANNOTATED_KEEP = 3;
 const currentThumbs = new Map<string, string>();
 
 /** Thumbnails live beside the gallery index, keyed by the original path. */
 function thumbFile(ctx: finch.MiniToolContext, filePath: string): string {
   const key = createHash('sha1').update(filePath).digest('hex').slice(0, 20);
   return path.join(ctx.storagePath, THUMB_DIR, `${key}.webp`);
+}
+
+/** Keep only the newest preview snapshots of one image, so disk use stays flat. */
+async function pruneAnnotated(dir: string, owner: string): Promise<void> {
+  const names = await fs.readdir(dir).catch(() => [] as string[]);
+  const mine = names.filter((name) => name.startsWith(`${owner}-`) && name.endsWith('.png'));
+  if (mine.length <= ANNOTATED_KEEP) return;
+  const stamped = await Promise.all(mine.map(async (name) => ({ name, at: (await fs.stat(path.join(dir, name))).mtimeMs })));
+  stamped.sort((a, b) => b.at - a.at);
+  await Promise.all(stamped.slice(ANNOTATED_KEEP).map((entry) => fs.rm(path.join(dir, entry.name), { force: true })));
 }
 
 export interface GalleryRecord {
@@ -854,11 +867,17 @@ async function handlePanelMessage(
     }
     const dir = path.join(ctx.storagePath, ANNOTATED_DIR);
     await fs.mkdir(dir, { recursive: true });
-    // One file per record: the newest preview always wins, and nothing piles up.
-    const target = path.join(dir, `${createHash('sha1').update(id).digest('hex').slice(0, 20)}.png`);
-    const tmp = `${target}.tmp`;
-    await fs.writeFile(tmp, buf);
-    await fs.rename(tmp, target);
+    // Content-addressed snapshot: identical bytes reuse a file, different bytes
+    // get their own, so an already-inserted reference never loses its marks.
+    const owner = createHash('sha1').update(id).digest('hex').slice(0, 20);
+    const stamp = createHash('sha1').update(content).digest('hex').slice(0, 12);
+    const target = path.join(dir, `${owner}-${stamp}.png`);
+    if (!existsSync(target)) {
+      const tmp = `${target}.tmp`;
+      await fs.writeFile(tmp, buf);
+      await fs.rename(tmp, target);
+      await pruneAnnotated(dir, owner);
+    }
     await panel.postMessage({ type: 'annotatedSaved', id, path: target });
     return;
   }

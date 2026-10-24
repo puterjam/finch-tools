@@ -517,13 +517,23 @@ panelSent = sent;
   check('the marked preview is written as one png', markedFiles.length === 1 && markedFiles[0].endsWith('.png'), markedFiles.join(','));
   check('the saved preview path comes back to the page', typeof markedReply?.path === 'string' && markedReply.path.endsWith(markedFiles[0]), JSON.stringify(markedReply).slice(0, 60));
   check('the marked preview is readable where it landed', readFileSync(markedReply.path).length === 200);
+  await handlers[0]({ type: 'saveAnnotated', id: record.id, content: marked });
+  check('the same bytes reuse the same snapshot', annotatedFiles().length === 1);
+  // The editor clears its marks after a successful insert, which produces a new
+  // (clean) preview. That must land in its own snapshot, or the reference already
+  // sitting in the input box would lose the marks it was inserted with.
   await handlers[0]({ type: 'saveAnnotated', id: record.id, content: Buffer.alloc(300, 9).toString('base64') });
-  await until(() => readFileSync(markedReply.path).length === 300);
-  check('a newer preview overwrites the same file instead of piling up', annotatedFiles().length === 1);
+  await until(() => annotatedFiles().length === 2);
+  check('a later edit writes its own snapshot', annotatedFiles().length === 2, annotatedFiles().join(','));
+  check('the inserted preview keeps its marks', readFileSync(markedReply.path).length === 200);
+  const beforeUnknown = annotatedFiles().length;
   await handlers[0]({ type: 'saveAnnotated', id: 'no-such-record', content: marked });
-  check('a preview for an unknown image is ignored', annotatedFiles().length === 1);
+  check('a preview for an unknown image is ignored', annotatedFiles().length === beforeUnknown);
   await handlers[0]({ type: 'saveAnnotated', id: record.id, content: Buffer.alloc(13 * 1024 * 1024, 1).toString('base64') });
-  check('an oversized preview is refused', annotatedFiles().length === 1 && readFileSync(markedReply.path).length === 300);
+  check('an oversized preview is refused', annotatedFiles().length === beforeUnknown && readFileSync(markedReply.path).length === 200);
+  for (let size = 400; size < 406; size++) await handlers[0]({ type: 'saveAnnotated', id: record.id, content: Buffer.alloc(size, 3).toString('base64') });
+  await until(() => annotatedFiles().length === 3);
+  check('old snapshots are pruned so disk use stays flat', annotatedFiles().length === 3, annotatedFiles().join(','));
 
   await ask({ type: 'openPreview', filePath });
   check('preview falls back to the host API', previews.includes(filePath), JSON.stringify(previews));
