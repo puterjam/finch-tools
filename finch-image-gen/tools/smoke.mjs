@@ -486,8 +486,9 @@ panelSent = sent;
   check('without a thumbnail the original is sent instead', noThumbYet?.variant === 'full' && noThumbYet?.dataUrl.startsWith('data:image/png;base64,'), JSON.stringify(noThumbYet).slice(0, 60));
 
   const tinyWebp = `data:image/webp;base64,${Buffer.from('RIFF____WEBPVP8 '.repeat(8)).toString('base64')}`;
-  /** The thumbnail folder only exists once something has been kept. */
-  const thumbFiles = () => { try { return readdirSync(join(storagePath, 'thumbs')); } catch { return []; } };
+  /** The thumbnail folder only exists once something has been kept; a write in
+   * flight may still be a `.tmp` file, which is not a kept thumbnail yet. */
+  const thumbFiles = () => { try { return readdirSync(join(storagePath, 'thumbs')).filter((name) => name.endsWith('.webp')); } catch { return []; } };
   await handlers[0]({ type: 'saveThumb', filePath, dataUrl: tinyWebp });
   await until(() => thumbFiles().length > 0);
   const thumbs = thumbFiles();

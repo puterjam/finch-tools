@@ -84,8 +84,11 @@ await page.addInitScript(() => {
         emit({ type: 'imageData', filePath: message.filePath, variant: 'full', dataUrl: canvas.toDataURL() });
       }, state.imageDelay);
       if (message.type === 'saveAnnotated') {
-        state.annotated.push({ id: message.id, content: message.content });
-        setTimeout(() => emit({ type: 'annotatedSaved', id: message.id, path: `/gallery/annotated-${message.id}.png` }), 0);
+        // Content-addressed, like the real backend: a later preview must not
+        // reuse the name of one that was already inserted.
+        const name = `/gallery/annotated-${message.id}-${message.content.length}.png`;
+        state.annotated.push({ id: message.id, name, content: message.content });
+        setTimeout(() => emit({ type: 'annotatedSaved', id: message.id, path: name }), 0);
       }
       if (message.type === 'saveThumb') {
         state.thumbs.set(message.filePath, message.dataUrl);
@@ -450,14 +453,14 @@ async function runEditorTests() {
   await page.screenshot({ path: join(root, 'node_modules/.ui-editor-size.png') });
   assert.equal(sizeMenu.ratios.join('|'), '1:1|3:4|9:16|4:3|16:9', `The size menu offers the aspect presets (${sizeMenu.ratios.join('|')})`);
   assert.equal(sizeMenu.checked, 0, 'No size is claimed before the request says one');
-  // The size belongs to this edit: picking one writes it into the instructions,
-  // the text that reaches the input box, instead of changing a global default.
+  // The size belongs to this edit, not to a global default: it rides with the
+  // inserted request, and the instruction box keeps only the user's own words.
   await page.locator('#sizeMenuList .menu-row').nth(4).click();
   await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
-  assert.equal(await page.locator('#instruction').inputValue(), '输出尺寸：16:9（1280x720）', 'Picking a size writes it into the instructions');
+  assert.equal(await page.locator('#instruction').inputValue(), '', 'Picking a size leaves the instruction box alone');
   await page.waitForFunction(() => window.__host.fills.length === 1, null, { timeout: 8000 });
   assert.equal(await page.evaluate(() => window.__host.contexts.length), 0, 'A size pick inserts a reference, not an attachment');
-  assert((await page.evaluate(() => window.__host.fills.at(-1).text)).includes('16:9（1280x720）'), 'A size click immediately inserts the image and size request');
+  assert(/^输出尺寸：16:9（1280x720）\n\[quote src="\/gallery\/annotated-image-0-\d+\.png"\]/.test(await page.evaluate(() => window.__host.fills.at(-1).text)), `A size click immediately inserts the image and size request:\n${await page.evaluate(() => window.__host.fills.at(-1).text)}`);
   assert(await page.locator('#editor').isVisible(), 'Size insertion stays in the editor');
   assert.equal(await page.evaluate(() => window.__host.messages.some((m) => m.type === 'setDefaultSize')), false, 'The gallery never writes the tool default');
   await page.locator('#instruction').fill('把天空换成黄昏');
@@ -465,10 +468,11 @@ async function runEditorTests() {
   await page.waitForFunction(() => !document.getElementById('sizeMenu').hidden);
   await page.locator('#sizeMenuList .menu-row').nth(0).click();
   await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
-  assert.equal(await page.locator('#instruction').inputValue(), '把天空换成黄昏\n输出尺寸：1:1（1024x1024）', 'A second pick replaces the size line and keeps the request');
+  assert.equal(await page.locator('#instruction').inputValue(), '把天空换成黄昏', 'A second pick still leaves the instruction box alone');
   await page.waitForFunction(() => window.__host.fills.length === 2, null, { timeout: 8000 });
   assert.equal(await page.evaluate(() => window.__host.contexts.length), 0, 'The second pick is a reference too');
-  assert((await page.evaluate(() => window.__host.fills.at(-1).text)).includes('把天空换成黄昏'), 'The direct size action also keeps the user instruction');
+  const secondPick = await page.evaluate(() => window.__host.fills.at(-1).text);
+  assert(secondPick.startsWith('输出尺寸：1:1（1024x1024）') && secondPick.includes('把天空换成黄昏'), `The new size replaces the old line and keeps the request:\n${secondPick}`);
   await page.locator('#toolSize').click();
   await page.waitForFunction(() => !document.getElementById('sizeMenu').hidden);
   const markedRow = await page.evaluate(() => {
@@ -476,6 +480,15 @@ async function runEditorTests() {
     return rows.find((row) => row.getAttribute('aria-checked') === 'true')?.textContent.trim() ?? '';
   });
   assert(markedRow.includes('1:1'), `The asked-for size is marked (${markedRow})`);
+  // Clicking the current size again takes it back, and inserts nothing.
+  await page.locator('#sizeMenuList .menu-row').nth(0).click();
+  await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
+  await page.waitForTimeout(200);
+  assert.equal(await page.evaluate(() => window.__host.fills.length), 2, 'Taking the size back does not insert again');
+  await page.locator('#toolSize').click();
+  await page.waitForFunction(() => !document.getElementById('sizeMenu').hidden);
+  const checkedAfter = await page.evaluate(() => [...document.querySelectorAll('#sizeMenuList .menu-row')].filter((row) => row.getAttribute('aria-checked') === 'true').length);
+  assert.equal(checkedAfter, 0, 'Taking the size back clears the mark');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => document.getElementById('sizeMenu').hidden);
   await page.locator('#instruction').fill('');
@@ -570,10 +583,16 @@ async function runEditorTests() {
   assert.equal(await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'saveAnnotated').length >= 1), true, 'The marked preview is handed to the backend for saving');
   // The reference carries `src` (the marked preview) and the original path.
   assert.equal(fill && fill.mode, 'append', 'The request is appended to whatever the user already typed');
-  assert(/^保持构图\n\[quote src="\/gallery\/annotated-image-0\.png"\]\n1\. （\d+%, \d+%）：把这里换成暖光\n2\. （\d+%, \d+%）：保留这个轮廓\n\[\/quote\]$/.test(fill.text), `The request reads as prose plus one quote:\n${fill.text}`);
+  assert(/^保持构图\n\[quote src="\/gallery\/annotated-image-0-\d+\.png"\]\n1\. （\d+%, \d+%）：把这里换成暖光\n2\. （\d+%, \d+%）：保留这个轮廓\n\[\/quote\]$/.test(fill.text), `The request reads as prose plus one quote:\n${fill.text}`);
   const notePercent = /（(\d+)%, (\d+)%）/.exec(fill.text) ?? /\((\d+)%, (\d+)%\)/.exec(fill.text);
   assert(notePercent && Number(notePercent[1]) > 40, `The dragged comment reports its new position (${notePercent?.[1]}%)`);
   assert.equal(await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'stagePrompt').length), 0, 'Nothing is parked for a second click anymore');
+  // The picture the reference points at is the one that must carry the marks:
+  // read exactly that snapshot, not whatever was written last.
+  const source = /\[quote src="([^"]+)"/.exec(fill.text)?.[1] ?? '';
+  assert(source.includes('/gallery/annotated-'), `The reference names the saved snapshot (${source})`);
+  const snapshot = await page.evaluate((name) => window.__host.annotated.find((entry) => entry.name === name)?.content ?? '', source);
+  assert(snapshot.length > 100, 'The referenced snapshot was actually saved');
   const marked = await page.evaluate(async (content) => {
     const image = new Image(); image.src = `data:image/png;base64,${content}`; await image.decode();
     const canvas = document.createElement('canvas'); canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
@@ -582,8 +601,8 @@ async function runEditorTests() {
     let redPixels = 0;
     for (let i = 0; i < pixels.length; i += 4) if (pixels[i] > 210 && pixels[i + 1] < 130 && pixels[i + 2] < 130) redPixels++;
     return redPixels;
-  }, (await page.evaluate(() => window.__host.annotated.at(-1).content)));
-  assert(marked > 100, 'The saved preview contains actual red pen/pin pixels');
+  }, snapshot);
+  assert(marked > 100, 'The referenced snapshot contains actual red pen/pin pixels');
   await page.waitForFunction(() => !document.getElementById('send').disabled);
   assert(await page.locator('#editor').isVisible(), 'A successful insertion stays on this picture');
   await assertCleared();

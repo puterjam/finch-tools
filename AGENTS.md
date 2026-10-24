@@ -42,7 +42,7 @@
 - 0.25 的「写附件投影 + 单独 fillText」未真正更新已挂载输入框；假 Bridge 收到参数不等于用户看见内容。新版用一次 `composer.addContexts([image], { text, mode: 'append' })`，等真实 Composer 接收端落盘并同时提交图片和正文后再报成功。
 - `fillText` 与组合插入能力同批新增；旧 Finch 缺少它时必须走原来可用的 `annotation.image + promptText`，提示明确这是图片批注，不声称填入了可编辑正文，不要求更新才能使用。不要再退回旧版普通附件写投影或 note（会出现「已添加，输入框仍空」）。
 - 0.25.1 还去掉 tool definition 的 `progressMode: 'indeterminate'`：仅延迟 report 不够，显式 progressMode 会让宿主在接口前先显示默认进度条。
-- 0.25.3：尺寸菜单点选后直接 deliver；Composer 插入成功不 close 编辑器（busy 必须复位，保留整体说明），收到宿主成功回执后自动清除标记和撤销记录，失败则保留以便重试。手动清除与自动清除共用 clearAnnotations，不可通过按钮或 Ctrl+Z 恢复已清除标记。清除图标使用 Lucide `brush-cleaning`（替代 trash-2），二次确认仍是 warning「确认清除标记」按钮，Esc/点外部/4s 超时取消，不弹 modal。标注/评论仅显示短 tooltip，无底部 toolHint；插入统一用 `copy-plus`，不用 paperclip。
+- 0.25.3：尺寸菜单点选后直接 deliver；**尺寸行只随插入的正文进输入框**，不再写进编辑器自己的 instruction 输入框（两处会重复，用户得手动删），再点同一尺寸取消（不重复插入）；`requested` 从旧草稿的说明里恢复，组装时会把说明里残留的尺寸行去掉。Composer 插入成功不 close 编辑器（busy 必须复位，保留整体说明），收到宿主成功回执后自动清除标记和撤销记录，失败则保留以便重试。手动清除与自动清除共用 clearAnnotations，不可通过按钮或 Ctrl+Z 恢复已清除标记。清除图标使用 Lucide `brush-cleaning`（替代 trash-2），二次确认仍是 warning「确认清除标记」按钮，Esc/点外部/4s 超时取消，不弹 modal。标注/评论仅显示短 tooltip，无底部 toolHint；插入统一用 `copy-plus`，不用 paperclip。
 - 列表沿用同一批已解码节点，用 FLIP 做 240ms 缓动，系统 reduced-motion 时跳过；上下 12px 阴影仅在卡片超出对应可见边界时显示。UI 回归要等待 ResizeObserver/rAF 的动画启动并真正结束（两个安静帧对），不能在中间帧断言图片重叠。
 - 宿主修复需要更新 /Applications/Finch.app，不能只重装小程序后就宣称可编辑正文已生效。回归必须包含真实 Composer DOM（缩略图出现、文字可改、Home Space 不串写），加上接收端落盘失败、并发和超限测试。
 

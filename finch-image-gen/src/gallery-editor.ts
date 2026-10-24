@@ -137,24 +137,38 @@ export class GalleryEditor {
 
   /**
    * The size belongs to this edit request, not to the tool's global defaults:
-   * picking one writes a line into the instructions, which is what the model
-   * reads and what ends up in the input box. One size line at a time.
+   * the inserted text carries one size line, so the model reads it and the user
+   * can still edit it there. Picking the current size again takes it back.
    */
-  private pickSize(size: string, ratio: string): void {
+  private pickSize(size: string): void {
     if (!this.loaded || this.busy) return;
-    const prefix = t('size.promptPrefix');
-    const line = `${prefix}${t('size.promptValue', { ratio, size })}`;
-    const field = el<HTMLTextAreaElement>('instruction');
-    const kept = this.instruction.split('\n').filter((row) => !row.trim().startsWith(prefix.trim()));
-    const next = [...kept.filter((row) => row.trim() !== ''), line].join('\n').slice(0, 8000);
-    this.instruction = next;
-    field.value = next;
-    this.grow(field);
-    this.requested = size;
-    this.changed(false);
     this.closeSizeMenu();
-    // Dispatch inside the actual row click, preserving the host user gesture.
+    // Already asking for this size: the click takes it back instead of inserting
+    // the same request again.
+    if (this.requested === size) {
+      this.requested = '';
+      this.controls();
+      return;
+    }
+    // The size belongs to the request, not to the instruction box: it is sent
+    // with the inserted text, so a second copy here would just have to be
+    // deleted by hand.
+    this.requested = size;
+    this.controls();
     void this.deliver();
+  }
+
+  /** The size line this request carries, or nothing when the model decides. */
+  private sizeLine(): string {
+    const option = SIZE_OPTIONS.find((entry) => entry.size === this.requested);
+    if (!option) return '';
+    return `${t('size.promptPrefix')}${t('size.promptValue', { ratio: option.ratio, size: option.size })}`;
+  }
+
+  /** The user's own wording, with any leftover size line stripped back out. */
+  private instructionBody(): string {
+    const prefix = t('size.promptPrefix').trim();
+    return this.instruction.split('\n').filter((row) => !row.trim().startsWith(prefix)).join('\n').trim();
   }
 
   private openSizeMenu(): void {
@@ -170,7 +184,7 @@ export class GalleryEditor {
       row.setAttribute('aria-checked', String(option.size === this.requested));
       row.innerHTML = `<span>${icon(option.icon)}</span><span>${escapeText(t(option.label))}</span>` +
         `<span class="menu-ratio">${option.ratio}</span>`;
-      row.onclick = () => { this.pickSize(option.size, option.ratio); };
+      row.onclick = () => { this.pickSize(option.size); };
       list.append(row);
     });
     menu.hidden = false;
@@ -597,7 +611,9 @@ export class GalleryEditor {
    */
   private requestText(): string {
     const parts: string[] = [];
-    const body = this.instruction.trim();
+    const size = this.sizeLine();
+    if (size) parts.push(size);
+    const body = this.instructionBody();
     if (body) parts.push(body);
     const comments = this.commentsText();
     if (comments) parts.push(comments);
@@ -612,7 +628,7 @@ export class GalleryEditor {
     const comments = this.commentsText();
     const annotated = this.annotatedPath;
     return {
-      text: this.instruction.trim(),
+      text: [this.sizeLine(), this.instructionBody()].filter(Boolean).join('\n'),
       // With the marked preview on disk the reference points at it, so the
       // Composer shows one picture (the one carrying the marks). The host turns
       // the reference into its own description, so only the comments travel in
