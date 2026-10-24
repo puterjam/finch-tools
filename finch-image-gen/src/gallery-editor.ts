@@ -614,11 +614,13 @@ export class GalleryEditor {
     return {
       text: this.instruction.trim(),
       // With the marked preview on disk the reference points at it, so the
-      // Composer shows one picture (the one carrying the marks); the original
-      // path travels in the quote body. Without it the preview has to ride as an
-      // attachment, and the reference points at the original instead.
+      // Composer shows one picture (the one carrying the marks). The host turns
+      // the reference into its own description, so only the comments travel in
+      // the body — no hand-written file line. Without a saved preview the
+      // preview has to ride as an attachment and the reference names the
+      // original instead.
       imagePath: annotated || original,
-      quoted: annotated ? [comments, t('editor.reminder', { path: original })].filter(Boolean).join('\n') : comments,
+      quoted: comments,
       attachment: this.attachment ?? undefined,
       attachBytes: !annotated,
       legacyText: this.requestText(),

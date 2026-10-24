@@ -570,7 +570,7 @@ async function runEditorTests() {
   assert.equal(await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'saveAnnotated').length >= 1), true, 'The marked preview is handed to the backend for saving');
   // The reference carries `src` (the marked preview) and the original path.
   assert.equal(fill && fill.mode, 'append', 'The request is appended to whatever the user already typed');
-  assert(/^保持构图\n\[quote src="\/gallery\/annotated-image-0\.png"\]\n1\. （\d+%, \d+%）：把这里换成暖光\n2\. （\d+%, \d+%）：保留这个轮廓\n原图：\/gallery\/picture-0\.png\n\[\/quote\]$/.test(fill.text), `The request reads as prose plus one quote:\n${fill.text}`);
+  assert(/^保持构图\n\[quote src="\/gallery\/annotated-image-0\.png"\]\n1\. （\d+%, \d+%）：把这里换成暖光\n2\. （\d+%, \d+%）：保留这个轮廓\n\[\/quote\]$/.test(fill.text), `The request reads as prose plus one quote:\n${fill.text}`);
   const notePercent = /（(\d+)%, (\d+)%）/.exec(fill.text) ?? /\((\d+)%, (\d+)%\)/.exec(fill.text);
   assert(notePercent && Number(notePercent[1]) > 40, `The dragged comment reports its new position (${notePercent?.[1]}%)`);
   assert.equal(await page.evaluate(() => window.__host.messages.filter((m) => m.type === 'stagePrompt').length), 0, 'Nothing is parked for a second click anymore');
