@@ -173,6 +173,22 @@ async function runGalleryTests() {
   const heading = await page.locator('.header').boundingBox();
   const tabs = await page.locator('#tabs').boundingBox();
   assert(tabs.y >= heading.y + heading.height, 'Filters are below the title');
+  // The first row keeps clear of the filters, and the list keeps clear of the
+  // window edge below: neither end should look clipped.
+  const spacing = await page.evaluate(() => {
+    const bar = document.getElementById('topbar').getBoundingClientRect();
+    const grid = document.getElementById('grid').getBoundingClientRect();
+    const card = document.querySelector('.card').getBoundingClientRect();
+    const style = getComputedStyle(document.getElementById('grid'));
+    return {
+      above: Math.round(card.top - bar.bottom), below: Math.round(innerHeight - grid.bottom),
+      paddingTop: parseFloat(style.paddingTop), paddingBottom: parseFloat(style.paddingBottom),
+      pageBottom: parseFloat(getComputedStyle(document.getElementById('app')).paddingBottom),
+    };
+  });
+  assert(spacing.above >= 8, `The first row is not glued to the filters (${spacing.above}px)`);
+  assert(spacing.below >= 40, `The list keeps clear of the bottom edge (${spacing.below}px)`);
+  assert(spacing.paddingTop >= 8 && spacing.paddingBottom >= 8 && spacing.pageBottom >= 40, `Both ends carry padding (${JSON.stringify(spacing)})`);
   await page.getByRole('button', { name: '全部', exact: true }).click();
   await page.waitForFunction(() => document.querySelectorAll('.card').length === 16);
   for (const width of [280, 360, 420, 700, 1000, 1600]) {

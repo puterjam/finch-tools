@@ -41,7 +41,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .card:focus-visible::after { opacity: 0; }
 svg { display: block; width: 16px; height: 16px; flex: none; }
 button:disabled { opacity: .4; cursor: wait; }
-#app { max-width: 1188px; margin: 0 auto; padding: 0 20px 48px; }
+#app { max-width: 1188px; margin: 0 auto; padding: 0 20px 64px; }
+/* The grid keeps clear of the sticky filters above and the window edge below, so
+   neither end of the list reads as a clipped card. */
+#grid { padding: 14px 0 12px; }
 /* Title and filters ride along, with a divider once the grid passes under them. */
 .topbar { position: sticky; top: 0; z-index: 5; padding: 24px 0 20px; background: var(--bg); }
 .topbar.stuck { border-bottom: 1px solid var(--border); }
