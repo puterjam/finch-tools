@@ -2,7 +2,7 @@ import type * as finch from 'finch';
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -44,16 +44,65 @@ interface EgoStatus {
   error?: string;
 }
 
+// Ego Lite ships for macOS and Windows, and both put the CLI in `~/.local/bin`
+// (Windows uses an .exe wrapper there). Anything else stays unsupported.
+const SUPPORTED_PLATFORMS = new Set(['darwin', 'win32']);
+
+function isSupportedPlatform(): boolean {
+  return SUPPORTED_PLATFORMS.has(process.platform);
+}
+
+function localBinDir(): string {
+  return join(homedir(), '.local', 'bin');
+}
+
 function egoBinary(): string {
-  const local = join(homedir(), '.local', 'bin', 'ego-browser');
-  if (existsSync(local)) return local;
+  const names = process.platform === 'win32' ? ['ego-browser.exe', 'ego-browser'] : ['ego-browser'];
+  for (const name of names) {
+    const local = join(localBinDir(), name);
+    if (existsSync(local)) return local;
+  }
+  // Fall back to PATH. On Windows CreateProcess appends `.exe` to a bare name,
+  // so `ego-browser` still resolves the installed wrapper.
   return 'ego-browser';
 }
 
+// Windows has no `open -a`: the app has to be found on disk. The official
+// installer puts ego.exe under "Citro Labs\ego lite\Application", but a
+// per-user install lands under LOCALAPPDATA instead, so probe the usual roots.
+function egoAppPath(): string | undefined {
+  if (process.platform !== 'win32') return undefined;
+  const env = process.env;
+  const roots = [
+    env.ProgramFiles,
+    env['ProgramFiles(x86)'],
+    env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Programs') : undefined,
+    env.LOCALAPPDATA,
+  ].filter((root): root is string => Boolean(root));
+  const layouts = [
+    ['Citro Labs', 'ego lite', 'Application', 'ego.exe'],
+    ['ego lite', 'Application', 'ego.exe'],
+    ['Citro Labs', 'ego lite', 'ego.exe'],
+    ['ego lite', 'ego.exe'],
+  ];
+  for (const root of roots) {
+    for (const layout of layouts) {
+      const candidate = join(root, ...layout);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return undefined;
+}
+
 async function processRunning(): Promise<boolean> {
-  if (process.platform !== 'darwin') return false;
+  if (!isSupportedPlatform()) return false;
   const probe = async () => {
     try {
+      if (process.platform === 'win32') {
+        // ego.exe is the program file of ego lite on Windows.
+        const { stdout } = await execFileAsync('tasklist', ['/FI', 'IMAGENAME eq ego.exe', '/NH'], { timeout: 3000 });
+        return /\bego\.exe\b/i.test(stdout);
+      }
       await execFileAsync('pgrep', ['-f', '/ego lite.app/Contents/MacOS/ego lite'], { timeout: 2000 });
       return true;
     } catch {
@@ -73,7 +122,7 @@ async function runCommand(file: string, args: string[], timeout = 20_000): Promi
     const child = execFile(file, args, {
       timeout,
       maxBuffer: 10 * 1024 * 1024,
-      env: { ...process.env, PATH: `${join(homedir(), '.local', 'bin')}:${process.env.PATH ?? ''}` },
+      env: { ...process.env, PATH: `${localBinDir()}${delimiter}${process.env.PATH ?? ''}` },
     }, (error, stdout, stderr) => {
       const output = [stdout, stderr].filter(Boolean).join('\n').trim();
       if (error) {
@@ -178,7 +227,7 @@ function parseSpaces(output: string): EgoSpace[] {
 }
 
 async function getStatus(detailed = false): Promise<EgoStatus> {
-  if (process.platform !== 'darwin') {
+  if (!isSupportedPlatform()) {
     return { supported: false, installed: false, running: false, spaces: [], pageCount: 0 };
   }
 
@@ -213,7 +262,7 @@ async function getStatus(detailed = false): Promise<EgoStatus> {
 // The 5s poll therefore cannot disturb the user's task spaces and cannot fail
 // because of anything happening inside Ego.
 async function probeStatus(previous: EgoStatus | undefined): Promise<EgoStatus> {
-  if (process.platform !== 'darwin') {
+  if (!isSupportedPlatform()) {
     return { supported: false, installed: false, running: false, spaces: [], pageCount: 0 };
   }
   const running = await processRunning();
@@ -230,16 +279,36 @@ async function probeStatus(previous: EgoStatus | undefined): Promise<EgoStatus> 
 }
 
 async function launchEgo(): Promise<void> {
-  if (process.platform !== 'darwin') throw new Error('Ego Lite currently supports macOS only.');
-  await execFileAsync('open', ['-a', 'ego lite'], { timeout: 5000 });
+  if (process.platform === 'darwin') {
+    await execFileAsync('open', ['-a', 'ego lite'], { timeout: 5000 });
+    return;
+  }
+  if (process.platform === 'win32') {
+    const exe = egoAppPath();
+    if (!exe) {
+      throw new Error(`The ego lite app was not found on this PC. Open it from the Start menu, or reinstall it from ${WEBSITE}.`);
+    }
+    // `start` hands off to the shell and returns at once; an already running
+    // ego.exe just brings its window forward, same as `open -a` on macOS.
+    await execFileAsync('cmd', ['/c', 'start', '', exe], { timeout: 5000 });
+    return;
+  }
+  throw new Error(`Ego Lite does not run on this platform (${process.platform}).`);
 }
 
 // Ego's CLI has no window/UI follow API: switchTaskSpace only changes the
 // command target, the window stays wherever the user left it. Bring Ego to
 // the front so agent activity is visible instead of running in the background.
 async function focusEgo(): Promise<void> {
-  if (process.platform !== 'darwin') return;
-  await execFileAsync('open', ['-a', 'ego lite'], { timeout: 5000 }).catch(() => {});
+  if (process.platform === 'darwin') {
+    await execFileAsync('open', ['-a', 'ego lite'], { timeout: 5000 }).catch(() => {});
+    return;
+  }
+  if (process.platform === 'win32') {
+    const exe = egoAppPath();
+    if (!exe) return;
+    await execFileAsync('cmd', ['/c', 'start', '', exe], { timeout: 5000 }).catch(() => {});
+  }
 }
 
 async function openWebsite(): Promise<void> {
@@ -807,7 +876,7 @@ Reuse task spaces, respect user ownership, verify meaningful actions, and comple
         return { content: [{ type: 'text', text: 'action=switch_tab requires target_id from action=status.' }], isError: true };
       }
 
-      if (process.platform !== 'darwin') {
+      if (!isSupportedPlatform()) {
         return { content: [{ type: 'text', text: t('status.unsupported', { platform: process.platform }) }], isError: true };
       }
 
@@ -815,7 +884,7 @@ Reuse task spaces, respect user ownership, verify meaningful actions, and comple
       const version = await probeVersion(binary);
       if (!version && !(await processRunning())) {
         return {
-          content: [{ type: 'text', text: `Ego Lite is not installed. Install it from ${WEBSITE}, finish onboarding, then retry.` }],
+          content: [{ type: 'text', text: t('status.notInstalled', { website: WEBSITE }) }],
           isError: true,
         };
       }

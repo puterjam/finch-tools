@@ -1,6 +1,6 @@
 {
   "name": "finch-ego-lite",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Let Finch browse the web in isolated Ego Lite task spaces while you follow every page it opens.",
   "author": {
     "name": "PuterJam",
@@ -21,6 +21,7 @@
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/index.js",
     "typecheck": "tsc --noEmit",
+    "smoke": "node tools/smoke.mjs",
     "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
   },
   "finch": {

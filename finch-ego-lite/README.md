@@ -33,12 +33,12 @@ Task spaces are isolated from your everyday browser windows while still being ab
 
 ## Get started
 
-1. Install and launch [Ego Lite](https://lite.ego.app/) on macOS. Ego Lite is a browser designed for collaboration between people and AI Agents, and provides the web environment used by this mini tool.
-2. Enable this mini tool in Finch.
+1. Install and launch [Ego Lite](https://lite.ego.app/) on macOS or Windows. Ego Lite is a browser designed for collaboration between people and AI Agents, and provides the web environment used by this mini tool.
+2. Finish Ego Lite's first-time setup so it registers the `ego-browser` command, then enable this mini tool in Finch. If Finch was already running while you installed Ego Lite, restart Finch so it picks up the new command.
 3. Tell Finch which website to visit and what you want done.
 4. Use the Ego button beside the Composer to follow progress, open pages, or take control.
 
-> Ego Lite currently supports macOS only. On Windows or Linux, this mini tool explains that the platform is not supported and provides a link to the Ego Lite website for future updates.
+> Ego Lite currently runs on macOS and Windows. On other platforms, this mini tool explains that the platform is not supported and provides a link to the Ego Lite website.
 
 ## About Finch
 
@@ -83,12 +83,12 @@ Finch 会在 Ego Lite 的独立任务空间中打开网页。你不需要学习�
 
 ## 开始使用
 
-1. 在 macOS 上安装并启动 [Ego Lite](https://lite.ego.app/)。Ego Lite 是专为人与 AI Agent 协作设计的浏览器，也是本小工具连接网页的运行环境。
-2. 在 Finch 中启用本小工具。
+1. 在 macOS 或 Windows 上安装并启动 [Ego Lite](https://lite.ego.app/)。Ego Lite 是专为人与 AI Agent 协作设计的浏览器，也是本小工具连接网页的运行环境。
+2. 完成 Ego Lite 的首次引导，让它注册 `ego-browser` 命令，然后在 Finch 中启用本小工具。如果安装 Ego Lite 时 Finch 已经开着，重启一次 Finch 才能读到新命令。
 3. 直接告诉 Finch 想访问的网站和要完成的事情。
 4. 通过输入框旁的 Ego 按钮查看进度、打开页面或接管操作。
 
-> Ego Lite 目前仅支持 macOS。在 Windows 或 Linux 上，本小工具会显示平台暂不支持，并提供 Ego Lite 官网入口了解后续进展。
+> Ego Lite 目前可在 macOS 和 Windows 上运行。其他平台上，本小工具会提示平台暂不支持，并提供 Ego Lite 官网入口。
 
 ## 关于 Finch
 

@@ -13,7 +13,7 @@
   "badge": {
     "online": "Ego 在线",
     "offline": "Ego 离线",
-    "unsupported": "仅支持 macOS"
+    "unsupported": "平台不支持"
   },
   "menu": {
     "checking": {
@@ -27,9 +27,9 @@
       "label": "了解 Ego Lite"
     },
     "unsupported": {
-      "label": "Ego Lite 仅支持 macOS",
+      "label": "Ego Lite 支持 macOS 与 Windows",
       "description": "当前设备暂不可用",
-      "hover": "Ego Lite 目前只能在 macOS 上运行。当前平台：{platform}。"
+      "hover": "Ego Lite 目前可在 macOS 和 Windows 上运行。当前平台：{platform}。"
     },
     "install": {
       "label": "安装 Ego Lite",
@@ -72,7 +72,7 @@
     "user": "用户控制"
   },
   "status": {
-    "unsupported": "Ego Lite 目前仅支持 macOS。当前平台：{platform}。",
+    "unsupported": "Ego Lite 目前支持 macOS 和 Windows。当前平台：{platform}。",
     "notInstalled": "Ego Lite 未安装。请从 {website} 安装并完成首次引导。",
     "notRunning": "Ego Lite 已安装（{version}），当前未运行。",
     "error": "Ego Lite 正在运行，但状态读取失败：{error}"
