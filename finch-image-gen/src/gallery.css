@@ -67,18 +67,29 @@ h1 { font-size: 22px; font-weight: 700; letter-spacing: -.02em; margin: 0; }
 /* Explicit column widths never grow when a column has few images. */
 #grid { display: grid; grid-template-columns: repeat(var(--columns, 2), minmax(0, var(--card-width, 220px))); gap: var(--gap); align-items: start; }
 .column { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
-.card { position: relative; width: 100%; max-width: 220px; overflow: hidden; border-radius: 10px; cursor: zoom-in; background: var(--hover); isolation: isolate; }
+.card { position: relative; width: 100%; max-width: 220px; overflow: hidden; border-radius: 10px; cursor: zoom-in; background: var(--hover); isolation: isolate; container-type: size; }
 .card::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 0 0 1px #80808020; }
 .card img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .card .image-placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
 .card .image-placeholder svg { width: 24px; height: 24px; opacity: .5; }
-.card-actions { position: absolute; right: 6px; top: 6px; display: flex; gap: 4px; opacity: 0; pointer-events: none; transform: translateY(-3px); transition: opacity .15s, transform .15s; }
+.card-actions { position: absolute; right: 6px; top: 6px; z-index: 2; display: flex; gap: 4px; opacity: 0; pointer-events: none; transform: translateY(-3px); transition: opacity .15s, transform .15s; }
 .card-action { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid #ffffff30; border-radius: 7px; background: #202020aa; color: #fff; backdrop-filter: blur(8px); }
 .card-action svg { width: 13px; height: 13px; }
 .card-action:hover { background: #101010ee; }
 .card-action.danger:hover { background: #b82929; }
-.prompt-overlay { position: absolute; bottom: 0; left: 0; right: 0; padding: 28px 10px 10px; background: linear-gradient(transparent, #000b 60%, #000c); color: #fff; opacity: 0; pointer-events: none; transform: translateY(3px); transition: opacity .15s, transform .15s; }
+.prompt-overlay { position: absolute; bottom: 0; left: 0; right: 0; padding: 28px 10px 10px; background: linear-gradient(transparent, #000b 60%, #000c); color: #fff; opacity: 0; pointer-events: none; transform: translateY(3px); transition: opacity .15s, transform .15s;
+  /* The buttons own the top ~32px of the card: the prompt must never grow up
+     into them, however short the picture makes the card. */
+  max-height: calc(100% - 34px); overflow: hidden; }
+/* A card too short for two lines gets one: the buttons keep their row, and the
+   prompt stays visible instead of vanishing. */
 .prompt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+/* A wide picture makes a short card: one line, tighter padding — still clear of
+   the buttons and never clipped mid-glyph. */
+@container (max-height: 120px) {
+  .prompt-overlay { padding: 14px 8px 6px; }
+  .prompt { -webkit-line-clamp: 1; font-size: 10px; }
+}
 .card:hover .card-actions, .card:focus-within .card-actions, .card:hover .prompt-overlay, .card:focus-within .prompt-overlay { opacity: 1; pointer-events: auto; transform: none; }
 .empty { text-align: center; color: var(--muted); padding: 64px 16px; }
 .empty > span svg { margin: 0 auto 14px; width: 36px; height: 36px; opacity: .4; }

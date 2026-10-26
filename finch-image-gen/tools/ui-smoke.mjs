@@ -258,6 +258,54 @@ async function runGalleryTests() {
   assert.equal(hover.lineClamp, '2');
   assert(hover.actionsTop < 10 && hover.actionsRight < 10);
   assert.equal(await page.locator('.card .badges, .card .badge').count(), 0, 'Cards carry no format/size pills');
+  // A flat, wide picture gets a short card: the two-line prompt must not end up
+  // under the action buttons, or the text swallows them.
+  await page.evaluate(() => {
+    const wide = { ...window.__host.records[0], id: 'image-wide', filePath: '/gallery/wide.png', name: 'wide.png', width: 2400, height: 600 };
+    window.__host.records = [wide, ...window.__host.records];
+    window.__host.snapshot();
+  });
+  await settle();
+  const shortCard = page.locator('.card[data-id="image-wide"]');
+  await shortCard.hover();
+  const flatBox = await shortCard.boundingBox();
+  assert(flatBox.height < 120, `The wide picture makes a short card (${Math.round(flatBox.height)}px)`);
+  const flatActions = await shortCard.locator('.card-actions').boundingBox();
+  assert(await shortCard.locator('.card-actions').isVisible() && flatActions.height > 20, 'Its action buttons still fill their row');
+  assert.equal(await shortCard.locator('.prompt-overlay').isVisible(), true, 'A short card still shows its prompt, one line of it');
+  const flatOverlay = await shortCard.locator('.prompt-overlay').boundingBox();
+  assert(flatOverlay.y >= flatActions.y + flatActions.height, `The prompt stops below the buttons (${Math.round(flatOverlay.y)} vs ${Math.round(flatActions.y + flatActions.height)})`);
+  const flatLines = await shortCard.locator('.prompt').evaluate((node) => ({ clamp: getComputedStyle(node).webkitLineClamp, box: node.getBoundingClientRect().height, line: parseFloat(getComputedStyle(node).lineHeight) }));
+  assert(flatLines.clamp === '1' && flatLines.box <= flatLines.line * 1.1, `One line only on a short card (${JSON.stringify(flatLines)})`);
+  // Whatever the aspect ratio, the wording never runs under the buttons and
+  // the buttons stay on top where they can be clicked.
+  for (const [width, height] of [[3840, 1080], [2400, 600], [1600, 900], [1024, 1024], [1200, 1600]]) {
+    const geometry = await page.evaluate(([w, h]) => {
+      const node = document.querySelector('.card[data-id="image-wide"]');
+      node.style.aspectRatio = `${w} / ${h}`;
+      node.querySelector('.prompt').textContent = 'Recreate this slide exactly as it is — same layout, same wording, same colours.'.repeat(2);
+      const card = node.getBoundingClientRect();
+      const overlay = node.querySelector('.prompt-overlay').getBoundingClientRect();
+      const actions = node.querySelector('.card-actions').getBoundingClientRect();
+      const button = node.querySelector('.card-action').getBoundingClientRect();
+      return {
+        card: Math.round(card.height), gap: Math.round(overlay.top - actions.bottom),
+        covered: document.elementFromPoint(button.x + button.width / 2, button.y + button.height / 2)?.closest('.card-action') !== node.querySelector('.card-action'),
+        // The overlay rests 3px lower while unfocused (it re-enters on hover),
+        // so allow that slack rather than pinning an unhovered card.
+        inside: overlay.bottom <= card.bottom + 4 && overlay.top >= card.top - 4,
+      };
+    }, [width, height]);
+    assert(geometry.gap >= 0, `The prompt clears the buttons at ${width}x${height} (${JSON.stringify(geometry)})`);
+    assert(!geometry.covered, `The buttons stay clickable at ${width}x${height} (${JSON.stringify(geometry)})`);
+    assert(geometry.inside, `The prompt stays inside the card at ${width}x${height} (${JSON.stringify(geometry)})`);
+  }
+  await page.evaluate(() => {
+    window.__host.records = window.__host.records.filter((record) => record.id !== 'image-wide');
+    window.__host.snapshot();
+  });
+  await settle();
+  assert.equal(await page.locator('.card').first().locator('.card-actions').evaluate((node) => getComputedStyle(node).zIndex), '2', 'Actions are layered above the prompt on every card');
 
   // A Panel with a Composer of its own gets one extra hover action: hand the
   // picture straight to the input box, with no editing detour.
