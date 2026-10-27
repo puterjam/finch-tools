@@ -18,6 +18,9 @@
   --fallback-border: #e0e7e1;
   --fallback-accent: #277765;
   --pane-head-height: 96px;
+  /* One size for a tag's own label and for the field that replaces it while naming one — an input
+     left to `font: inherit` picks up the page's 15px and reads a step bigger than the row. */
+  --tag-label-size: 14px;
   /* The three settings that decide how heavy text looks, taken from Finch's own root. */
   font-family: var(--finch-font-body, Outfit, system-ui, sans-serif);
   font-synthesis: none;
@@ -252,7 +255,7 @@ svg { flex: none; width: 18px; height: 18px; }
 .tag-row.drop-before::before { top: -1px; }
 .tag-row.drop-after::after { bottom: -1px; }
 .tag-editor { background: var(--finch-bg-active, var(--fallback-active)); }
-.tag-editor input { min-width: 0; width: 100%; padding: 2px 0; border: 0; border-bottom: 1px solid var(--finch-accent, var(--fallback-accent)); border-radius: 0; outline: 0; background: transparent; color: var(--finch-text-primary, var(--fallback-ink)); font-weight: 650; }
+.tag-editor input { min-width: 0; width: 100%; padding: 2px 0; border: 0; border-bottom: 1px solid var(--finch-accent, var(--fallback-accent)); border-radius: 0; outline: 0; background: transparent; color: var(--finch-text-primary, var(--fallback-ink)); font-size: var(--tag-label-size); font-weight: 650; }
 .tag-editor input:focus-visible { outline: 0; }
 /* A hint inside the field, not typed text: quieter and lighter than the value it replaces. */
 .tag-editor input::placeholder { color: var(--finch-text-tertiary, var(--fallback-muted)); font-weight: 400; }
@@ -260,7 +263,7 @@ svg { flex: none; width: 18px; height: 18px; }
 .tag-row.active .tag-choice { background: var(--finch-bg-active, var(--fallback-active)); color: var(--finch-accent, var(--fallback-accent)); font-weight: 650; }
 .tag-choice svg { width: 16px; height: 16px; color: var(--finch-text-tertiary, var(--fallback-muted)); }
 .tag-row.active .tag-choice svg { color: var(--finch-accent, var(--fallback-accent)); }
-.tag-name { min-width: 0; overflow: hidden; color: var(--finch-text-secondary, var(--fallback-muted)); font-size: 14px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.tag-name { min-width: 0; overflow: hidden; color: var(--finch-text-secondary, var(--fallback-muted)); font-size: var(--tag-label-size); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .tag-row.active .tag-name { color: var(--finch-accent, var(--fallback-accent)); }
 /* The number is a quiet tally, never bold — including on the selected row. */
 .tag-count { justify-self: end; min-width: 3ch; color: var(--finch-text-secondary, var(--fallback-muted)); font-size: 12px; font-weight: 400; text-align: right; font-variant-numeric: tabular-nums; }

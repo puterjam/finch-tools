@@ -19,3 +19,11 @@ test('the file-drop cue outlines the pane the file lands in, not the tag column'
   // The instruction beside the Add button still turns accent so it reads as "you can drop now".
   assert.match(css, /\.dragging-file \.drop-hint\s*\{[^}]*color:\s*var\(--finch-accent/);
 });
+
+test('the tag field writes at the same size as the label it replaces', () => {
+  // `button, input, select { font: inherit }` hands the field the page's 15px, so an input left
+  // without its own size renders a step bigger than the row it stands in for.
+  const size = (selector) => css.match(new RegExp(`${selector}\\s*\\{[^}]*font-size:\\s*([^;]+)`))[1].trim();
+  assert.match(size('.tag-name'), /var\(--tag-label-size\)/, 'the label size is a token, not a literal');
+  assert.equal(size('.tag-editor input'), size('.tag-name'), 'field and label share one size');
+});
