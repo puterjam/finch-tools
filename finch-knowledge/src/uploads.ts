@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, open, rename, stat, unlink, type FileHandle } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
-import { ACCEPTED, DEFAULT_TAG, type KnowledgeStore } from './store.js';
+import { ACCEPTED, DEFAULT_TAG, MAX_FILE_BYTES, SIZE_LIMIT_MESSAGE, type KnowledgeStore } from './store.js';
 
-export const MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = MAX_FILE_BYTES;
 export const CHUNK_BYTES = 192 * 1024;
 const IDLE_MS = 120_000;
 
@@ -45,7 +45,7 @@ export class UploadReceiver {
     }
     if (!ACCEPTED.includes(extname(name).toLowerCase())) throw new Error('Unsupported file type.');
     if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_UPLOAD_BYTES) {
-      throw new Error('Choose a nonempty file smaller than 64 MB.');
+      throw new Error(SIZE_LIMIT_MESSAGE);
     }
     const directory = join(this.storagePath, 'imports', '.staging');
     await mkdir(directory, { recursive: true });

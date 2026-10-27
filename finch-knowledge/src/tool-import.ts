@@ -1,7 +1,7 @@
 import { constants } from 'node:fs';
 import { lstat, open, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { ACCEPTED, type KnowledgeStore } from './store.js';
+import { ACCEPTED, SIZE_LIMIT_MESSAGE, type KnowledgeStore } from './store.js';
 import { CHUNK_BYTES, MAX_UPLOAD_BYTES, UploadReceiver } from './uploads.js';
 
 export interface ImportedFile { name: string; documentId: string; unchanged: boolean }
@@ -122,7 +122,7 @@ export async function expandImportTargets(
     }
     const info = await stat(selected).catch(() => null);
     if (!info?.isFile() || !usableSize(info.size)) {
-      failures.push({ path: requested, error: new Error('Choose a nonempty file smaller than 64 MB.') });
+      failures.push({ path: requested, error: new Error(SIZE_LIMIT_MESSAGE) });
       continue;
     }
     const extension = extname(selected).toLowerCase();
@@ -175,7 +175,7 @@ export async function importFromPath(
   const receiver = new UploadReceiver(storagePath, store);
   try {
     const info = await handle.stat();
-    if (!info.isFile() || !usableSize(info.size)) throw new Error('Choose a nonempty file smaller than 64 MB.');
+    if (!info.isFile() || !usableSize(info.size)) throw new Error(SIZE_LIMIT_MESSAGE);
     const name = basename(selected);
     await receiver.begin(name, info.size, tagId);
     let received = 0;

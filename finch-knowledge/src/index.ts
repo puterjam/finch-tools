@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { DEFAULT_TAG, KnowledgeStore, engineForExtension, type DocumentSort } from './store.js';
+import { DEFAULT_TAG, KnowledgeStore, MAX_FILE_MB, SIZE_LIMIT_MESSAGE, engineForExtension, type DocumentSort } from './store.js';
 import { UploadReceiver } from './uploads.js';
 import { expandImportTargets, importFromPath, importFromWorkspace, MAX_BATCH_FILES, type ImportedFile, type ImportFailure, type ImportRequest, type SkipReason } from './tool-import.js';
 import { loadEngine as loadDocumentEngine, ENGINE_VERSION as DOCUMENT_ENGINE_VERSION, isEngineInstalled as isDocumentEngineInstalled } from './document-engine.js';
@@ -18,7 +18,7 @@ import { fetchArticle, normalizeUrl, ArticleUnreachableError } from './article.j
 import { createKnowledgeComposer } from './composer.js';
 export { createKnowledgeComposer } from './composer.js';
 import { mkdir, writeFile } from 'node:fs/promises';
-export { KnowledgeStore, vectorize, chunkText, DEFAULT_TAG, engineForExtension, ACCEPTED } from './store.js';
+export { KnowledgeStore, vectorize, chunkText, DEFAULT_TAG, engineForExtension, ACCEPTED, MAX_FILE_BYTES, MAX_FILE_MB } from './store.js';
 export { highlightTerms, snippetParts, snippetText } from './snippet.js';
 export { openInPreview, openListedDocument, previewRoute } from './preview.js';
 export { inScope, UNCLASSIFIED } from './scope.js';
@@ -304,7 +304,7 @@ export function activate(ctx: finch.MiniToolContext): void {
     if (message === 'Specify a local file path.') return t('tool.fileRequired');
     if (message === 'The file must be inside the current workspace.') return t('tool.fileOutside');
     if (message === 'Choose a regular file, not a symbolic link.') return t('tool.fileSymlink');
-    if (message === 'Choose a nonempty file smaller than 64 MB.') return t('tool.fileSize');
+    if (message === SIZE_LIMIT_MESSAGE) return t('tool.fileSize', { max: MAX_FILE_MB });
     if (message === 'File import cancelled.') return t('tool.fileCancelled');
     if (message === 'Finish current imports or edits before backing up.') return t('backup.busy');
     if (message === 'A library backup is in progress. Try again when it finishes.') return t('backup.writing');
@@ -760,7 +760,7 @@ export function activate(ctx: finch.MiniToolContext): void {
           const expanded = await expandImportTargets(exec.cwd, requests, { recursive: input.recursive !== false });
           const skipLabels: Record<SkipReason, string> = {
             hidden: t('tool.skipHidden'), unsupported: t('tool.skipUnsupported'), symlink: t('tool.skipSymlink'),
-            notFile: t('tool.skipNotFile'), empty: t('tool.skipEmpty'), tooLarge: t('tool.skipTooLarge'), limit: t('tool.skipLimit', { max: MAX_BATCH_FILES }),
+            notFile: t('tool.skipNotFile'), empty: t('tool.skipEmpty'), tooLarge: t('tool.skipTooLarge', { max: MAX_FILE_MB }), limit: t('tool.skipLimit', { max: MAX_BATCH_FILES }),
           };
           const counted = new Map<SkipReason, number>();
           for (const entry of expanded.skipped) counted.set(entry.reason, (counted.get(entry.reason) ?? 0) + 1);

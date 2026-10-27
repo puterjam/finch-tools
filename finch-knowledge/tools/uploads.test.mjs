@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, stat, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { KnowledgeStore, UploadReceiver } from '../dist/index.js';
+import { KnowledgeStore, MAX_FILE_BYTES, MAX_FILE_MB, UploadReceiver } from '../dist/index.js';
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'finch-knowledge-upload-'));
@@ -61,7 +61,10 @@ test('reject unsafe names, oversized declarations, incomplete and oversized chun
   try {
     await assert.rejects(receiver.begin('../secret.md', 3), /Invalid file name/);
     await assert.rejects(receiver.begin('secret.exe', 3), /Unsupported file type/);
-    await assert.rejects(receiver.begin('guide.md', 64 * 1024 * 1024 + 1), /64 MB/);
+    // Read from the constant, so raising the cap never leaves a stale number behind.
+    await assert.rejects(receiver.begin('guide.md', MAX_FILE_BYTES + 1), new RegExp(`${MAX_FILE_MB} MB`));
+    await receiver.begin('guide.md', MAX_FILE_BYTES);
+    await receiver.abort();
     await receiver.begin('guide.md', 4);
     await receiver.chunk(Buffer.from('abc').toString('base64'));
     await assert.rejects(receiver.finish(), /incomplete/);

@@ -22,7 +22,7 @@ The library menu lets you change its location, back it up, or refresh changed so
 
 ## Supported files
 
-Markdown, plain text, Word, PDFs with a text layer, and images. Each file can be up to **64 MB**. Export scanned PDF pages as images before importing.
+Markdown, plain text, Word, PDFs with a text layer, and images. Each file can be up to **200 MB**. Export scanned PDF pages as images before importing.
 
 Supported platforms: Apple Silicon macOS, Linux x64/arm64, and Windows x64/arm64.
 
@@ -58,7 +58,7 @@ npx @finchtoys/minitools add finch-knowledge
 
 ## 支持的文件
 
-Markdown、纯文本、Word、含文本层的 PDF 和图片。单文件最大 **64 MB**。纯扫描 PDF 请先将页面导出为图片再导入。
+Markdown、纯文本、Word、含文本层的 PDF 和图片。单文件最大 **200 MB**。纯扫描 PDF 请先将页面导出为图片再导入。
 
 支持 Apple Silicon Mac、Linux x64/arm64 和 Windows x64/arm64。
 

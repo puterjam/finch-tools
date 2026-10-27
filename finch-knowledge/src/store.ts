@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { cp, lstat, mkdir, readFile, rename, stat, unlink } from 'node:fs/promises';
-import { existsSync, mkdirSync } from 'node:fs';
+import { cp, lstat, mkdir, open, rename, stat, unlink } from 'node:fs/promises';
+import { existsSync, mkdirSync, createReadStream } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path';
 import { backup as backupSqlite, DatabaseSync } from 'node:sqlite';
 import type * as lancedb from '@lancedb/lancedb';
@@ -16,7 +16,15 @@ const IMAGE = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff'
 const OFFICE = new Set(['.doc', '.docx', '.pdf']);
 const LEGACY_TABLE = 'passages_v1';
 const DIMENSIONS = 512;
-const MAX_FILE = 64 * 1024 * 1024;
+/**
+ * The largest file the library takes. A scanned or exported PDF is usually the biggest thing in a
+ * folder and comfortably passes the old 64 MB, so the cap is about patience and disk rather than
+ * memory: uploads stream to disk in 192 KB pieces and the hash below is streamed too.
+ */
+export const MAX_FILE_BYTES = 200 * 1024 * 1024;
+export const MAX_FILE_MB = MAX_FILE_BYTES / (1024 * 1024);
+/** One message for every door a file can come in through, so the number cannot drift. */
+export const SIZE_LIMIT_MESSAGE = `Choose a nonempty file smaller than ${MAX_FILE_MB} MB.`;
 const MAX_TEXT = 6_000_000;
 
 export interface Passage {
@@ -96,7 +104,37 @@ async function readContent(path: string, extension: string, cachePath: string, p
     const engine = await loadDocumentEngine(join(cachePath, 'anydoc'), progress);
     return engine.toMarkdown(path);
   }
-  return readFile(path, 'utf8');
+  return readText(path);
+}
+/**
+ * Only the first MAX_TEXT characters are ever indexed, so a huge text file is read to that budget
+ * rather than pulled into memory whole — the size cap went to 200 MB and a text file of that size
+ * would otherwise cost four times its bytes once decoded.
+ */
+const TEXT_READ_BYTES = MAX_TEXT * 4;
+async function readText(path: string): Promise<string> {
+  const handle = await open(path, 'r');
+  try {
+    const buffer = Buffer.alloc(TEXT_READ_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, TEXT_READ_BYTES, 0);
+    return buffer.subarray(0, bytesRead).toString('utf8');
+  } finally {
+    await handle.close();
+  }
+}
+/**
+ * Streams the digest instead of buffering the whole file: a 200 MB PDF has to be hashed on its way
+ * past, not held in memory while it is.
+ */
+async function hashFile(path: string): Promise<string> {
+  const hash = createHash('sha256');
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(path);
+    stream.on('data', (piece) => hash.update(piece));
+    stream.on('error', reject);
+    stream.on('end', resolve);
+  });
+  return hash.digest('hex');
 }
 
 export interface LibraryOptions {
@@ -566,8 +604,8 @@ export class KnowledgeStore {
         states.push({ document: doc, state: parent?.isDirectory() ? 'deleted' : 'unreachable' });
         continue;
       }
-      if (info.size > MAX_FILE) { states.push({ document: doc, state: 'unreachable' }); continue; }
-      const hash = createHash('sha256').update(await readFile(source)).digest('hex');
+      if (info.size > MAX_FILE_BYTES) { states.push({ document: doc, state: 'unreachable' }); continue; }
+      const hash = await hashFile(source);
       states.push({ document: doc, state: hash === doc.hash ? 'same' : 'changed' });
     }
     return states;
@@ -615,8 +653,8 @@ export class KnowledgeStore {
       if (!isAbsolute(path)) throw new Error('Choose a local file with an absolute path.');
       this.assertTag(tagId);
       const info = await stat(path);
-      if (!info.isFile() || info.size > MAX_FILE) throw new Error('Choose a regular file smaller than 64 MB.');
-      const hash = createHash('sha256').update(await readFile(path)).digest('hex');
+      if (!info.isFile() || info.size > MAX_FILE_BYTES) throw new Error(SIZE_LIMIT_MESSAGE);
+      const hash = await hashFile(path);
       const stored = this.catalog.prepare('SELECT * FROM documents WHERE path = ?').get(path) as DocumentSummary | undefined;
       const prior = stored ? { ...stored, tags: this.currentTags(stored.id) } : undefined;
       if (prior?.hash === hash) {

@@ -27,7 +27,7 @@ const english: Copy = {
   menuReveal: 'Open in file manager', menuClassify: 'Set category',
   tagDeleteTitle: 'Delete this tag?', tagDeleteMessage: 'Documents carrying this tag lose it and keep their other tags; one that had no other tag moves to Unclassified.', tagPlaceholder: 'New tag · Enter', tagHint: 'Enter to create · Esc to cancel', chunk: 'passages', added: 'Added {date}', updated: 'Indexed {date}',
   complete: 'Indexed {count} file(s).', completeUnchanged: 'Indexed {count} file(s); {unchanged} unchanged.', failed: 'Failed: {details}', unavailable: 'Finch bridge is unavailable.',
-  unsupported: 'Unsupported file type', tooLarge: 'File must be between 1 byte and 64 MB', reading: 'Reading {name}…', uploading: 'Importing {name} ({percent}%)…', externalSource: 'Outside the library: {path}',
+  unsupported: 'Unsupported file type', tooLarge: 'File must be between 1 byte and {max} MB', reading: 'Reading {name}…', uploading: 'Importing {name} ({percent}%)…', externalSource: 'Outside the library: {path}',
   backupLabel: 'Back up to a folder', syncLabel: 'Refresh changed sources', syncWorking: 'Refreshing changed sources…', syncDone: 'Refreshed: {updated} updated, {removed} removed, {unchanged} unchanged.', syncIdle: 'Nothing to refresh: every source file is unchanged.',
   syncUnreachable: '{count} source file(s) cannot be reached right now; their indexes were kept.', syncFailed: '{count} source file(s) could not be refreshed.',
   engineNeeded: 'Importing this needs {name}. Its installation just started in the background — drop it again once it is ready.',
@@ -73,7 +73,10 @@ const DEFAULT_TAG = 'default';
 /** How many category badges a row shows before it summarises the rest as "+N". */
 const MAX_ROW_BADGES = 3;
 const ALLOWED = new Set(['md','markdown','txt','doc','docx','pdf','png','jpg','jpeg','webp','bmp','tif','tiff']);
-const MAX_FILE = 64 * 1024 * 1024;
+// Mirrors MAX_FILE_BYTES in the store — the page cannot import the backend bundle. A test keeps
+// the two in step, so raising one without the other fails the build.
+const MAX_FILE = 200 * 1024 * 1024;
+const MAX_FILE_MB = MAX_FILE / (1024 * 1024);
 const CHUNK_SIZE = 192 * 1024;
 const byId = (id: string) => document.getElementById(id)!;
 const bridge = window.finch;
@@ -1067,7 +1070,7 @@ function base64(bytes: Uint8Array): string {
 async function importOne(file: File, tagId: string): Promise<boolean> {
   const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
   if (!ALLOWED.has(extension)) throw new Error(tr('unsupported'));
-  if (file.size < 1 || file.size > MAX_FILE) throw new Error(tr('tooLarge'));
+  if (file.size < 1 || file.size > MAX_FILE) throw new Error(tr('tooLarge', { max: MAX_FILE_MB }));
   importProgress = { label: tr('reading', { name: file.name }), percent: 0 };
   renderActivity();
   await uploadRequest('uploadStart', { name: file.name, size: file.size, tagId });
