@@ -255,7 +255,11 @@ svg { flex: none; width: 18px; height: 18px; }
 .tag-row.drop-before::before { top: -1px; }
 .tag-row.drop-after::after { bottom: -1px; }
 .tag-editor { background: var(--finch-bg-active, var(--fallback-active)); }
-.tag-editor input { min-width: 0; width: 100%; padding: 2px 0; border: 0; border-bottom: 1px solid var(--finch-accent, var(--fallback-accent)); border-radius: 0; outline: 0; background: transparent; color: var(--finch-text-primary, var(--fallback-ink)); font-size: var(--tag-label-size); font-weight: 650; }
+/* A tag that does not exist yet is not the selected one — the selected-row fill would claim it is. */
+.tag-row.creating .tag-editor { background: transparent; }
+/* The underline is an inset shadow, not a border: the row is a fixed 30px line, and a border plus
+   padding on the field grew the creating row past every other row in the column. */
+.tag-editor input { min-width: 0; width: 100%; padding: 0; border: 0; border-radius: 0; outline: 0; background: transparent; box-shadow: inset 0 -1px 0 var(--finch-accent, var(--fallback-accent)); color: var(--finch-text-primary, var(--fallback-ink)); font-size: var(--tag-label-size); font-weight: 650; }
 .tag-editor input:focus-visible { outline: 0; }
 /* A hint inside the field, not typed text: quieter and lighter than the value it replaces. */
 .tag-editor input::placeholder { color: var(--finch-text-tertiary, var(--fallback-muted)); font-weight: 400; }

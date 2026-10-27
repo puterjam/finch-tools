@@ -27,3 +27,16 @@ test('the tag field writes at the same size as the label it replaces', () => {
   assert.match(size('.tag-name'), /var\(--tag-label-size\)/, 'the label size is a token, not a literal');
   assert.equal(size('.tag-editor input'), size('.tag-name'), 'field and label share one size');
 });
+
+test('the naming field keeps the row the same height as a plain tag row', () => {
+  // .tag-choice and .tag-editor share one 30px line, so the field inside may not add to it:
+  // padding and a border-bottom used to push the creating row a few pixels above the others.
+  const field = css.match(/\.tag-editor input\s*\{[^}]*\}/)[0];
+  assert.match(field, /padding:\s*0\s*;/, 'the field adds no padding of its own');
+  assert.doesNotMatch(field, /border-bottom/, 'the underline is not a border');
+  assert.match(field, /box-shadow:\s*inset 0 -1px 0/, 'the underline costs no layout height');
+});
+
+test('a tag that does not exist yet is not drawn as the selected one', () => {
+  assert.match(css, /\.tag-row\.creating \.tag-editor\s*\{[^}]*background:\s*transparent/);
+});
