@@ -380,6 +380,10 @@ function wireTagDrag(row: HTMLElement, id: string, choice: HTMLElement): void {
   });
 }
 function startTagCreate(): void {
+  // A rename field that still holds focus would make renderTags() keep the column as it is, and
+  // "+" would look dead. Clicking "+" is an explicit intent to leave that edit behind.
+  const active = document.activeElement as HTMLElement | null;
+  if (active && byId('tags').contains(active) && typeof active.blur === 'function') active.blur();
   creatingTag = true;
   inlineTagEditing = null;
   renderTags();
@@ -399,6 +403,15 @@ function renderTags(): void {
   if ((inlineTagEditing !== null || creatingTag) && liveEditor && document.activeElement === liveEditor) return;
   container.replaceChildren();
   const all: Tag = { id: 'all', name: tr('all'), count: tags.reduce((sum, tag) => sum + tag.count, 0) };
+  // Rows are collected first, then the new-tag row is spliced in: it belongs below Unclassified,
+  // but that row is skipped when it is empty, and appending the creating row inside the loop under
+  // it meant "+" did nothing at all in a library with nothing unclassified.
+  const rows: HTMLElement[] = [];
+  let createAfter = 1;
+  const push = (row: HTMLElement, id: string | null): void => {
+    rows.push(row);
+    if (id === DEFAULT_TAG) createAfter = rows.length;
+  };
   for (const tag of [all, ...tags]) {
     const id = tag.id === 'all' ? null : tag.id;
     // An empty Unclassified has nothing to open, so its row drops out instead of parking a "0" in
@@ -423,7 +436,7 @@ function renderTags(): void {
         if (inlineTagEditing === id && document.activeElement !== field) finishTagRename(id, tag.name, undefined, false);
       }, 0));
       editor.append(svg(TagIcon), field, node('span', 'tag-count', String(tag.count)));
-      row.append(editor); container.append(row); continue;
+      row.append(editor); push(row, id); continue;
     }
     const choice = node('button', 'tag-choice') as HTMLButtonElement;
     choice.type = 'button'; choice.setAttribute('aria-pressed', String(selectedTag === id));
@@ -447,10 +460,10 @@ function renderTags(): void {
       actions.append(rename, remove); row.append(actions);
       wireTagDrag(row, id, choice);
     }
-    container.append(row);
-    // A new tag joins the user's own tags, so its row opens right below Unclassified.
-    if (creatingTag && tag.id === DEFAULT_TAG) container.append(tagCreateRow());
+    push(row, id);
   }
+  if (creatingTag) rows.splice(Math.min(createAfter, rows.length), 0, tagCreateRow());
+  container.append(...rows);
   byId('library-title').textContent = tagName(selectedTag);
   updateScope();
 }
