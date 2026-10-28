@@ -273,8 +273,9 @@ function render(): void {
     heights[index] += width * dimensions.height / dimensions.width + 12;
   });
   animateCards(before);
-  requestAnimationFrame(updateScrollEdges);
+  requestAnimationFrame(() => { updateScrollEdges(); fillViewport(); });
 }
+
 
 /** Reuses an existing card (and its loaded image) instead of rebuilding it. */
 function cardFor(record: GalleryItem): HTMLElement {
@@ -400,9 +401,15 @@ function pageMore(): void {
   render();
 }
 
-/** A short page in a tall window never scrolls, so keep paging until it does. */
+/**
+ * A short page in a tall window never scrolls, so it would never page again.
+ * Each render checks whether the cards actually fill the window and asks for
+ * one more page when they do not; `shown` grows every round, so this settles.
+ */
 function fillViewport(): void {
-  if (document.documentElement.scrollHeight <= window.innerHeight + 8) pageMore();
+  if (el('app').hidden || shown >= visibleRecords().length) return;
+  if (document.documentElement.scrollHeight > window.innerHeight + 8) return;
+  pageMore();
 }
 
 /** Only shade edges where actual cards continue beyond the visible area. */
@@ -434,5 +441,4 @@ window.addEventListener('resize', onScroll, { passive: true });
 
 installTooltips();
 paintCopy(); render();
-requestAnimationFrame(fillViewport);
 api?.postMessage({ type: 'requestGallery' });

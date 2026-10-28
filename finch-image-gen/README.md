@@ -24,7 +24,7 @@ Every generation lands in the gallery — open it from the image tool entry in t
 Older Finch versions remain supported through image annotations containing the complete request. Editable message text is an optional enhancement only when the host exposes it; the released app does not gain it merely by updating this mini tool. Development stays on the published SDK 0.3.15, with no SDK update or publication required.
 
 - **Compact masonry** — cards never exceed 220px, with at most five columns. Narrow Panels reflow without stretching a lone image, and the list keeps clear of the sticky filters above and the window edge below, so no row looks clipped. Reflow and resizing ease over 240ms, respect reduced motion, and keep the same decoded image nodes; shallow 12px edge shades appear only where more cards continue offscreen. Click the picture for the native preview.
-- **Opens fast, stays fast** — the grid renders 4K originals from thumbnails it made itself, keeps them on disk, and shows the library 20 cards at a time as you scroll. The title and the session filters stay pinned on top, with a divider once the grid passes under them.
+- **Opens fast, stays fast** — the grid renders 4K originals from thumbnails it made itself, keeps them on disk, and shows the library 20 cards at a time as you scroll, and keeps paging on its own when the window is taller than one page. The title and the session filters stay pinned on top, with a divider once the grid passes under them.
 - **Less chrome** — the card is just the picture; hover brings up two lines of prompt over a bottom gradient plus the action buttons, and click opens Finch's native preview. A wide picture makes a short card: the wording drops to one line and always stops below the buttons, so the two never collide. Session filters sit below the title, like the Artifacts library.
 - **Attach in one click** — inside a session Panel, hovering a card offers **Attach**: the picture and its original prompt enter the input box together, as annotations on older hosts or editable text on capable hosts. The action uses a copy icon rather than a paperclip, and adds no toast of its own: Finch's own added-context confirmation is the signal, so only failures speak up. No editor detour for "look at this picture".
 - **Edit in place** — the editor fills its Panel. The picture gets the whole area and the tool capsule floats on top of it, with no fixed-width side panel.
@@ -107,7 +107,7 @@ Click the **settings** (gear) menu on the image tool card in Toolcase → **API 
 **兼容旧版 Finch**：旧宿主使用图片批注承载完整说明，可以正常插入，但批注不是可编辑正文。只有宿主实际提供新能力时才增强为正文；单独更新小程序不会让旧 App 获得这项能力。开发依赖固定使用已发布的 SDK 0.3.15，不要求升级或发布 SDK。
 
 - **紧凑瀑布流**：每张卡片最大 220px，每排最多五列；窄面板自动重排，只有一张图也不会撑满整行。列表上下都留白：首行不贴筛选栏，末行不贴窗口底，两端都不会像被裁掉。换列、变大变小都有 240ms 缓动，不重建图片，并尊重系统减少动态效果设置；列表边缘仅在还有内容时出现 12px 的浅遮挡阴影。点击图片用内置预览器查看。
-- **打开快、翻得快**：网格不用 4K 原图，而是用页面自己生成的缩略图（存在本地，下次打开直接用），并且一次只渲染 20 张、滚到底再续。标题和会话筛选固定在顶部，网格滚到下面时出现一条分隔线。
+- **打开快、翻得快**：网格不用 4K 原图，而是用页面自己生成的缩略图（存在本地，下次打开直接用），并且一次只渲染 20 张、滚到底再续；窗口比一页还高时会自己继续补页，不用先滚动。标题和会话筛选固定在顶部，网格滚到下面时出现一条分隔线。
 - **轻量卡片**：卡片上只有图片本身，悬停时底部渐变上显示两行提示词、右上角出现操作按钮，点击图片用内置预览器查看。特别宽的图会压成矮卡片，此时提示词只留一行并停在按钮下方，两者不会互相遮挡。标题下方的筛选沿用成果库风格，不再提供搜索框。
 - **一键插入**：在会话面板里悬停卡片会多出一个**插入**按钮，把图片和原始提示词一起插入（附件本身就是原图，正文不再重复原图路径）；旧宿主走图片批注，支持新能力的宿主才使用可编辑正文；图标改为复制而非别针；只想「让助手看看这张图」时不用绕进编辑器。插入成功不再多弹一条提示，宿主的「已添加上下文」就是确认；只有失败才提示。
 - **区域内全屏编辑**：填满当前 Panel，图片占满整个区域，工具条浮动在图片上方，不再有固定宽侧栏。

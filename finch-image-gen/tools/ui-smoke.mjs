@@ -423,6 +423,22 @@ async function runLoadingTests() {
   }));
   assert(parseFloat(shades.top) <= 12 && parseFloat(shades.bottom) <= 12 && shades.pointer === 'none', 'Edge shades stay shallow and never block clicks');
 
+  // A window taller than one page must fill itself: after a filter change the
+  // list starts at one page again and cannot wait for a scroll it will never get.
+  await page.setViewportSize({ width: 1200, height: 2000 });
+  await settle();
+  await page.getByRole('button', { name: '全部', exact: true }).click();
+  await settle();
+  const tall = await page.evaluate(() => ({
+    cards: document.querySelectorAll('.card').length,
+    scrollHeight: Math.round(document.documentElement.scrollHeight),
+    viewport: innerHeight, scrollY: Math.round(scrollY),
+  }));
+  assert(tall.cards > 20, `A tall window keeps paging without a scroll (${JSON.stringify(tall)})`);
+  assert(tall.cards === 45 || tall.scrollHeight > tall.viewport + 8, `It stops once the window is full or the library ends (${JSON.stringify(tall)})`);
+  await page.setViewportSize({ width: 960, height: 600 });
+  await settle();
+
   await page.evaluate(() => {
     window.__host.records = window.__host.originalRecords;
     window.__host.snapshot();
