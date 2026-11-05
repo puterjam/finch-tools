@@ -15,6 +15,8 @@ export interface EnvironmentStep {
   status: EnvironmentStepStatus;
   /** Optional components do not block the library; they keep installing in the background. */
   optional: boolean;
+  /** Installed only when its first real operation requests it. */
+  lazy?: boolean;
   /** Live message from the installer, e.g. "Downloading …". */
   message?: string;
   /** 0–100 when the installer reports one. */
@@ -46,11 +48,13 @@ export interface EnvironmentTask {
   version?: string;
   /** Marks a component the library can run without, so setup need not block on it. */
   optional?: boolean;
+  lazy?: boolean;
 }
 
 export class EnvironmentManager {
   private steps: EnvironmentStep[];
   private running: Promise<EnvironmentSnapshot> | null = null;
+  private runningIds = new Set<string>();
   private startedAt?: number;
   private finishedAt?: number;
   /** Components confirmed present at least once here, so re-verifying them never revokes usability. */
@@ -60,7 +64,7 @@ export class EnvironmentManager {
     private readonly tasks: EnvironmentTask[],
     private readonly onChange: (snapshot: EnvironmentSnapshot) => void = () => {},
   ) {
-    this.steps = tasks.map((task) => ({ id: task.id, status: 'pending', optional: Boolean(task.optional) }));
+    this.steps = tasks.map((task) => ({ id: task.id, status: 'pending', optional: Boolean(task.optional), lazy: Boolean(task.lazy) }));
   }
 
   snapshot(): EnvironmentSnapshot {
@@ -109,23 +113,39 @@ export class EnvironmentManager {
   }
 
   /**
-   * Runs every component in turn. A second call while one is in flight joins the
+   * Runs automatic components in turn, leaving lazy ones untouched. A second call joins the
    * existing run instead of starting a duplicate download.
    */
   install(force = false): Promise<EnvironmentSnapshot> {
     if (this.running) return this.running;
-    const run = this.execute(force).then(() => {
-      if (this.running === run) this.running = null;
+    return this.start(this.tasks.filter(task => !task.lazy), force);
+  }
+
+  /** Join a matching download, or queue a lazy component after the current setup run. */
+  ensure(id: string): Promise<EnvironmentSnapshot> {
+    const task = this.tasks.find(task => task.id === id);
+    if (!task) return Promise.reject(new Error(`Unknown environment step: ${id}`));
+    if (this.running) {
+      if (this.runningIds.has(id)) return this.running;
+      return this.running.then(() => this.ensure(id));
+    }
+    return this.start([task], false);
+  }
+
+  private start(tasks: EnvironmentTask[], force: boolean): Promise<EnvironmentSnapshot> {
+    this.runningIds = new Set(tasks.map(task => task.id));
+    const run = this.execute(force, tasks).then(() => {
+      if (this.running === run) { this.running = null; this.runningIds.clear(); this.emit(); }
       return this.snapshot();
     });
     this.running = run;
     return run;
   }
 
-  private async execute(force: boolean): Promise<void> {
+  private async execute(force: boolean, tasks: EnvironmentTask[]): Promise<void> {
     this.startedAt = Date.now();
     this.finishedAt = undefined;
-    for (const task of this.tasks) await this.runStep(task, force);
+    for (const task of tasks) await this.runStep(task, force);
     this.finishedAt = Date.now();
     this.emit();
   }

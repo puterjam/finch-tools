@@ -28,15 +28,58 @@ test('the tag field writes at the same size as the label it replaces', () => {
   assert.equal(size('.tag-editor input'), size('.tag-name'), 'field and label share one size');
 });
 
-test('the naming field keeps the row the same height as a plain tag row', () => {
-  // .tag-choice and .tag-editor share one 30px line, so the field inside may not add to it:
-  // padding and a border-bottom used to push the creating row a few pixels above the others.
+test('tag editing is one comfortably padded input surface without an inner underline', () => {
+  assert.match(css, /\.tag-editor\s*\{[^}]*min-height:\s*36px;[^}]*padding:\s*7px 10px;[^}]*border:\s*1px solid/);
   const field = css.match(/\.tag-editor input\s*\{[^}]*\}/)[0];
-  assert.match(field, /padding:\s*0\s*;/, 'the field adds no padding of its own');
-  assert.doesNotMatch(field, /border-bottom/, 'the underline is not a border');
-  assert.match(field, /box-shadow:\s*inset 0 -1px 0/, 'the underline costs no layout height');
+  assert.match(field, /padding:\s*0\s*;/);
+  assert.match(field, /box-shadow:\s*none/);
+  assert.match(field, /font-weight:\s*500/);
+  assert.doesNotMatch(field, /border-bottom|inset 0 -1px/);
 });
 
-test('a tag that does not exist yet is not drawn as the selected one', () => {
-  assert.match(css, /\.tag-row\.creating \.tag-editor\s*\{[^}]*background:\s*transparent/);
+test('a new tag uses a neutral form surface and all available text width', () => {
+  assert.match(css, /\.tag-editor\s*\{[^}]*background:\s*var\(--finch-bg-main/);
+  assert.match(css, /\.tag-row\.creating \.tag-editor\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+});
+
+test('tag counts yield to actions without moving names or hiding folder counts', () => {
+  assert.match(css, /\.tag-actions\s*\{[^}]*right:\s*5px/, 'actions stay at the trailing edge');
+  assert.match(css, /\.tag-row:has\(\.tag-actions\) \.tag-choice\s*\{[^}]*grid-template-columns:\s*18px minmax\(0, 1fr\) 50px/, 'a fixed slot is reserved before interaction');
+  assert.match(css, /\.tag-row:has\(\.tag-actions\):hover \.tag-choice \.tag-count, \.tag-row:has\(\.tag-actions\):focus-within \.tag-choice \.tag-count\s*\{\s*visibility:\s*hidden/, 'hover and keyboard focus show actions instead of counts');
+  assert.doesNotMatch(css, /\.tag-row[^{}]*:hover[^{}]*\{[^}]*padding-right/, 'hover does not resize the label');
+  assert.doesNotMatch(css, /\.directory[^{}]*\.tag-count[^{}]*\{[^}]*visibility:\s*hidden/, 'folder tallies remain independent');
+});
+
+test('step numerals compensate for font metrics while the circle and list layout stay fixed', () => {
+  const badge = css.match(/\.empty-step-number\s*\{([^}]+)\}/)[1];
+  assert.match(badge, /display:\s*inline-flex/);
+  assert.match(badge, /align-items:\s*center/);
+  assert.match(badge, /justify-content:\s*center/);
+  assert.match(badge, /line-height:\s*1\s*;/);
+  assert.match(badge, /height:\s*20px/);
+  assert.match(badge, /box-sizing:\s*border-box/);
+  assert.match(badge, /padding-bottom:\s*2px/);
+  assert.doesNotMatch(badge, /transform:/, 'the circular outline must not move');
+});
+
+test('footer progress never participates in grid sizing when it appears or disappears', () => {
+  const footer = css.match(/\.sidebar-footer\s*\{([^}]+)\}/)[1];
+  const progress = css.match(/\.activity\s*\{([^}]+)\}/)[1];
+  assert.match(footer, /position:\s*relative/);
+  assert.match(progress, /position:\s*absolute/);
+  assert.match(progress, /bottom:\s*3px/);
+  assert.match(progress, /height:\s*3px/);
+  assert.match(progress, /left:\s*10px/);
+  assert.match(progress, /right:\s*10px/);
+  assert.doesNotMatch(progress, /(?:margin|padding|grid-row):/, 'visibility must not change the parent layout');
+});
+
+test('the spinning scan action uses standard refresh arrows, never a rotating folder', async () => {
+  const html = await readFile(new URL('../src/view.html', import.meta.url), 'utf8');
+  const source = await readFile(new URL('../src/view.ts', import.meta.url), 'utf8');
+  const button = html.match(/<button[^>]+id="sync"[^>]*>([\s\S]*?)<\/button>/)[1];
+  assert.match(button, /data-icon="refresh-cw"/);
+  assert.doesNotMatch(button, /folder-sync/);
+  assert.match(source, /'refresh-cw': RefreshCw/);
+  assert.match(css, /#sync\[aria-busy="true"\] svg\s*\{[^}]*animation:/);
 });

@@ -38,7 +38,7 @@ test('all localized templates append only to the current editable draft', async 
         assert.equal(current, `${initial}${copy[`ask.${item.id}`]}`);
       }
     }
-    assert.equal(menu.filter(item => !item.disabled && !item.separator).length, 8);
+    assert.equal(menu.filter(item => !item.disabled && !item.separator).length, 7);
   }
 });
 
@@ -47,7 +47,7 @@ test('an empty library reports no index time and hides irrelevant read templates
   assert.equal(await provider.getBadge({}), undefined);
   const menu = await provider.getMenu({});
   assert.equal(menu.find(item => item.id === 'library-indexed').description, copy['composer.neverIndexed']);
-  assert.deepEqual(menu.filter(item => !item.disabled && !item.separator).map(item => item.id), ['guide', 'article']);
+  assert.deepEqual(menu.filter(item => !item.disabled && !item.separator).map(item => item.id), ['guide', 'sync']);
 });
 
 test('the last index time remains persisted when a menu is opened repeatedly', async () => {
@@ -61,9 +61,9 @@ test('a stale template cannot operate on a now-empty or unavailable library', as
   const { provider, change } = await providerFor();
   const actions = { composer: { fill: async () => assert.fail('Stale action must not fill') } };
   change({ documents: 0, lastIndexedAt: null });
-  await assert.rejects(provider.execute({}, 'search', actions), /添加资料/);
+  await assert.rejects(provider.execute({}, 'search', actions), /扫描更新/);
   change(null);
-  await assert.rejects(provider.execute({}, 'article', actions));
+  await assert.rejects(provider.execute({}, 'sync', actions));
   await provider.execute({}, 'library-count', actions);
   await provider.execute({}, 'unrecognized', actions);
 });
@@ -77,12 +77,12 @@ test('metadata read errors are not turned into fabricated zero counts', async ()
 test('catalogue aggregate uses unique documents and the true maximum index timestamp without an engine', async () => {
   const root = await mkdtemp(join(tmpdir(), 'finch-knowledge-metadata-'));
   try {
-    const store = new KnowledgeStore(root);
+    const store = new KnowledgeStore(join(root, '.knowledge'), { directoryRoot: root, cachePath: root });
     await store.summary();
-    const db = new DatabaseSync(join(root, 'catalog.sqlite'));
+    const db = new DatabaseSync(join(root, '.knowledge', 'catalog.sqlite'));
     const insert = db.prepare('INSERT INTO documents (id,path,name,hash,added_at,indexed_at,chunks) VALUES (?,?,?,?,?,?,?)');
-    insert.run('one', '/fixture/one.md', 'one.md', 'one', 1000, 9000, 1);
-    insert.run('two', '/fixture/two.md', 'two.md', 'two', 2000, 7000, 2);
+    insert.run('one', join(root,'one.md'), 'one.md', 'one', 1000, 9000, 1);
+    insert.run('two', join(root,'two.md'), 'two.md', 'two', 2000, 7000, 2);
     db.exec("INSERT INTO tags (id,name,created_at) VALUES ('a','A',1),('b','B',2); INSERT INTO document_tags VALUES ('one','a',1),('one','b',1),('two','a',1),('two','b',1)");
     const summary = await store.summary();
     assert.equal(summary.documents, 2);

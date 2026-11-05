@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
+import { fixtureLink as symlink, nativeTarget, fixtureRm as rm } from './test-platform.mjs';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, symlink, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { DEFAULT_TAG, KnowledgeStore, chunkText, vectorize } from '../dist/index.js';
+import { DEFAULT_TAG, KnowledgeStore, chunkText, vectorize } from './test-store.mjs';
 
 test('local n-gram embeddings and overlapping chunks', () => {
   assert.equal(vectorize('LanceDB')[0] !== undefined, true);
@@ -15,12 +16,12 @@ test('local n-gram embeddings and overlapping chunks', () => {
 test('index, search, deduplicate, replace and remove a local document in LanceDB', async () => {
   const root = await mkdtemp(join(tmpdir(), 'finch-knowledge-test-'));
   try {
-    const target = process.platform === 'darwin' ? 'darwin-arm64' : `${process.platform}-${process.arch}-gnu`;
+    const target = nativeTarget;
     const native = resolve(`node_modules/@lancedb/lancedb-${target}/lancedb.${target}.node`);
     const engine = join(root, 'lancedb-engine', '0.39.0');
     await mkdir(engine, { recursive: true });
     await symlink(native, join(engine, `lancedb.${target}.node`));
-    const store = new KnowledgeStore(root);
+    const store = new KnowledgeStore(join(root, '.knowledge'), { directoryRoot: root, cachePath: root });
     assert.deepEqual(await store.list(), []);
     assert.deepEqual(await store.search('LanceDB'), []);
     const file = join(root, "reader's-notes.md");
@@ -50,7 +51,7 @@ test('the first paint reads an empty catalogue without touching the vector engin
   // A fresh machine has no engine yet; the setup screen must appear before anything downloads.
   const root = await mkdtemp(join(tmpdir(), 'finch-knowledge-firstpaint-'));
   try {
-    const store = new KnowledgeStore(root);
+    const store = new KnowledgeStore(join(root, '.knowledge'), { directoryRoot: root, cachePath: root });
     const summary = await store.summary();
     assert.equal(summary.documents, 0);
     assert.equal(summary.lastIndexedAt, null);
@@ -74,7 +75,8 @@ test('a missing engine is reported before the library lock is taken', async () =
     const seen = [];
     let readWhileChecking = null;
     let store; // assigned below, read from inside the hook
-    store = new KnowledgeStore(root, {
+    store = new KnowledgeStore(join(root, '.knowledge'), {
+      directoryRoot: root,
       cachePath: join(root, 'cache'),
       requireEngine: async (extension) => {
         seen.push(extension);
@@ -105,7 +107,8 @@ test('formats that need no engine never consult it', async () => {
   await writeFile(file, '# Notes\n\nPlain text needs no engine at all.');
   try {
     let calls = 0;
-    const store = new KnowledgeStore(root, {
+    const store = new KnowledgeStore(join(root, '.knowledge'), {
+      directoryRoot: root,
       cachePath: join(root, 'cache'),
       requireEngine: async () => { calls++; },
     });
@@ -121,7 +124,7 @@ test('a query nothing mentions returns nothing, not the nearest passages', async
   // because a vector search always returns its nearest neighbours however far off they are.
   const root = await mkdtemp(join(tmpdir(), 'finch-knowledge-relevance-'));
   try {
-    const store = new KnowledgeStore(root);
+    const store = new KnowledgeStore(join(root, '.knowledge'), { directoryRoot: root, cachePath: root });
     const english = join(root, 'trends.md');
     await writeFile(english, '# Report\n\nThe 2028 outlook covers tail risks and redistribution.');
     await store.importFile(english, 'trends.md');
@@ -143,7 +146,7 @@ test('a query nothing mentions returns nothing, not the nearest passages', async
 test('a phrase nothing contains falls back to its runs, and reports what it matched', async () => {
   const root = await mkdtemp(join(tmpdir(), 'finch-knowledge-fallback-'));
   try {
-    const store = new KnowledgeStore(root);
+    const store = new KnowledgeStore(join(root, '.knowledge'), { directoryRoot: root, cachePath: root });
     await writeFile(join(root, 'notes.md'), '# 笔记\n\n这篇文章讨论知识的组织方式，也提到子舜这个名字出现的场合。');
     await store.importFile(join(root, 'notes.md'), 'notes.md');
     await writeFile(join(root, 'english.md'), '# English\n\nOnboarding is described here.');

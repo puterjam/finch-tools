@@ -5,7 +5,7 @@ import { createContext, runInContext } from 'node:vm';
 import { transform } from 'esbuild';
 import * as lucide from 'lucide';
 
-const view = await readFile(new URL('../src/view.ts', import.meta.url), 'utf8');
+const view = (await readFile(new URL('../src/view.ts', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 // Only the icon names view.ts actually imports are handed to the sandbox: spreading all of lucide
 // would shadow the standard globals (lucide ships a `Map`, a `Filter`, a `Select`…).
 const lucideNames = view.match(/^import \{([^}]*)\} from 'lucide';/m)[1]
@@ -13,7 +13,7 @@ const lucideNames = view.match(/^import \{([^}]*)\} from 'lucide';/m)[1]
   .map((entry) => entry.trim().split(/\s+as\s+/))
   .filter(([name]) => name !== 'IconNode');
 const icons = Object.fromEntries(lucideNames.map(([name, alias]) => [alias ?? name, lucide[name]]));
-const declarations = view.slice(0, view.indexOf('\nmountStaticIcons();')).replace(/^import .*\n/gm, '');
+const declarations = view.slice(0, view.indexOf('\nmountStaticIcons();')).replace(/^import .*\r?\n/gm, '');
 const { code } = await transform(declarations, { loader: 'ts' });
 
 /**
@@ -127,30 +127,30 @@ function fixture({ tags }) {
 const names = (f) => f.tags.querySelectorAll('.tag-row').map((row) => row.dataset.id || (row.classes.has('creating') ? 'creating' : '?'));
 
 test('the new-tag row opens even when Unclassified is not on screen', () => {
-  // A fully classified library has no Unclassified row at all — the column showed All sources plus
-  // the user's own tags, and "+" appended its input under a row that had been skipped.
+  // All sources belongs to directory navigation; the color-tag module contains only real tags.
+  // Creating a tag must work without any synthetic classification row.
   const f = fixture({ tags: [{ id: 'a', name: '市场分析', count: 1 }, { id: 'b', name: '工作职场', count: 3 }] });
-  assert.deepEqual(names(f), ['all', 'a', 'b'], 'no Unclassified row when nothing is unclassified');
+  assert.deepEqual(names(f), ['a', 'b'], 'only user tags appear');
   assert.equal(f.tags.querySelector('.tag-row.creating'), null);
   f.run('startTagCreate();');
-  assert.deepEqual(names(f), ['all', 'creating', 'a', 'b'], 'the row lands under All sources');
+  assert.deepEqual(names(f), ['creating', 'a', 'b'], 'the row lands at the start of the color-tag module');
   const field = f.tags.querySelector('.tag-row.creating .tag-name-input');
   assert.ok(field, 'the input is really in the column');
   assert.equal(f.document.activeElement, field, 'and it holds focus so typing goes there');
 });
 
-test('the new-tag row still sits below Unclassified when that row is present', () => {
+test('Unclassified is hidden even with documents, and the new-tag row leads user tags', () => {
   const f = fixture({ tags: [{ id: 'default', name: 'Unclassified', count: 2 }, { id: 'a', name: '市场分析', count: 1 }] });
   f.run('startTagCreate();');
-  assert.deepEqual(names(f), ['all', 'default', 'creating', 'a']);
+  assert.deepEqual(names(f), ['creating', 'a']);
 });
 
 test('cancelling drops the new-tag row again', () => {
   const f = fixture({ tags: [{ id: 'a', name: '市场分析', count: 1 }] });
   f.run('startTagCreate();');
-  assert.equal(f.tags.querySelectorAll('.tag-row').length, 3);
+  assert.equal(f.tags.querySelectorAll('.tag-row').length, 2);
   f.run('cancelTagCreate();');
-  assert.deepEqual(names(f), ['all', 'a']);
+  assert.deepEqual(names(f), ['a']);
 });
 
 test('a rename in progress does not swallow the click on +', () => {
@@ -160,4 +160,12 @@ test('a rename in progress does not swallow the click on +', () => {
   assert.ok(f.tags.querySelector('.tag-editor input'));
   f.run('startTagCreate();');
   assert.ok(f.tags.querySelector('.tag-row.creating .tag-name-input'), '+ wins over the open rename');
+});
+
+test('a library with only untagged documents shows the tag empty state, not a system tag', () => {
+  const f = fixture({ tags: [{ id: 'default', name: 'Unclassified', count: 20 }, { id: 'all', name: 'All sources', count: 20 }] });
+  assert.deepEqual(names(f), []);
+  assert.ok(f.tags.querySelector('.side-empty'));
+  f.run('startTagCreate();');
+  assert.deepEqual(names(f), ['creating']);
 });

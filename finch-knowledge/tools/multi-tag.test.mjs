@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, symlink, writeFile, rm } from 'node:fs/promises';
+import { fixtureLink as symlink, nativeTarget } from './test-platform.mjs';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { DEFAULT_TAG, KnowledgeStore, UploadReceiver } from '../dist/index.js';
+import { DEFAULT_TAG, KnowledgeStore } from '../dist/index.js';
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'finch-knowledge-multitag-'));
-  const target = process.platform === 'darwin' ? 'darwin-arm64' : `${process.platform}-${process.arch}-gnu`;
+  const target = nativeTarget;
   const native = resolve(`node_modules/@lancedb/lancedb-${target}/lancedb.${target}.node`);
   const engine = join(root, 'lancedb-engine', '0.39.0');
   await mkdir(engine, { recursive: true });
@@ -15,17 +16,16 @@ async function fixture() {
   return root;
 }
 async function upload(store, root, name, text, tagId) {
-  const receiver = new UploadReceiver(root, store);
-  const bytes = Buffer.from(text);
-  await receiver.begin(name, bytes.length, tagId);
-  await receiver.chunk(bytes.toString('base64'));
-  return receiver.finish();
+  const path = join(root, name);
+  await writeFile(path, text);
+  const indexed = await store.importFile(path, name, tagId);
+  return { documentId: indexed.document.id, unchanged: indexed.unchanged };
 }
 
 test('a document can carry several tags, and each one can find it', async () => {
   const root = await fixture();
   try {
-    const store = new KnowledgeStore(root);
+    const store = new KnowledgeStore(join(root, '.knowledge'), { directoryRoot: root, cachePath: root });
     const design = await store.createTag('Design');
     const writing = await store.createTag('Writing');
     // A file imported under one tag, then filed under a second one as well.
@@ -68,7 +68,7 @@ test('a document can carry several tags, and each one can find it', async () => 
 test('deleting a shared tag keeps the other tag, and only orphans land in Unclassified', async () => {
   const root = await fixture();
   try {
-    const store = new KnowledgeStore(root);
+    const store = new KnowledgeStore(join(root, '.knowledge'), { directoryRoot: root, cachePath: root });
     const shared = await store.createTag('Shared');
     const only = await store.createTag('Only');
     const keep = await store.createTag('Keep');
@@ -95,7 +95,7 @@ test('deleting a shared tag keeps the other tag, and only orphans land in Unclas
 test('re-importing the same copy under a second tag adds the tag instead of a second entry', async () => {
   const root = await fixture();
   try {
-    const store = new KnowledgeStore(root);
+    const store = new KnowledgeStore(join(root, '.knowledge'), { directoryRoot: root, cachePath: root });
     const first = await store.createTag('First');
     const second = await store.createTag('Second');
     const { documentId } = await upload(store, root, 'paper.md', '# Paper\n\nA single copy of this text.', first.id);
@@ -112,30 +112,20 @@ test('re-importing the same copy under a second tag adds the tag instead of a se
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('a v1 catalogue converts its single tag into one link', async () => {
+test('retired catalogues are rejected without migration, reset or deleting their files', async () => {
   const root = await fixture();
   try {
-    await mkdir(join(root, 'imports', '22222222-2222-4222-8222-222222222222'), { recursive: true });
-    const copy = join(root, 'imports', '22222222-2222-4222-8222-222222222222', 'old.md');
-    await writeFile(copy, '# Old\n\nLegacy content.');
+    const index = join(root, '.knowledge'); await mkdir(index);
+    const path = join(index, 'catalog.sqlite');
+    const original = join(root, 'old.md'); await writeFile(original, 'Keep this historical original.');
     const { DatabaseSync } = await import('node:sqlite');
-    const legacy = new DatabaseSync(join(root, 'catalog.sqlite'));
-    legacy.exec(`CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at INTEGER NOT NULL);
-      CREATE TABLE documents (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, name TEXT NOT NULL, hash TEXT NOT NULL, tag_id TEXT NOT NULL, added_at INTEGER NOT NULL, indexed_at INTEGER NOT NULL, chunks INTEGER NOT NULL, source_path TEXT);`);
-    legacy.prepare('INSERT INTO tags (id,name,created_at) VALUES (?,?,?)').run('22222222-2222-4222-8222-222222222222', 'Legacy', 1);
-    legacy.prepare('INSERT INTO documents (id,path,name,hash,tag_id,added_at,indexed_at,chunks,source_path) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run('11111111-1111-4111-8111-111111111111', copy, 'old.md', 'hash', '22222222-2222-4222-8222-222222222222', 2, 2, 1, null);
-    legacy.exec('PRAGMA user_version=3');
-    legacy.close();
-
-    const store = new KnowledgeStore(root);
-    const doc = await store.document('11111111-1111-4111-8111-111111111111');
-    assert.deepEqual(doc.tags, ['22222222-2222-4222-8222-222222222222'], 'the single tag became a link');
-    assert.equal((await store.page('22222222-2222-4222-8222-222222222222', 'updated', 0)).total, 1);
-    assert.equal((await store.summary()).tags.find((tag) => tag.id === DEFAULT_TAG).count, 0);
-    // And the column that held it is gone, so nothing can drift back to a single tag.
-    const columns = store.catalogColumnsForTest?.() ?? null;
-    if (columns) assert.equal(columns.includes('tag_id'), false);
-    await store.close();
+    const legacy = new DatabaseSync(path);
+    legacy.exec("CREATE TABLE documents (id TEXT PRIMARY KEY, path TEXT); PRAGMA user_version=3;");
+    legacy.prepare('INSERT INTO documents VALUES (?,?)').run('old', original); legacy.close();
+    const before = await readFile(path);
+    assert.throws(() => new KnowledgeStore(index, { directoryRoot: root, cachePath: root }), /Unsupported knowledge index format/);
+    assert.deepEqual(await readFile(path), before, 'opening must not stamp, migrate or reset the old catalogue');
+    assert.equal(await readFile(original, 'utf8'), 'Keep this historical original.');
+    assert.throws(() => new KnowledgeStore(root), /Only source-directory indexes/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

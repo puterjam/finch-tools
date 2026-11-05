@@ -1,8 +1,6 @@
-import { constants } from 'node:fs';
-import { lstat, open, readdir, realpath, stat } from 'node:fs/promises';
+import { lstat, readdir, realpath, stat } from 'node:fs/promises';
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { ACCEPTED, SIZE_LIMIT_MESSAGE, type KnowledgeStore } from './store.js';
-import { CHUNK_BYTES, MAX_UPLOAD_BYTES, UploadReceiver } from './uploads.js';
+import { ACCEPTED, SIZE_LIMIT_MESSAGE, MAX_FILE_BYTES } from './store.js';
 
 export interface ImportedFile { name: string; documentId: string; unchanged: boolean }
 
@@ -32,7 +30,7 @@ async function workspaceScope(cwd: string) {
 }
 
 function usableSize(size: number): boolean {
-  return size > 0 && size <= MAX_UPLOAD_BYTES;
+  return size > 0 && size <= MAX_FILE_BYTES;
 }
 
 /**
@@ -135,64 +133,3 @@ export async function expandImportTargets(
   return { targets, skipped, failures };
 }
 
-/** Agent imports use the same managed-copy and rollback path as the App View. */
-export async function importFromWorkspace(
-  storagePath: string,
-  store: KnowledgeStore,
-  cwd: string,
-  file: string,
-  tagId: string,
-  progress?: (received: number, total: number) => void,
-  signal?: AbortSignal,
-): Promise<ImportedFile> {
-  if (typeof file !== 'string' || !file.trim() || file.includes('\0')) throw new Error('Specify a local file path.');
-  const { root, canonicalRoot, contains } = await workspaceScope(cwd);
-  const selected = resolve(root, file);
-  if (!contains(root, selected)) throw new Error('The file must be inside the current workspace.');
-  if (!(await lstat(selected)).isFile()) throw new Error('Choose a regular file, not a symbolic link.');
-  const source = await realpath(selected);
-  if (!contains(canonicalRoot, source)) {
-    throw new Error('The file must be inside the current workspace.');
-  }
-  return importFromPath(storagePath, store, selected, tagId, progress, signal);
-}
-
-/**
- * Indexes one absolute file and keeps a managed copy. Callers decide what paths they are
- * willing to reach: a workspace import checks containment first, while a sync only ever
- * follows a source the user already imported.
- */
-export async function importFromPath(
-  storagePath: string,
-  store: KnowledgeStore,
-  selected: string,
-  tagId: string,
-  progress?: (received: number, total: number) => void,
-  signal?: AbortSignal,
-): Promise<ImportedFile> {
-  if (!(await lstat(selected).catch(() => null))?.isFile()) throw new Error('Choose a regular file, not a symbolic link.');
-  const handle = await open(selected, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-  const receiver = new UploadReceiver(storagePath, store);
-  try {
-    const info = await handle.stat();
-    if (!info.isFile() || !usableSize(info.size)) throw new Error(SIZE_LIMIT_MESSAGE);
-    const name = basename(selected);
-    await receiver.begin(name, info.size, tagId);
-    let received = 0;
-    for await (const chunk of handle.createReadStream({ highWaterMark: CHUNK_BYTES, autoClose: false, signal })) {
-      if (signal?.aborted) throw new Error('File import cancelled.');
-      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      await receiver.chunk(bytes.toString('base64'));
-      received += bytes.length;
-      progress?.(received, info.size);
-    }
-    if (signal?.aborted) throw new Error('File import cancelled.');
-    // The file it came from is the source a later sync follows; the copy is only the index target.
-    return await receiver.finish(selected);
-  } catch (error) {
-    await receiver.abort();
-    throw error;
-  } finally {
-    await handle.close().catch(() => {});
-  }
-}

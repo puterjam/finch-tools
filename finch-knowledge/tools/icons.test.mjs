@@ -1,26 +1,24 @@
 import assert from 'node:assert/strict';
 import { readFile, stat } from 'node:fs/promises';
 import { test } from 'node:test';
+import { ACCEPTED } from '../dist/index.js';
 
 const root = new URL('../', import.meta.url);
 const view = await readFile(new URL('src/view.ts', root), 'utf8');
 const pkg = JSON.parse(await readFile(new URL('package.json', root), 'utf8'));
 
-const allowed = new Set(
-  (/const ALLOWED = new Set\(\[([^\]]+)\]\)/.exec(view)?.[1] ?? '')
-    .split(',').map((entry) => entry.trim().replace(/^'|'$/g, '')).filter(Boolean),
-);
+const allowed = new Set(ACCEPTED);
 const entries = [...view.matchAll(/\{ extensions: \[([^\]]+)\], icon: '([^']+)' \}/g)]
   .map((match) => ({
     extensions: match[1].split(',').map((entry) => entry.trim().replace(/^'|'$/g, '')),
     icon: match[2],
   }));
 
-test('every importable format gets its own icon', () => {
-  assert.ok(allowed.size >= 13, 'the supported type list is read from the view');
+test('every indexable format gets its own icon', () => {
+  assert.ok(allowed.size >= 13, 'the supported type list comes from the indexing backend');
   assert.ok(entries.length >= 5, 'the icon map is read from the view');
   const covered = new Set(entries.flatMap((entry) => entry.extensions));
-  const missing = [...allowed].map((ext) => `.${ext}`).filter((ext) => !covered.has(ext));
+  const missing = [...allowed].filter((ext) => !covered.has(ext));
   assert.deepEqual(missing, [], 'a supported extension with no icon falls back to a generic file');
   // The map is ordered: the first match wins, so nothing may shadow an earlier, more specific entry.
   const seen = new Set();

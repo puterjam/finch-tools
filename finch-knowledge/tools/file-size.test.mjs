@@ -13,12 +13,9 @@ test('the cap is the one the store enforces, not a number someone remembered', (
   assert.equal(MAX_FILE_MB, 200, 'a scanned or exported PDF clears the old 64 MB without effort');
 });
 
-test('the page caps uploads at the same size the backend accepts', () => {
-  // The page bundle cannot import the store, so the two constants are kept in step here: a page
-  // that lets a bigger file through only earns a confusing failure at the end of the upload.
-  const [, bytes] = view.match(/const MAX_FILE = (\d+) \* 1024 \* 1024;/) ?? [];
-  assert.ok(bytes, 'the page keeps its own copy of the cap');
-  assert.equal(Number(bytes) * 1024 * 1024, MAX_FILE_BYTES);
+test('the page has no upload transport or duplicate source-size limit', () => {
+  assert.doesNotMatch(view, /const (MAX_FILE|CHUNK_SIZE)\s*=/);
+  assert.doesNotMatch(view, /request\('upload(Start|Chunk|Finish)'/);
 });
 
 test('every size message names the limit through {max}, never a hardcoded number', () => {

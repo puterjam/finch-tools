@@ -8,8 +8,8 @@ import { inScope } from '../dist/index.js';
 // Execute the real view functions and Bridge handler, without its page bootstrap. Only the DOM
 // boundary is faked: scroll, row identity and outbound page requests remain observable.
 async function fixture(scope = null) {
-  const source = await readFile(new URL('../src/view.ts', import.meta.url), 'utf8');
-  const declarations = source.slice(0, source.indexOf('\nmountStaticIcons();')).replace(/^import .*\n/gm, '');
+  const source = (await readFile(new URL('../src/view.ts', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const declarations = source.slice(0, source.indexOf('\nmountStaticIcons();')).replace(/^import .*\r?\n/gm, '');
   const start = source.indexOf('if (bridge) {\n  bridge.onMessage');
   const end = source.indexOf('  resetPage(); request(\'ready\');', start);
   const { code } = await transform(`${declarations}\n${source.slice(start, end)}\n}`, { loader: 'ts' });
@@ -31,7 +31,7 @@ async function fixture(scope = null) {
     inScope,
     makeRow(doc) {
       const row = {
-        id: doc.id, tags: doc.tags,
+        id: doc.id, tags: doc.tags, status: doc.status,
         replaceWith(next) { rows.set(doc.id, next); },
         remove() { rows.delete(doc.id); },
       };
@@ -44,12 +44,14 @@ async function fixture(scope = null) {
     buildRow = (doc) => makeRow(doc);
     renderDocs = () => { throw new Error('The document list was rebuilt'); };
     selectedTag = ${JSON.stringify(scope)};
-    docs = Array.from({ length: 100 }, (_, i) => ({ id: String(i), tags: [] }));
+    libraryPath = '/library';
+    docs = Array.from({ length: 100 }, (_, i) => ({ id: String(i), path: '/library/' + i + '.md', tags: [], status: 'ready' }));
     total = 150; beforeOffset = 0; nextOffset = 100;
   `, context);
   for (let i = 0; i < 100; i++) rows.set(String(i), context.makeRow({ id: String(i), tags: [] }));
   return {
     rows, requests, elements,
+    status(root, path, phase, document, version) { receive({ type: 'documentStatus', root, path, phase, document, version }); },
     change(id, nextTags, count = 150) {
       receive({ type: 'changed', tags: [{ id: 'default', name: 'Unclassified', count }, { id: 'a', name: 'A', count: 1 }],
         change: { kind: 'tagToggle', documentId: id, tags: nextTags } });
@@ -101,5 +103,30 @@ test('an offscreen toggle updates the filtered count from the backend catalogue'
   const view = await fixture('default');
   view.change('unloaded', ['a'], 149);
   assert.equal(view.state().total, 149);
+  assert.deepEqual(view.requests, []);
+});
+
+test('live processing and completion patch only the affected row without changing tags or scroll', async () => {
+  const view = await fixture();
+  view.change('99', ['a']);
+  const untouched = view.rows.get('0');
+  view.status('/library', '/library/99.md', 'processing', undefined, 1);
+  assert.equal(view.rows.get('99').status, 'processing');
+  view.status('/library', '/library/99.md', 'settled', { id: '99', status: 'failed', tags: [] }, 2);
+  assert.equal(view.rows.get('99').status, 'failed');
+  assert.deepEqual(view.rows.get('99').tags, ['a']);
+  assert.equal(view.rows.get('0'), untouched);
+  assert.equal(view.elements.get('documents-scroll').scrollTop, 2400);
+  assert.deepEqual(view.requests, []);
+});
+
+test('late status events and events from another library cannot overwrite newer progress', async () => {
+  const view = await fixture();
+  view.status('/library', '/library/99.md', 'processing', undefined, 10);
+  view.status('/library', '/library/99.md', 'settled', { id: '99', status: 'ready' }, 9);
+  assert.equal(view.rows.get('99').status, 'processing');
+  view.status('/other-library', '/library/99.md', 'settled', { id: '99', status: 'ready' }, 11);
+  assert.equal(view.rows.get('99').status, 'processing');
+  view.status('/library', '/library/offscreen.md', 'processing', undefined, 12);
   assert.deepEqual(view.requests, []);
 });

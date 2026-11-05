@@ -1,53 +1,115 @@
 import type * as finch from 'finch';
-import { Archive, Check, Circle, CircleAlert, CircleCheck, createElement, EllipsisVertical, Eye, Files, FolderInput, FolderOpen, FolderPlus, FolderSync, HardDrive, Loader, PenLine, Plus, RefreshCw, Search, Tag as TagIcon, Trash2, X } from 'lucide';
+import { Cpu, EyeOff, Archive, Check, Circle, CircleAlert, CircleCheck, createElement, ChevronRight, Folder, EllipsisVertical, Settings, Files, FolderInput, FolderOpen, FolderPlus, HardDrive, Loader, PenLine, Plus, RefreshCw, Search, Tag as TagIcon, Trash2, TriangleAlert, X } from 'lucide';
 import type { IconNode } from 'lucide';
 import { highlightTerms, snippetParts } from './snippet.js';
-import { openListedDocument, previewRoute } from './preview.js';
+import { openListedDocument } from './preview.js';
 import { inScope } from './scope.js';
+import type { DocumentState } from './document-status.js';
+import { createSortMenu, type SortOrder } from './sort-menu.js';
+import { wireWorkspaceResize } from './workspace-resize.js';
+import { createColorSurface } from './color-picker.js';
+import { wireScrollbars } from './scrollbars.js';
+import { isLibraryScoped } from './library-scope.js';
+import type { LibraryRecord } from './libraries.js';
+import type {LibraryState,LibraryStateRow} from './library-availability.js';
+type LibraryChoice=LibraryRecord&{availability?:LibraryState};
 
 type Bridge = finch.WebviewBridgeApi;
 declare global { interface Window { finch: Bridge } }
-interface Document { id: string; name: string; path: string; tags: string[]; chunks: number; added_at: number; indexed_at: number }
-interface Tag { id: string; name: string; count: number }
+interface Document { file_id?:string; source_revision?:number; issueKind?: 'pending' | 'unsupported' | 'failed' | 'empty_file' | 'no_text' | 'image_no_text' | 'unavailable'; size_bytes?: number | null; modified_at?: number | null; file_type?: string; id: string; name: string; path: string; tags: string[]; chunks: number; added_at: number; indexed_at: number; indexState?: 'indexed' | 'partial' | 'missing' | 'unavailable'; indexedChunks?: number | null; status?: DocumentState; statusReason?: string }
+interface Tag { id: string; name: string; count: number; color?: string }
+interface IndexedDirectory { path: string; parent: string | null; name: string; count: number }
 interface Match { document_id: string; name: string; path: string; tag_id: string; chunk: number; text: string; matched?: string[] }
-interface LibraryInfo { root: string; isDefault: boolean; documents: number; tags: number; unavailable: string | null }
-interface EnvironmentStep { id: string; status: 'pending' | 'running' | 'ready' | 'failed'; optional?: boolean; message?: string; percent?: number; detail?: string; error?: string }
+interface LibraryInfo { availabilityEpoch?:string;availabilityVersion?:number; indexStorage?: 'source' | 'local'; indexRoot?: string; version?: number; name?: string; activeId?: string; libraries?: LibraryChoice[]; entered?: boolean; selected?: boolean; root: string; isDefault: boolean; documents: number; tags: number; unavailable: string | null }
+interface EnvironmentStep { id: string; status: 'pending' | 'running' | 'ready' | 'failed'; optional?: boolean; lazy?: boolean; message?: string; percent?: number; detail?: string; error?: string }
 interface EnvironmentState { running: boolean; ready: boolean; usable: boolean; steps: EnvironmentStep[]; startedAt?: number; finishedAt?: number }
-interface Reply { type: string; requestId?: string; tags?: Tag[]; tag?: Tag; documents?: Document[]; total?: number; offset?: number; focusId?: string; matches?: Match[]; error?: string; message?: string; unchanged?: number; backupDirectory?: string; path?: string; count?: number; missing?: number; verified?: { before: { documents: number; tags: number }; after: { documents: number; tags: number }; missing: number }; library?: LibraryInfo; mode?: string; previousRoot?: string; environment?: EnvironmentState; sessionId?: string; names?: string[]; change?: { kind?: string; documentId?: string; tags?: string[] }; sync?: { updated: string[]; removed: string[]; unchanged: number; unreachable: string[]; failed: Array<{ name: string; reason: string }> } }
+interface Reply { id?:string;availabilityEpoch?:string;availabilityVersion?:number;states?:LibraryStateRow[];warning?:string; nextCursor?:string; previousCursor?:string; catalogVersion?:number; preferences?: { hideUnsupported: boolean }; paused?: boolean; scanning?: boolean; issuesTotal?: number; type: string; libraryVersion?: number; directories?: IndexedDirectory[]; percent?: number; root?: string; phase?: 'processing' | 'settled'; version?: number; document?: Document; requestId?: string; tags?: Tag[]; tag?: Tag; documents?: Document[]; total?: number; offset?: number; focusId?: string; matches?: Match[]; error?: string; message?: string; unchanged?: number; path?: string; count?: number; missing?: number; library?: LibraryInfo; mode?: string; previousRoot?: string; environment?: EnvironmentState; sessionId?: string; names?: string[]; change?: { kind?: string; documentId?: string; tags?: string[] }; sync?: { paused?: boolean; updated: string[]; removed: string[]; unchanged: number; unreachable: string[]; failed: Array<{ name: string; reason: string }>; skipped?: Array<{ name: string; reason: string }>; moved?: string[] } }
 type Copy = Record<string, string>;
 const english: Copy = {
+  scanPause: 'Pause indexing', scanPauseHint: 'Pause after the current file. Existing indexes remain searchable.', scanPausing: 'Pausing…', scanPaused: 'Indexing paused; completed files remain searchable.',
+  directoriesTitle: 'SOURCE FOLDERS', directoriesHint: 'Counts show unique files, including unsupported and failed files. All sources includes root-level files; issues are a cross-folder filter, not an additional folder.', tagColor: 'Tag color',
+  sourceIssues: 'Not indexed / issues', sourceIssuesEmpty: 'No unindexed or failed files in this scope.', sourceIssuesHint: 'Reasons appear in the Index status column. Originals stay untouched; scan again to retry.',
+  issueUnsupported: 'Unsupported format', issueFailed: 'Cannot parse', issueEmpty: 'Empty file', issueNoText: 'No searchable text', issueImageNoText: 'No text recognized', issueUnavailable: 'Temporarily unavailable',
+  emptyFolderTitle: 'No indexed documents in this folder', emptyFolderHint: 'Empty folders remain visible. Check Not indexed / issues for unsupported or unrecognized files.',
+  filterByTag: 'Show sources tagged {tag}', scanIssuesClear: 'Clear notices',
+  sortModified: 'Date modified', sortType: 'Type', sortSize: 'Size', columnStatus: 'Index status', fileGeneric: 'File',
+  'fileType.md': 'Markdown', 'fileType.txt': 'Text document', 'fileType.doc': 'Word document', 'fileType.docx': 'Word document', 'fileType.xls': 'Excel workbook', 'fileType.xlsx': 'Excel workbook', 'fileType.ppt': 'PowerPoint presentation', 'fileType.pptx': 'PowerPoint presentation', 'fileType.pdf': 'PDF document',
+  'fileType.png': 'PNG image', 'fileType.jpeg': 'JPEG image', 'fileType.webp': 'WebP image', 'fileType.bmp': 'Bitmap image', 'fileType.tiff': 'TIFF image',
+  resizeSidebar: 'Drag to resize the sidebar. Double-click to reset; arrow keys also resize.',
+  directoriesEmpty: 'Source folders appear here after scanning.', tagsEmpty: 'No tags yet. Use + to create one.',
+  colorPlane: 'Saturation and brightness; arrow keys adjust each axis.', colorHue: 'Hue', colorValue: 'Saturation {s}%, brightness {v}%.',
+  colorHint: 'Drag the color plane or hue strip, or enter a HEX value.', colorInvalid: 'Enter a color such as #5393d8.', colorReset: 'Default', colorCancel: 'Cancel', colorSave: 'Save',
+  'tagColor.red': 'Red', 'tagColor.orange': 'Orange', 'tagColor.yellow': 'Yellow', 'tagColor.green': 'Green', 'tagColor.blue': 'Blue', 'tagColor.purple': 'Purple', 'tagColor.gray': 'Gray',
+  libraryNameLabel:'Knowledge base name',libraryNameHint:'Enter to save; Esc to cancel.',libraryNameInvalid:'Use a name of 1–60 characters.',librarySave:'Save name',libraryCancel:'Cancel rename',
+  'libraryState.unknown':'Unknown','libraryState.checking':'Checking','libraryState.available':'Available','libraryState.offline':'Offline','libraryState.unavailable':'Unavailable',
+  'libraryStateHint.unknown':'Not checked yet.','libraryStateHint.checking':'Checking the source folder in the background.','libraryStateHint.available':'The source folder is accessible; index readiness is separate.','libraryStateHint.offline':'The source folder or original share is disconnected or missing.','libraryStateHint.unavailable':'Access could not be verified. Check permissions, network or the share mapping.',
+  renameLibrary:'Rename {name}',removeLibrary:'Remove {name}',libraryRenamed:'Knowledge base renamed.',libraryRemoved:'Knowledge base removed. Source files are unchanged.',
+  openDirectory: 'Open source folder', directoryOpen: 'Open folder', preferences: 'Preferences', hideUnsupported: 'Hide unsupported files', librarySettings: 'Library settings',
+  emptyTitle: 'No searchable documents yet',
+  emptyHint: 'Place documents in the source folder, then use Scan and update at the top right. Originals stay untouched.',
+  emptyDirectory: 'Source folder', emptyStepFiles: 'Add source files', emptyStepScan: 'Scan and update', emptyStepTags: 'Organize with tags',
+  emptyTypes: 'Markdown, text, Word, Excel, PowerPoint, PDF and images',
+  emptyCategoryTitle: 'No documents in {tag} yet', emptyCategoryHint: 'Browse All sources and add this tag to documents. Tags never move files.',
+  emptyScanningTitle: 'Checking your source folder', emptyScanningHint: 'Comparing file content and preparing indexes. Documents will appear here as the scan completes.',
+  emptyLoadingTitle: 'Loading your documents', emptyLoadingHint: 'Reading the index. Your source files are unchanged.',
+  statusProcessing: 'Processing', statusReady: 'Indexed', statusOutdated: 'Update needed', statusPending: 'Index needed',
+  statusIncomplete: 'Incomplete index', statusFailed: 'Processing failed', statusSourceMissing: 'Source missing', statusSourceUnavailable: 'Unavailable', statusUnverified: 'Not checked',
+  statusProcessingHint: 'Processing this file. Existing searchable passages are retained until the update succeeds.',
+  statusReadyHint: 'The source matches the complete index and can be searched.',
+  statusOutdatedHint: 'The original has changed. Scan and update before relying on its indexed content.',
+  statusPendingHint: 'No usable index exists for this version. Scan and update to build it.',
+  statusIncompleteHint: 'Some passages are missing. Scan and update to repair the index.',
+  statusFailedHint: 'The last processing attempt failed. Existing indexed content is retained; fix the cause and scan again.',
+  statusSourceMissingHint: 'The original file is missing. The next scan will confirm and reconcile its entry.',
+  statusSourceUnavailableHint: 'The source or its directory cannot currently be accessed. Its previous index is retained.',
+  statusUnverifiedHint: 'Index availability could not be checked. Retry when the runtime is ready.',
+  statusCoverage: 'Indexed passages: {actual}/{expected}.', statusReason: 'Reason: {reason}',
   heading: 'Your knowledge, within reach.', intro: 'Index on this device. AI answers may send retrieved passages to your selected model.',
-  browse: 'Browse passages', add: 'Add files',
-  noTags: 'No categories yet — create one in the left column first.', dropHint: 'Or drop files on this page · Added to {tag}.',
+  browse: 'Browse passages', add: 'Index directory files',
+  dropHint: 'Files stay in place · Added to {tag}.',
   tagsTitle: 'TAGS', tagRequired: 'Enter a tag name.', newTag: 'New tag', renameTag: 'Rename tag', deleteTag: 'Delete tag',
-  all: 'All sources', unclassified: 'Unclassified', librarySubtitle: 'Browse and organize your local material.', totalFiles: '{count} files', sortLabel: 'Sort by', sortUpdated: 'Last indexed', sortAdded: 'Date added', sortName: 'File name',
+  all: 'All sources', unclassified: 'Untagged', librarySubtitle: 'Browse and organize your local material.', totalFiles: '{count} files', sortLabel: 'Sort by', sortUpdated: 'Last indexed', sortAdded: 'Date added', sortName: 'File name',
   searchLabel: 'Search your own sources', searchPlaceholderIn: 'Search in {tag}…',
-  empty: 'No files in this view. Add some on the left.', emptyMatches: 'No matching passages.', searchHint: 'Type a word or phrase to inspect indexed passages.', loading: 'Loading…', loaded: 'Showing {shown} of {total}',
-  remove: 'Remove', removeTitle: 'Remove this source?', removeMessage: 'This deletes its index and managed copy, not the original file.', reveal: 'Show in file manager', preview: 'Preview', locate: 'Locate in file list', move: 'Move to tag',
-  menuReveal: 'Open in file manager', menuClassify: 'Set category',
-  tagDeleteTitle: 'Delete this tag?', tagDeleteMessage: 'Documents carrying this tag lose it and keep their other tags; one that had no other tag moves to Unclassified.', tagPlaceholder: 'New tag · Enter', tagHint: 'Enter to create · Esc to cancel', chunk: 'passages', added: 'Added {date}', updated: 'Indexed {date}',
+  empty: 'Place documents in the source folder, then scan and update. Tags never move your files.', emptyMatches: 'No matching content. Try different keywords.', searchHint: 'Enter keywords to search your sources.', loading: 'Loading…', loaded: 'Showing {shown} of {total}',
+  remove: 'Remove', removeTitle: 'Remove this source?', removeMessage: 'Remove only the index, never the file. Automatic scans skip it; select it to index again.', reveal: 'Show in file manager', preview: 'Preview', locate: 'Locate in file list', move: 'Change tags',
+  menuReveal: 'Open in file manager', menuClassify: 'Tags',
+  tagDeleteTitle: 'Delete this tag?', tagDeleteMessage: 'Only this tag is removed. Documents keep their other tags; source files and indexes are unchanged.', tagPlaceholder: 'New tag · Enter', tagHint: 'Enter to create · Esc to cancel', chunk: 'passages', added: 'Added {date}', updated: 'Indexed {date}',
   complete: 'Indexed {count} file(s).', completeUnchanged: 'Indexed {count} file(s); {unchanged} unchanged.', failed: 'Failed: {details}', unavailable: 'Finch bridge is unavailable.',
   unsupported: 'Unsupported file type', tooLarge: 'File must be between 1 byte and {max} MB', reading: 'Reading {name}…', uploading: 'Importing {name} ({percent}%)…', externalSource: 'Outside the library: {path}',
-  backupLabel: 'Back up to a folder', syncLabel: 'Refresh changed sources', syncWorking: 'Refreshing changed sources…', syncDone: 'Refreshed: {updated} updated, {removed} removed, {unchanged} unchanged.', syncIdle: 'Nothing to refresh: every source file is unchanged.',
+  syncLabel: 'Scan directory and update index', syncWorking: 'Refreshing changed sources…', syncDone: 'Refreshed: {updated} updated, {removed} removed, {unchanged} unchanged.', syncIdle: 'Nothing to refresh: every source file is unchanged.',
   syncUnreachable: '{count} source file(s) cannot be reached right now; their indexes were kept.', syncFailed: '{count} source file(s) could not be refreshed.',
+  syncFinished: 'Scan finished.', syncDetails: 'Use the warning button beside Scan and update for individual notices.',
+  syncSkipped: 'Skipped {count}: {reasons}.', syncSkippedEmpty: '{count} empty file(s)', syncSkippedImage: '{count} image(s) with no recognized text', syncSkippedNoText: '{count} file(s) with no searchable text', syncMoved: 'Followed {count} moved file(s).',
+  scanIssueEmpty: 'Empty file; skipped without changing the original.', scanIssueImageNoText: 'No text was recognized in this image; skipped without changing the original.',
+  scanIssuesTitle: 'Scan notices ({count})', scanIssuesButton: 'View scan notices ({count})', scanIssueNoText: 'No searchable text; skipped without changing the original.',
+  scanIssueSize: 'The file is empty or exceeds the size limit. Choose a nonempty file smaller than {max} MB.', scanIssueUnreachable: 'The source cannot be reached right now. Its existing index was kept.',
   engineNeeded: 'Importing this needs {name}. Its installation just started in the background — drop it again once it is ready.',
-  syncNoSources: 'Nothing to refresh: only files the Agent imported from a workspace remember their source file. Update App-View files by importing the changed file again.',
-  syncHint: 'Re-checks the source files the Agent imported: changed ones are re-indexed in place, deleted ones are dropped, and unreachable ones are kept. Files added in this App View have no recorded source.',
-  libraryLocation: 'Choose location…', libraryEnvironment: 'Update runtime',
-  onboardTitle: 'Preparing the knowledge engine',
+  syncNoSources: 'No indexable sources. Place supported files in the directory, then scan again.',
+  syncHint: 'Compare SHA-256 hashes: index new or changed files, skip unchanged content, repair missing passages. Clean confirmed missing entries and retain unreadable sources. Skip .knowledge and hidden files.',
+  libraryLocation: 'Add knowledge base…', libraryEnvironment: 'Check runtime',
+  librariesTitle: 'Knowledge bases',
+  libraryNoteRemote: 'Remote sources are read only. This knowledge base keeps its own index and tags on this computer.',
+  libraryDoneRemote: 'Opened {path}. Its independent index and tags stay on this computer.',
+  libraryDoneSwitch: 'Switched to {name}. Searches use only this knowledge base.',
+  onboardChooseTitle: 'Choose your source directory first',
+  onboardChooseIntro: 'Choose an empty or populated directory. Local libraries use .knowledge; mounted network libraries keep independent indexes on this computer.',
+  directoryDropHint: 'Place files in the source directory, then scan. Files are never copied or moved.',
+  onboardTitle: 'Prepare your knowledge base',
+  onboardEnter: 'Enter Knowledge Base',
   onboardLibraryTitle: 'Library location',
   onboardLibraryDefault: 'Default location',
   onboardLibraryChosen: 'Custom location',
   onboardLibraryUnavailable: 'Unavailable',
   onboardLibraryAction: 'Choose location…',
-  onboardLibraryHint: 'Pick a folder: a library inside it is opened, an empty folder gets a new one.',
-  onboardIntro: 'The first run installs three local engines. This is a one-time download, and nothing leaves this device.',
+  onboardLibraryHint: 'Local directories use .knowledge. Mounted network directories keep their indexes on this computer.',
+  onboardIntro: 'Search and document engines prepare automatically. OCR loads in the background on the first image. Choose your directory to enter once the required engines are ready.',
   onboardLancedb: 'Vector search (LanceDB)', onboardAnydoc: 'Office & PDF reading (AnyDoc)', onboardOcr: 'Image text recognition (OCR)',
+  onboardOnDemand: 'on demand', onboardOcrHint: 'Prepared in the background when the first image is processed; does not block entry.',
   onboardPending: 'waiting', onboardRunning: 'installing', onboardReady: 'ready', onboardFailed: 'failed',
   onboardWorking: 'Working…',
   onboardRetry: 'Retry setup', onboardHelp: 'Ask the assistant to fix it',
   engineOcr: 'image text recognition (OCR)', engineAnydoc: 'document parsing (AnyDoc)',
-  onboardOptionalFailed: 'Background setup failed for {name}. Retry it from the library menu.',
+  onboardOptionalFailed: 'Background preparation failed for {name}. Retry by processing an image again; see the document status for details.',
   bgProgress: '{name} · downloading in the background {percent}%',
   bgProgressWorking: '{name} · downloading in the background…',
   menuDownloading: '{name} · {percent}%',
@@ -58,53 +120,65 @@ const english: Copy = {
   onboardHelpOpening: 'Opening a chat with the details…',
   libraryLabel: 'Library location', 
   libraryReveal: 'Show the library folder in the file manager',
-  libraryNote: 'The library can live in any folder you pick, including a synced or NAS directory. Engines stay on this device.',
+  libraryNote: 'Each knowledge base keeps its own index and tags. Search uses only the current one.',
   libraryDefault: 'Using the default folder inside Finch.',
   libraryUnavailable: 'The saved library folder is unavailable: {path}',
   libraryWorking: 'Working on the library folder…',
-  libraryDoneMove: 'Library moved to {path}. The previous folder is untouched at {previous}.',
-  libraryDoneCreate: 'New empty library created at {path}. The previous folder is untouched at {previous}.',
-  libraryDoneOpen: 'Opened the library at {path}.',
+  libraryDoneCreate: 'Selected {path}. Index data lives in .knowledge; checking sources in the background.',
+  libraryDoneOpen: 'Opened {path}; checking sources incrementally in the background.',
   libraryMissing: '{missing} stored source file(s) could not be found.',
   menu: 'Library actions',
-  backupDone: 'Backed up {count} sources to {path}.', backupPartial: 'Snapshot saved to {path}; {missing} source file(s) are missing. Check manifest.json.', backupWorking: 'Copying the library snapshot…',
 };
 const DEFAULT_TAG = 'default';
 /** How many category badges a row shows before it summarises the rest as "+N". */
 const MAX_ROW_BADGES = 3;
-const ALLOWED = new Set(['md','markdown','txt','doc','docx','pdf','png','jpg','jpeg','webp','bmp','tif','tiff']);
-// Mirrors MAX_FILE_BYTES in the store — the page cannot import the backend bundle. A test keeps
-// the two in step, so raising one without the other fails the build.
-const MAX_FILE = 200 * 1024 * 1024;
-const MAX_FILE_MB = MAX_FILE / (1024 * 1024);
-const CHUNK_SIZE = 192 * 1024;
 const byId = (id: string) => document.getElementById(id)!;
 const bridge = window.finch;
 let copy = english;
 let tags: Tag[] = [];
 let docs: Document[] = [];
+let showIssues = false;
+let issuesTotal = 0;
 let selectedTag: string | null = null;
-let sort: 'name' | 'added' | 'updated' = 'updated';
+let selectedDirectory: string | null = null;
+let directories: IndexedDirectory[] = [];
+const expandedDirectories = new Set<string>();
+let colorEditingTag: string | null = null;
+const TAG_TONES: Record<string, string> = { red: '#ec635d', orange: '#ed9b43', yellow: '#d6b62c', green: '#55ad70', blue: '#5393d8', purple: '#a27bce', gray: '#92969d' };
+let sort: SortOrder = 'updated';
+let sortDescending: boolean | undefined;
+function currentDescending(): boolean { return sortDescending ?? (sort !== 'name' && sort !== 'type'); }
+let sortControl: ReturnType<typeof createSortMenu> | undefined;
 let total = 0;
 let beforeOffset = 0;
 let nextOffset = 0;
+let nextCursor: string | undefined;
+let previousCursor: string | undefined;
+let catalogVersion = -1;
 let loadingPage = false;
 let pageEpoch = 0;
 let searchEpoch = 0;
 let sequence = 0;
-let uploading = false;
-let backingUp = false;
+let scanBusy = false;
+let pauseRequested = false;
+let scanPercent: number | null = null;
+const documentStatusVersions = new Map<string, number>();
 let environment: EnvironmentState | null = null;
 let environmentAutoStarted = false;
-/** Set once the user leaves setup for the library; optional installs then continue in the background. */
+let libraryEntered = false;
 let libraryPath = '';
+let libraryName = '';
+let libraryIndexStorage: 'source' | 'local' = 'source';
+let libraryVersion = -1;
+let activeLibraryId = '';
+let libraryEntries: LibraryChoice[] = [];
+let availabilityEpoch='',availabilityVersion=-1;
+let availabilityTimer:ReturnType<typeof setInterval>|undefined;
+let editingLibrary:{id:string;value:string;saving:boolean;error?:string}|undefined;
+const libraryStatusFingerprint=(record:LibraryRecord)=>JSON.stringify([record.root,record.index??null]);
 let libraryDefault = false;
 let libraryUnavailable = '';
 let libraryBusy = false;
-/** What the footer hairline is showing right now; foreground work wins over downloads. */
-let importProgress: { label: string; percent: number } | null = null;
-/** Set while a page-initiated library operation runs; cleared when its result lands. */
-let busyLabel = '';
 /** The backend reports progress as a stream with no end marker, so this expires on quiet. */
 let streamedProgress = '';
 let streamedTimer: number | undefined;
@@ -116,8 +190,7 @@ let draggingTag: string | null = null;
 let debounce: number | undefined;
 let searchQuery = '';
 let localeEpoch = 0;
-const pending = new Map<string, { type: string; epoch: number; mode?: 'replace' | 'append' | 'prepend' | 'locate' }>();
-const transfers = new Map<string, { resolve: (reply: Reply) => void; reject: (error: Error) => void; timer: number }>();
+const pending = new Map<string, { type: string; root?: string; version?: number; epoch: number; mode?: 'replace' | 'append' | 'prepend' | 'locate' | 'refresh' }>();
 function tr(key: string, values?: Record<string, string | number>): string {
   let value = copy[key] ?? english[key] ?? key;
   for (const [token, replacement] of Object.entries(values ?? {})) value = value.replace(`{${token}}`, String(replacement));
@@ -131,13 +204,14 @@ function tagName(id: string | null): string {
  * A file-type icon per format, from the JetBrains icon set (see icons/LICENSE.md), so a glance down
  * the list separates a note from a document from a picture. The `_auto` variants carry a light and a
  * dark drawing chosen by `prefers-color-scheme`, which follows the theme Finch hands its windows.
- * `.doc`/`.docx` have no icon of their own in that set, so they take the plain file — the same one
- * anything unsupported falls back to.
+ * Office icons are from vscode-icons; their MIT license ships beside the assets.
  */
 const FILE_ICONS: Array<{ extensions: string[]; icon: string }> = [
   { extensions: ['.md', '.markdown'], icon: 'markdown_auto.svg' },
   { extensions: ['.txt'], icon: 'text_auto.svg' },
-  { extensions: ['.doc', '.docx'], icon: 'file.svg' },
+  { extensions: ['.doc', '.docx'], icon: 'word.svg' },
+  { extensions: ['.xls', '.xlsx'], icon: 'excel.svg' },
+  { extensions: ['.ppt', '.pptx'], icon: 'powerpoint.svg' },
   { extensions: ['.pdf'], icon: 'pdf.svg' },
   { extensions: ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff'], icon: 'image_auto.svg' },
 ];
@@ -146,40 +220,43 @@ function iconForFile(name: string): string {
   return FILE_ICONS.find((entry) => entry.extensions.includes(extension))?.icon ?? 'file.svg';
 }
 /**
- * Results are told as native Finch toasts. The in-page strip stays as a fallback for the
- * one case the toast cannot serve: a page whose bridge is missing or rejects the call.
+ * Both native notifications and their page fallback appear at the top center.
+ * Scan completion can outlive the initiating gesture, so the fallback must behave identically.
  */
+let toastVersion = 0;
+let fallbackToastTimer: number | undefined;
 function status(message: string, error = false): void { byId('status').textContent = message; byId('status').classList.toggle('error', error); }
 function toast(message: string, variant: 'default' | 'success' | 'info' | 'warning' | 'error' = 'default'): void {
   if (!message) return;
-  // Clear any earlier fallback: a newer message supersedes an older one.
-  status('');
+  const version = ++toastVersion;
+  if (fallbackToastTimer !== undefined) clearTimeout(fallbackToastTimer);
+  fallbackToastTimer = undefined; status('');
+  const fallback = (): void => {
+    if (version !== toastVersion) return;
+    status(message, variant === 'error');
+    fallbackToastTimer = window.setTimeout(() => {
+      if (version === toastVersion) { status(''); fallbackToastTimer = undefined; }
+    }, variant === 'error' ? 7000 : 5000);
+  };
   if (bridge?.ui?.toast) {
-    void bridge.ui.toast({ title: message, variant }).catch(() => status(message, variant === 'error'));
+    void bridge.ui.toast({ title: message, variant, position: 'TC' }).catch(fallback);
     return;
   }
-  status(message, variant === 'error');
+  fallback();
 }
-/**
- * One hairline in the sidebar footer carries every running task: a foreground import first,
- * a busy library operation next, and background engine downloads last.
- */
+/** The footer hairline belongs exclusively to source scans, never environment or directory checks. */
 function activityNow(): { label: string; percent: number | null } | null {
-  if (importProgress) return importProgress;
-  const label = streamedProgress || busyLabel;
-  if (label) return { label, percent: null };
-  const state = environment;
-  if (!state?.usable || !state.running) return null;
-  const step = state.steps.find((item) => item.status === 'running');
-  const name = step ? STEP_LABELS[step.id]?.() ?? step.id : '';
-  const percent = typeof step?.percent === 'number' ? step.percent : null;
-  return {
-    label: percent === null ? tr('bgProgressWorking', { name }) : tr('bgProgress', { name, percent }),
-    percent,
-  };
+  if (!scanBusy) return null;
+  return { label: streamedProgress || tr('syncWorking'), percent: scanPercent };
+}
+function updateScanProgress(percent?: number, message?: string): void {
+  if (!scanBusy) return;
+  if (typeof percent === 'number' && Number.isFinite(percent)) scanPercent = Math.max(scanPercent ?? 0, Math.max(0, Math.min(100, percent)));
+  if (message) noteProgress(message); else renderActivity();
 }
 /** A progress push means work is still happening; a quiet gap means it finished. */
 function noteProgress(message: string): void {
+  if (!scanBusy) return;
   streamedProgress = message;
   if (streamedTimer !== undefined) clearTimeout(streamedTimer);
   streamedTimer = window.setTimeout(() => {
@@ -187,7 +264,7 @@ function noteProgress(message: string): void {
     streamedTimer = undefined;
     renderActivity();
   }, STREAM_QUIET_MS);
-  if (!importProgress) renderActivity();
+  renderActivity();
 }
 function renderActivity(): void {
   const bar = byId('activity') as HTMLElement;
@@ -195,10 +272,16 @@ function renderActivity(): void {
   bar.hidden = current === null;
   if (!current) return;
   bar.title = current.label;
+  bar.setAttribute('role', 'progressbar');
+  bar.setAttribute('aria-label', current.label);
+  bar.setAttribute('aria-valuemin', '0');
+  bar.setAttribute('aria-valuemax', '100');
+  if (current.percent === null) bar.removeAttribute('aria-valuenow');
+  else bar.setAttribute('aria-valuenow', String(Math.round(current.percent)));
   bar.classList.toggle('indeterminate', current.percent === null);
   (byId('activity-fill') as HTMLElement).style.width = current.percent === null
     ? '30%'
-    : `${Math.max(3, Math.min(100, current.percent))}%`;
+    : `${Math.max(0, Math.min(100, current.percent))}%`;
 }
 /** The menu row doubles as the download readout: a spinning icon and the component in flight. */
 function renderEnvironmentMenu(): void {
@@ -206,6 +289,7 @@ function renderEnvironmentMenu(): void {
   const detail = byId('library-environment-detail');
   const step = environment?.running ? environment.steps.find((item) => item.status === 'running') : undefined;
   button.classList.toggle('spinning', Boolean(step));
+  button.querySelector('svg')?.replaceWith(svg(step?Loader:Cpu));
   if (!step) { detail.textContent = ''; button.removeAttribute('title'); return; }
   const name = STEP_SHORT[step.id]?.() ?? step.id;
   button.setAttribute('title', STEP_LABELS[step.id]?.() ?? step.id);
@@ -229,28 +313,48 @@ function icon(iconNode: IconNode, label: string): HTMLButtonElement {
   return button;
 }
 function mountStaticIcons(): void {
-  const staticIcons: Record<string, IconNode> = { search: Search, plus: Plus, x: X, archive: Archive, 'folder-input': FolderInput, 'folder-plus': FolderPlus, 'folder-open': FolderOpen, 'folder-sync': FolderSync, 'hard-drive': HardDrive, 'ellipsis-vertical': EllipsisVertical, 'refresh-cw': RefreshCw, tag: TagIcon, trash: Trash2 };
+  const staticIcons: Record<string, IconNode> = {cpu:Cpu,'eye-off':EyeOff, search: Search, settings: Settings, check: Check, plus: Plus, x: X, archive: Archive, 'folder-input': FolderInput, 'folder-plus': FolderPlus, 'folder-open': FolderOpen, 'hard-drive': HardDrive, 'ellipsis-vertical': EllipsisVertical, 'refresh-cw': RefreshCw, 'triangle-alert': TriangleAlert, tag: TagIcon, trash: Trash2 };
   for (const placeholder of document.querySelectorAll<HTMLElement>('[data-icon]')) {
     const iconNode = staticIcons[placeholder.dataset.icon ?? ''];
     if (iconNode) placeholder.replaceWith(svg(iconNode));
   }
 }
-function request(type: string, payload: Record<string, unknown> = {}, mode?: 'replace' | 'append' | 'prepend' | 'locate'): string {
+function request(type: string, payload: Record<string, unknown> = {}, mode?: 'replace' | 'append' | 'prepend' | 'locate' | 'refresh'): string {
   const requestId = String(++sequence);
-  pending.set(requestId, { type, mode, epoch: type === 'search' ? searchEpoch : pageEpoch });
-  bridge.postMessage({ type, requestId, ...payload });
+  const root = isLibraryScoped(type) && libraryPath ? libraryPath : undefined;
+  const version = root && libraryVersion >= 0 ? libraryVersion : undefined;
+  pending.set(requestId, { type, mode, root, version, epoch: type === 'search' ? searchEpoch : pageEpoch });
+  bridge.postMessage({ type, requestId, ...(root ? { libraryRoot: root } : {}), ...(version !== undefined ? { libraryVersion: version } : {}), ...payload });
   return requestId;
 }
 function page(offset: number, mode: 'replace' | 'append' | 'prepend' = 'replace'): void {
   if (loadingPage) return;
   loadingPage = true;
   byId('list-end').textContent = tr('loading');
-  request('page', { tagId: selectedTag, sort, offset }, mode);
+  if (!docs.length) renderDocs();
+  const cursor=mode==='append'?nextCursor:mode==='prepend'?previousCursor:undefined;
+  request('page', { ...(showIssues ? { issues: true } : {}), ...(cursor?{cursor,before:mode==='prepend'}:{}), tagId: selectedTag, directory: selectedDirectory, sort, descending: currentDescending(), offset }, mode);
+}
+let refreshQueued = false;
+function visibleAnchor(): { path?: string; index: number; top: number } {
+  const container = byId('documents-scroll');
+  const edge = container.getBoundingClientRect().top;
+  const row = Array.from(byId('documents').children).find(item => (item as HTMLElement).dataset.path && item.getBoundingClientRect().bottom > edge) as HTMLElement | undefined;
+  return { path: row?.dataset.path, index: row ? Math.max(0, docs.findIndex(doc => doc.path === row.dataset.path)) : 0, top: row ? row.getBoundingClientRect().top - edge : 0 };
+}
+/** Keep the current window visible while a bounded snapshot is fetched in the background. */
+function refreshPage(): void {
+  if (loadingPage) { refreshQueued = true; return; }
+  refreshQueued = false; loadingPage = true;
+  const anchor = visibleAnchor();
+  request('page', { refresh: true, anchorPath: anchor.path, anchorIndex: anchor.index, limit: Math.max(50, docs.length), offset: beforeOffset,
+    ...(showIssues ? { issues: true } : {}), tagId: selectedTag, directory: selectedDirectory, sort, descending: currentDescending() }, 'refresh');
 }
 function resetPage(): void {
+  refreshQueued = false;
   pageEpoch++;
   loadingPage = false;
-  docs = []; total = 0; beforeOffset = 0; nextOffset = 0;
+  docs = []; total = 0; beforeOffset = 0; nextOffset = 0;nextCursor=previousCursor=undefined;catalogVersion=-1;
   renderDocs();
   page(0);
 }
@@ -259,9 +363,10 @@ function resetPage(): void {
  * single row instead — the left column still needs its new counts either way.
  */
 function applyTags(next: Tag[], list = true): void {
+  const changed = JSON.stringify(tags.filter(tag => tag.id !== DEFAULT_TAG)) !== JSON.stringify(next.filter(tag => tag.id !== DEFAULT_TAG));
   tags = next;
   if (selectedTag !== null && selectedTag !== DEFAULT_TAG && !tags.some((tag) => tag.id === selectedTag)) selectedTag = null;
-  renderTags();
+  if (list || changed) renderTags();
   if (list) renderDocs();
 }
 function finishTagRename(id: string, previous: string, next?: string, focusChoice = true): void {
@@ -311,7 +416,7 @@ function tagCreateRow(): HTMLElement {
   field.addEventListener('blur', () => window.setTimeout(() => {
     if (creatingTag && document.activeElement !== field) cancelTagCreate();
   }, 0));
-  editor.append(svg(TagIcon), field, node('span', 'tag-count', ''));
+  editor.append(field);
   row.append(editor);
   return row;
 }
@@ -346,7 +451,7 @@ function wireTagDrag(row: HTMLElement, id: string, choice: HTMLElement): void {
   choice.setAttribute('title', tr('tagDragHint'));
   row.addEventListener('dragstart', (event) => {
     // A row mid-rename holds a text field, and its own action buttons are not drag handles.
-    if (creatingTag || inlineTagEditing !== null || (event.target as HTMLElement | null)?.closest('.tag-actions')) {
+    if (creatingTag || inlineTagEditing !== null || ((event.target as HTMLElement | null)?.closest('.tag-actions') || (event.target as HTMLElement | null)?.closest('.tag-color-trigger'))) {
       event.preventDefault();
       return;
     }
@@ -398,6 +503,170 @@ function cancelTagCreate(): void {
   renderTags();
   byId('new-tag').focus();
 }
+function applyDirectories(next?: IndexedDirectory[]): void {
+  if (!next || JSON.stringify(next) === JSON.stringify(directories)) return;
+  directories = next;
+  if (selectedDirectory !== null && !next.some(item => item.path === selectedDirectory)) selectedDirectory = null;
+  renderDirectories();
+}
+function selectTag(id: string | null): void {
+  if (!showIssues && selectedTag === id && selectedDirectory === null) return;
+  showIssues = false; updateSortSizer();
+  closeTagColor(); selectedDirectory = null; selectedTag = id; inlineTagEditing = null;
+  renderDirectories(); renderTags(); resetPage(); updateScope();
+}
+function selectDirectory(path: string | null): void {
+  if (!showIssues && selectedDirectory === path && selectedTag === null) return;
+  showIssues = false; updateSortSizer();
+  closeTagColor(); selectedDirectory = path; selectedTag = null; inlineTagEditing = null;
+  renderDirectories(); renderTags(); resetPage(); updateScope();
+}
+function selectIssueList(): void {
+  showIssues = true; selectedTag = null; selectedDirectory = null; closeRowMenu(); closeTagColor();
+  if (sort === 'added' || sort === 'updated') { sort = 'name'; sortDescending = undefined; }
+  updateSortSizer();
+  renderDirectories(); renderTags(); resetPage(); updateScope();
+}
+function applyIssueCount(count?: number): void {
+  if (count === undefined || count === issuesTotal) return;
+  issuesTotal = count; renderDirectories();
+}
+function directoryOpenButton(directory: string): HTMLButtonElement {
+  const button = icon(FolderOpen, tr('directoryOpen'));
+  button.classList.add('directory-open');
+  button.addEventListener('click', event => { event.stopPropagation(); if (!libraryBusy) request('libraryReveal', { directory }); });
+  return button;
+}
+function renderDirectories(): void {
+  const container = byId('directories');
+  const scroll = container.scrollTop;
+  container.replaceChildren();
+  container.setAttribute('aria-label', tr('directoriesTitle'));
+  container.title = tr('directoriesHint');
+  const heading = byId('directories-title'); heading.textContent = tr('directoriesTitle');
+  const all = node('button', 'directory-choice directory-all') as HTMLButtonElement;
+  all.type = 'button'; all.classList.toggle('active', !showIssues && selectedTag === null && selectedDirectory === null);
+  all.setAttribute('aria-pressed', String(!showIssues && selectedTag === null && selectedDirectory === null));
+  all.append(svg(Files), node('span', 'tag-name', tr('all')), node('span', 'tag-count', String(directories.find(item => item.path === '')?.count ?? 0)));
+  all.addEventListener('click', () => selectTag(null));
+  const allRow = node('div', 'directory-row has-directory-action'); allRow.append(all, directoryOpenButton('')); container.append(allRow);
+  const issueChoice = node('button', 'directory-choice directory-issues') as HTMLButtonElement;
+  issueChoice.type = 'button'; issueChoice.classList.toggle('active', showIssues); issueChoice.setAttribute('aria-pressed', String(showIssues));
+  issueChoice.append(svg(CircleAlert), node('span', 'tag-name', tr('sourceIssues')), node('span', 'tag-count', String(issuesTotal)));
+  issueChoice.addEventListener('click', selectIssueList);
+  const children = new Map<string, IndexedDirectory[]>();
+  for (const entry of directories) if (entry.parent !== null) {
+    const group = children.get(entry.parent) ?? []; group.push(entry); children.set(entry.parent, group);
+  }
+  let sequence = 0;
+  const branch = (parent: string): HTMLElement => {
+    const list = node('ul', 'directory-list');
+    for (const entry of children.get(parent) ?? []) {
+      const item = node('li', 'directory-item'), row = node('div', 'directory-row');
+      const nested = children.has(entry.path), expanded = expandedDirectories.has(entry.path);
+      const childId = `directory-children-${++sequence}`;
+      const toggle = node('button', 'directory-toggle') as HTMLButtonElement;
+      toggle.type = 'button'; toggle.disabled = !nested;
+      toggle.setAttribute('aria-label', entry.name); toggle.setAttribute('aria-expanded', String(expanded));
+      if (nested) toggle.setAttribute('aria-controls', childId);
+      toggle.append(svg(ChevronRight));
+      toggle.addEventListener('click', () => {
+        if (expanded) expandedDirectories.delete(entry.path); else expandedDirectories.add(entry.path);
+        renderDirectories();
+        container.querySelector<HTMLButtonElement>(`[aria-controls="${childId}"]`)?.focus();
+      });
+      const choice = node('button', 'directory-choice') as HTMLButtonElement;
+      choice.type = 'button'; choice.title = entry.path;
+      choice.classList.toggle('active', !showIssues && selectedTag === null && selectedDirectory === entry.path);
+      choice.setAttribute('aria-pressed', String(!showIssues && selectedTag === null && selectedDirectory === entry.path));
+      choice.append(svg(expanded ? FolderOpen : Folder), node('span', 'tag-name', entry.name), node('span', 'tag-count', String(entry.count)));
+      choice.addEventListener('click', () => selectDirectory(entry.path));
+      row.classList.add('has-directory-action');
+      row.append(toggle, choice, directoryOpenButton(entry.path)); item.append(row);
+      if (nested) { const sub = branch(entry.path); sub.id = childId; sub.hidden = !expanded; item.append(sub); }
+      list.append(item);
+    }
+    return list;
+  };
+  const rootList = branch('');
+  const builtin = node('li', 'directory-item directory-builtin'), builtinRow = node('div', 'directory-row');
+  const spacer = node('span', 'directory-toggle'); spacer.setAttribute('aria-hidden', 'true');
+  builtinRow.append(spacer, issueChoice); builtin.append(builtinRow); rootList.append(builtin);
+  container.append(rootList);
+  if (!children.size) container.append(node('p', 'side-empty', tr('directoriesEmpty')));
+  container.scrollTop = scroll;
+}
+function tagDot(color = 'gray'): HTMLElement {
+  const dot = node('span', 'tag-dot'); dot.setAttribute('aria-hidden', 'true');
+  dot.style.backgroundColor = TAG_TONES[color] ?? (/^#[0-9a-f]{6}$/i.test(color) ? color : TAG_TONES.gray);
+  return dot;
+}
+let colorAnchor: HTMLElement | null = null;
+function closeTagColor(restoreFocus = false): void {
+  if (colorEditingTag === null) return;
+  byId('tag-color-picker').hidden = true; colorEditingTag = null;
+  colorAnchor?.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) colorAnchor?.focus({ preventScroll: true });
+  colorAnchor = null;
+}
+/** Opaque custom colors are metadata only; cancel never changes a tag. */
+function openTagColor(tag: Tag, anchor: HTMLElement): void {
+  if (colorEditingTag === tag.id) { closeTagColor(true); return; }
+  closeTagColor(); closeRowMenu();
+  colorEditingTag = tag.id; colorAnchor = anchor;
+  anchor.setAttribute('aria-expanded', 'true');
+  const panel = byId('tag-color-picker');
+  const heading = node('h3', '', `${tr('tagColor')} · ${tag.name}`); heading.id = 'tag-color-title';
+  const initialHex = TAG_TONES[tag.color ?? 'gray'] ?? (/^#[0-9a-f]{6}$/i.test(tag.color ?? '') ? tag.color! : TAG_TONES.gray!);
+  const surface = createColorSurface({ initialHex, label: tr('colorPlane'), hueLabel: tr('colorHue'),
+    valueText: (s, v) => tr('colorValue', { s, v }), onChange: value => update(value) });
+  const hex = node('input', 'color-hex') as HTMLInputElement;
+  hex.type = 'text'; hex.maxLength = 7; hex.spellcheck = false;
+  hex.setAttribute('aria-label', 'HEX'); hex.setAttribute('aria-describedby', 'color-message');
+  const label = node('label', 'color-hex-label', 'HEX'); label.append(hex);
+  const message = node('p', 'color-message', tr('colorHint')); message.id = 'color-message';
+  const palette = node('div', 'tag-palette'); palette.setAttribute('role', 'group'); palette.setAttribute('aria-label', tr('tagColor'));
+  const actions = node('div', 'color-actions');
+  const reset = node('button', 'quiet color-reset', tr('colorReset')) as HTMLButtonElement;
+  const cancel = node('button', 'outline', tr('colorCancel')) as HTMLButtonElement;
+  const save = node('button', 'primary', tr('colorSave')) as HTMLButtonElement;
+  for (const button of [reset, cancel, save]) button.type = 'button';
+  const update = (value: string): void => {
+    const valid = /^#[0-9a-f]{6}$/i.test(value);
+    hex.value = value; hex.setAttribute('aria-invalid', String(!valid)); save.disabled = !valid;
+    message.textContent = tr(valid ? 'colorHint' : 'colorInvalid');
+    if (valid) surface.setHex(value);
+    for (const option of palette.querySelectorAll<HTMLButtonElement>('button')) option.setAttribute('aria-pressed', String(option.dataset.color === value.toLowerCase()));
+  };
+  for (const [name, value] of Object.entries(TAG_TONES)) {
+    const option = node('button', 'tag-color-option') as HTMLButtonElement;
+    option.type = 'button'; option.dataset.color = value; option.title = tr(`tagColor.${name}`);
+    option.setAttribute('aria-label', option.title); option.append(tagDot(name));
+    option.addEventListener('click', () => update(value)); palette.append(option);
+  }
+  hex.addEventListener('input', () => update(hex.value.trim()));
+  reset.addEventListener('click', () => update(TAG_TONES.gray!));
+  cancel.addEventListener('click', () => closeTagColor(true));
+  save.addEventListener('click', () => {
+    if (save.disabled || colorEditingTag !== tag.id) return;
+    const value = hex.value.toLowerCase();
+    request('tagColor', { id: tag.id, color: value === TAG_TONES.gray ? 'gray' : value }); closeTagColor(true);
+  });
+  actions.append(reset, cancel, save); panel.replaceChildren(heading, surface.element, label, palette, message, actions);
+  update(initialHex);
+  placeMenu(panel, anchor.getBoundingClientRect(), 'right'); surface.focus();
+}
+function wireTagColor(): void {
+  const panel = byId('tag-color-picker');
+  document.addEventListener('pointerdown', event => {
+    const target = event.target as Node;
+    if (colorEditingTag !== null && !panel.contains(target) && !colorAnchor?.contains(target)) closeTagColor();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && colorEditingTag !== null) { event.preventDefault(); closeTagColor(true); }
+  });
+  window.addEventListener('resize', () => closeTagColor());
+}
 function renderTags(): void {
   const container = byId('tags');
   draggingTag = null;
@@ -405,22 +674,11 @@ function renderTags(): void {
   // A re-render while the user is typing would throw away the field they are in.
   if ((inlineTagEditing !== null || creatingTag) && liveEditor && document.activeElement === liveEditor) return;
   container.replaceChildren();
-  const all: Tag = { id: 'all', name: tr('all'), count: tags.reduce((sum, tag) => sum + tag.count, 0) };
-  // Rows are collected first, then the new-tag row is spliced in: it belongs below Unclassified,
-  // but that row is skipped when it is empty, and appending the creating row inside the loop under
-  // it meant "+" did nothing at all in a library with nothing unclassified.
+  // Only user-created tags belong here; the create row always leads the list.
   const rows: HTMLElement[] = [];
-  let createAfter = 1;
-  const push = (row: HTMLElement, id: string | null): void => {
-    rows.push(row);
-    if (id === DEFAULT_TAG) createAfter = rows.length;
-  };
-  for (const tag of [all, ...tags]) {
-    const id = tag.id === 'all' ? null : tag.id;
-    // An empty Unclassified has nothing to open, so its row drops out instead of parking a "0" in
-    // the list. It comes straight back the moment a file lands in it — the drop hint still names
-    // it, and the row menu still offers it as a destination for any file.
-    if (id === DEFAULT_TAG && tag.count === 0) continue;
+  for (const tag of tags) {
+    const id = tag.id;
+    if (id === DEFAULT_TAG || id === 'all') continue;
     const row = node('div', 'tag-row');
     row.dataset.id = tag.id;
     row.classList.toggle('active', selectedTag === id);
@@ -439,12 +697,22 @@ function renderTags(): void {
         if (inlineTagEditing === id && document.activeElement !== field) finishTagRename(id, tag.name, undefined, false);
       }, 0));
       editor.append(svg(TagIcon), field, node('span', 'tag-count', String(tag.count)));
-      row.append(editor); push(row, id); continue;
+      row.append(editor); rows.push(row); continue;
     }
     const choice = node('button', 'tag-choice') as HTMLButtonElement;
     choice.type = 'button'; choice.setAttribute('aria-pressed', String(selectedTag === id));
-    choice.append(svg(tag.id === 'all' ? Files : tag.id === DEFAULT_TAG ? FolderOpen : TagIcon), node('span', 'tag-name', tag.id === DEFAULT_TAG ? tr('unclassified') : tag.name), node('span', 'tag-count', String(tag.count)));
-    choice.addEventListener('click', () => { if (selectedTag === id) return; selectedTag = id; inlineTagEditing = null; renderTags(); resetPage(); updateScope(); });
+    const editableColor = Boolean(id && id !== DEFAULT_TAG);
+    const leading = editableColor ? node('span', 'tag-dot-slot') : tagDot(tag.color);
+    leading.setAttribute('aria-hidden', 'true');
+    choice.append(leading, node('span', 'tag-name', tag.name), node('span', 'tag-count', String(tag.count)));
+    choice.addEventListener('click', () => selectTag(id));
+    if (editableColor) {
+      const trigger = node('button', 'tag-color-trigger') as HTMLButtonElement;
+      trigger.type = 'button'; trigger.title = tr('tagColor'); trigger.setAttribute('aria-label', `${tr('tagColor')} · ${tag.name}`);
+      trigger.setAttribute('aria-haspopup', 'dialog'); trigger.setAttribute('aria-expanded', 'false');
+      trigger.append(tagDot(tag.color));
+      trigger.addEventListener('click', () => openTagColor(tag, trigger)); row.append(trigger);
+    }
     row.append(choice);
     if (id && id !== DEFAULT_TAG) {
       const actions = node('span', 'tag-actions');
@@ -457,34 +725,64 @@ function renderTags(): void {
       });
       const remove = icon(Trash2, tr('deleteTag'));
       remove.addEventListener('click', async () => {
+        const root = libraryPath;
         const { confirmed } = await bridge.ui.confirm({ title: tr('tagDeleteTitle'), message: tr('tagDeleteMessage'), variant: 'danger' });
-        if (confirmed) request('tagDelete', { id });
+        if (confirmed && root === libraryPath) request('tagDelete', { id });
       });
       actions.append(rename, remove); row.append(actions);
       wireTagDrag(row, id, choice);
     }
-    push(row, id);
+    rows.push(row);
   }
-  if (creatingTag) rows.splice(Math.min(createAfter, rows.length), 0, tagCreateRow());
+  if (creatingTag) rows.unshift(tagCreateRow());
   container.append(...rows);
+  if (!creatingTag && !tags.some(tag => tag.id !== DEFAULT_TAG && tag.id !== 'all')) container.append(node('p', 'side-empty', tr('tagsEmpty')));
+  if (colorEditingTag !== null) closeTagColor();
   byId('library-title').textContent = tagName(selectedTag);
   updateScope();
 }
 function updateScope(): void {
-  const target = tagName(selectedTag);
-  const importTarget = tagName(selectedTag ?? DEFAULT_TAG);
-  const hint = byId('drop-hint');
-  hint.textContent = tr('dropHint', { tag: importTarget });
-  hint.setAttribute('title', hint.textContent);
+  const target = showIssues ? [selectedDirectory, tr('sourceIssues')].filter(Boolean).join(' · ') : selectedDirectory ?? tagName(selectedTag);
   // With no title and no note above it, the field itself says what a search would cover.
-  (byId('query') as HTMLInputElement).placeholder = tr('searchPlaceholderIn', { tag: target });
+  (byId('query') as HTMLInputElement).placeholder = tr('searchPlaceholderIn', { tag: selectedDirectory ?? tagName(selectedTag) });
   byId('library-title').textContent = target;
   byId('library-title').setAttribute('title', target);
 }
-/** The sort control is sized by its own label, so keep that label in sync with the selection. */
+/** Refresh the themed trigger and menu after a selection or locale change. */
 function updateSortSizer(): void {
-  const select = byId('sort') as HTMLSelectElement;
-  byId('sort-sizer').textContent = select.selectedOptions[0]?.textContent ?? '';
+  sortControl?.refresh(); renderColumnHeaders();
+  for (const item of byId('sort-menu').querySelectorAll<HTMLElement>('[data-sort]')) item.hidden = showIssues && ['added', 'updated'].includes(item.dataset.sort ?? '');
+}
+function sortLabel(value: SortOrder): string { return tr({ updated: 'sortUpdated', added: 'sortAdded', name: 'sortName', modified: 'sortModified', type: 'sortType', size: 'sortSize' }[value]); }
+function renderColumnHeaders(): void {
+  byId('document-columns').setAttribute('aria-label', tr('sortLabel'));
+  for (const value of ['name', 'modified', 'type', 'size'] as const) {
+    const button = byId(`column-${value}`); button.textContent = sortLabel(value);
+    button.setAttribute('aria-pressed', String(sort === value));
+    button.dataset.direction = sort === value ? currentDescending() ? 'descending' : 'ascending' : '';
+  }
+  byId('column-status-label').textContent = tr('columnStatus');
+}
+function wireColumns(): void {
+  for (const value of ['name', 'modified', 'type', 'size'] as const) byId(`column-${value}`).addEventListener('click', () => {
+    sortDescending = sort === value ? !currentDescending() : undefined;
+    sort = value; updateSortSizer(); resetPage();
+  });
+}
+function fileSize(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) return '—';
+  const unit = bytes < 1 ? 0 : Math.min(4, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / 1024 ** unit;
+  return `${new Intl.NumberFormat(document.documentElement.lang || 'en', { maximumFractionDigits: unit > 0 && value < 10 ? 1 : 0 }).format(value)} ${['B', 'KB', 'MB', 'GB', 'TB'][unit]}`;
+}
+function fileModified(timestamp: number | null | undefined): string {
+  if (timestamp == null || !Number.isFinite(timestamp)) return '—';
+  return new Date(timestamp).toLocaleString(document.documentElement.lang || 'en', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+}
+function fileType(doc: Document): string {
+  let extension = (doc.file_type ?? doc.name.match(/\.([^.]+)$/)?.[1] ?? '').toLowerCase();
+  extension = ({ jpg: 'jpeg', tif: 'tiff', markdown: 'md' } as Record<string, string>)[extension] ?? extension;
+  return copy[`fileType.${extension}`] ?? english[`fileType.${extension}`] ?? (extension ? `${extension.toUpperCase()} ${tr('fileGeneric')}` : tr('fileGeneric'));
 }
 /**
  * The row's primary action, routed by type: Markdown and text open in Finch's document preview,
@@ -492,59 +790,121 @@ function updateSortSizer(): void {
  * manager, which is also where the first two land when the host cannot preview them.
  */
 function openDocument(doc: Document): void {
-  const reveal = () => request('reveal', { id: doc.id });
+  const root=libraryPath,version=libraryVersion;
+  const reveal = () => {if(root===libraryPath&&version===libraryVersion)request('reveal', { id: doc.id });};
   if (!openListedDocument(bridge, doc.name, doc.path, reveal)) reveal();
 }
-/**
- * One row of the list. Building a row is separate from rendering the list because re-filing a
- * document rebuilds exactly one: the rest of the list, and the scroll position with it, stays put.
- */
+/** Non-indexed originals have no tag/preview actions; the reason stays in Index status. */
+function buildIssueRow(doc: Document): HTMLElement {
+  const row = node('div', doc.issueKind === 'pending' ? 'doc pending-doc' : 'doc issue-doc'); row.dataset.id = doc.id; row.dataset.issueKind = doc.issueKind;
+  row.dataset.path = doc.path; row.dataset.signature = rowSignature(doc);
+  row.tabIndex = 0; row.setAttribute('role', 'group');
+  const nameCell = node('div', 'doc-name'), fileIcon = node('span', 'doc-icon');
+  const glyph = node('img', 'doc-icon-image') as HTMLImageElement;
+  glyph.src = new URL(`../icons/${iconForFile(doc.name)}`, location.href).href; glyph.alt = ''; fileIcon.append(glyph);
+  const title = node('span', 'doc-title', doc.name); title.title = doc.path;
+  nameCell.append(fileIcon, title);
+  const key = { pending: 'statusPending', unsupported: 'issueUnsupported', failed: 'issueFailed', empty_file: 'issueEmpty', no_text: 'issueNoText', image_no_text: 'issueImageNoText', unavailable: 'issueUnavailable' }[doc.issueKind!];
+  const reason = [tr(key), doc.statusReason].filter(Boolean).join(' · ');
+  const status = node('span', 'doc-status'); status.dataset.state = doc.issueKind === 'failed' ? 'failed' : 'unverified';
+  status.setAttribute('title', reason); status.setAttribute('aria-label', reason); status.append(svg(doc.issueKind === 'pending' ? Circle : CircleAlert), node('span', '', reason));
+  row.append(nameCell, node('span', 'doc-modified', fileModified(doc.modified_at)), node('span', 'doc-type', fileType(doc)), node('span', 'doc-size', fileSize(doc.size_bytes)), status);
+  row.setAttribute('aria-label', `${doc.name} · ${reason}`); row.title = `${doc.path}\n${reason}`;
+  const reveal = () => request('reveal', { id: doc.id, issues: true });
+  const tools = node('div', 'doc-tools');
+  const open = icon(FolderOpen, tr('directoryOpen')); open.addEventListener('click', reveal); tools.append(open); row.append(tools);
+  row.addEventListener('dblclick', reveal);
+  row.addEventListener('keydown', event => { if (event.target === row && event.key === 'Enter') { event.preventDefault(); reveal(); } });
+  return row;
+}
+/** Build one row so re-filing never rebuilds the rest of the visible list. */
 function buildRow(doc: Document): HTMLElement {
+  if (doc.issueKind) return buildIssueRow(doc);
   const row = node('div', 'doc'); row.dataset.id = doc.id;
+  row.dataset.path = doc.path; row.dataset.signature = rowSignature(doc);
+  row.tabIndex = 0; row.setAttribute('role', 'group');
   const fileIcon = node('span', 'doc-icon');
   const glyph = node('img', 'doc-icon-image') as HTMLImageElement;
   glyph.src = new URL(`../icons/${iconForFile(doc.name)}`, location.href).href;
   glyph.alt = '';
   fileIcon.append(glyph);
-  row.append(fileIcon);
-  row.append(node('span', 'doc-title', doc.name));
-  // One line: the categories show as badges (a file may carry several), re-filing lives in the
-  // row menu. Unclassified is not a tag but the absence of one, so it gets a dashed badge.
-  const shown = doc.tags.slice(0, MAX_ROW_BADGES);
-  if (!shown.length) {
-    const badge = node('span', 'doc-tag unclassified', tagName(DEFAULT_TAG));
-    badge.setAttribute('title', tr('move'));
-    row.append(badge);
-  } else {
-    for (const tagId of shown) row.append(node('span', 'doc-tag', tagName(tagId)));
-    if (doc.tags.length > shown.length) {
-      const rest = node('span', 'doc-tag more', `+${doc.tags.length - shown.length}`);
-      rest.setAttribute('title', doc.tags.slice(MAX_ROW_BADGES).map((tagId) => tagName(tagId)).join(' · '));
-      row.append(rest);
+  const nameCell = node('div', 'doc-name'); nameCell.append(fileIcon); row.append(nameCell);
+  const displayPath = libraryPath && doc.path.startsWith(libraryPath) ? doc.path.slice(libraryPath.length).replace(/^[/\\]+/, '') : doc.name;
+  const title = node('span', 'doc-title', displayPath.split(/[/\\]/).pop() ?? doc.name);
+  title.title = displayPath; nameCell.append(title);
+  // Only assigned categories earn badges; Unclassified remains a sidebar filter and menu choice.
+  const assigned = doc.tags.filter(tagId => tagId !== DEFAULT_TAG);
+  const shown = assigned.slice(0, MAX_ROW_BADGES);
+  if (shown.length) {
+    for (const tagId of shown) {
+      const badge = node('button', 'doc-tag') as HTMLButtonElement;
+      badge.type = 'button'; badge.dataset.tagId = tagId; badge.title = tr('filterByTag', { tag: tagName(tagId) });
+      badge.setAttribute('aria-label', badge.title);
+      badge.append(tagDot(tags.find(tag => tag.id === tagId)?.color), node('span', '', tagName(tagId)));
+      badge.addEventListener('click', event => { event.stopPropagation(); selectTag(tagId); }); nameCell.append(badge);
+    }
+    if (assigned.length > shown.length) {
+      const rest = node('span', 'doc-tag more', `+${assigned.length - shown.length}`);
+      rest.setAttribute('title', assigned.slice(MAX_ROW_BADGES).map((tagId) => tagName(tagId)).join(' · '));
+      nameCell.append(rest);
     }
   }
   const added = new Date(doc.added_at).toLocaleDateString();
   const indexed = new Date(doc.indexed_at).toLocaleDateString();
-  // The row keeps only the size of the material; when it was indexed lives in the row menu.
-  row.append(node('span', 'doc-status', `${doc.chunks} ${tr('chunk')}`));
+  // Coverage comes from LanceDB, never inferred from catalogue presence or timestamps.
+  const state = doc.status ?? 'unverified';
+  const statusKey = { processing: 'statusProcessing', ready: 'statusReady', outdated: 'statusOutdated', pending: 'statusPending', incomplete: 'statusIncomplete', failed: 'statusFailed', source_missing: 'statusSourceMissing', source_unavailable: 'statusSourceUnavailable', unverified: 'statusUnverified' }[state];
+  const collectionStatus = node('span', 'doc-status');
+  collectionStatus.dataset.state = state;
+  collectionStatus.append(svg(state === 'ready' ? CircleCheck : state === 'processing' ? Loader : state === 'unverified' ? Circle : CircleAlert), node('span', '', tr(statusKey)));
+  const collectionHint = [tr(`${statusKey}Hint`),
+    doc.indexedChunks != null ? tr('statusCoverage', { actual: doc.indexedChunks, expected: doc.chunks }) : '',
+    state === 'failed' && doc.statusReason ? tr('statusReason', { reason: doc.statusReason }) : '',
+  ].filter(Boolean).join('\n');
+  collectionStatus.setAttribute('title', collectionHint);
+  collectionStatus.setAttribute('aria-label', tr(statusKey));
+  row.setAttribute('aria-label', `${displayPath} · ${tr(statusKey)}`);
+  const modified = fileModified(doc.modified_at), type = fileType(doc), size = fileSize(doc.size_bytes);
+  row.append(node('span', 'doc-modified', modified), node('span', 'doc-type', type), node('span', 'doc-size', size), collectionStatus);
   // Everything the shortened row no longer shows stays one hover away, full path included.
-  const external = !/[/\\]imports[/\\]/.test(doc.path);
+  const external = false; // Directory sources are the originals, not managed copies.
   row.setAttribute('title', [
     external ? tr('externalSource', { path: doc.path }) : doc.path,
+    `${tr('sortModified')}: ${modified}`, `${tr('sortType')}: ${type}`, `${tr('sortSize')}: ${size}`,
+    assigned.map(tagName).join(' · '), tr(statusKey), collectionHint,
     `${doc.chunks} ${tr('chunk')}`, tr('added', { date: added }), tr('updated', { date: indexed }),
   ].join('\n'));
 
-  // The row itself performs the same action as its own first button, so the pointer cursor is
-  // not a lie: that button is the eye for the file types Finch can show, and the folder for the
-  // ones that leave Finch. Anything that lands on a button keeps its own job.
-  row.addEventListener('click', (event) => {
-    if ((event.target as HTMLElement | null)?.closest('.doc-tools')) return;
+  // Preserve row activation without treating a completed text-selection gesture as a click.
+  const hasRowSelection = (): boolean => {
+    const selection = window.getSelection();
+    return Boolean(selection && !selection.isCollapsed && selection.rangeCount
+      && selection.getRangeAt(0).intersectsNode(row));
+  };
+  let pointerStart: { x: number; y: number } | null = null;
+  let dragged = false, selecting = false;
+  row.addEventListener('pointerdown', event => {
+    pointerStart = event.button === 0 ? { x: event.clientX, y: event.clientY } : null;
+    dragged = false; selecting = hasRowSelection();
+  });
+  row.addEventListener('pointermove', event => {
+    if (pointerStart && Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 4) dragged = true;
+  });
+  row.addEventListener('pointercancel', () => { pointerStart = null; dragged = true; });
+  row.addEventListener('click', event => {
+    if ((event.target as HTMLElement | null)?.closest('button, a, input, textarea, select')) return;
+    const moved = pointerStart && Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 4;
+    pointerStart = null;
+    if (event.button !== 0 || event.detail > 1 || dragged || moved || selecting || hasRowSelection()) return;
     openDocument(doc);
   });
+  row.addEventListener('keydown', event => {
+    if (event.target !== row || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault(); openDocument(doc);
+  });
   const tools = node('div', 'doc-tools');
-  const previewable = previewRoute(doc.name) !== 'external';
-  const primary = previewable ? icon(Eye, tr('preview')) : icon(FolderOpen, tr('reveal'));
-  primary.addEventListener('click', () => openDocument(doc));
+  const primary = icon(FolderOpen, tr('reveal'));
+  primary.addEventListener('click', () => request('reveal', { id: doc.id }));
   const more = icon(EllipsisVertical, tr('menu'));
   more.setAttribute('aria-haspopup', 'menu');
   more.addEventListener('click', (event) => {
@@ -561,20 +921,77 @@ function buildRow(doc: Document): HTMLElement {
   row.append(tools);
   return row;
 }
-function renderDocs(focusId?: string): void {
+function buildEmptyState(): HTMLElement {
+  const mode = scanBusy ? 'scanning' : loadingPage ? 'loading' : selectedDirectory !== null ? 'directory' : selectedTag !== null ? 'category' : 'library';
+  const section = node('section', 'library-empty');
+  section.dataset.mode = mode;
+  section.setAttribute('role', 'status');
+  section.setAttribute('aria-busy', String(mode === 'scanning' || mode === 'loading'));
+  section.setAttribute('aria-labelledby', 'empty-heading');
+  const illustration = node('div', 'empty-illustration');
+  illustration.setAttribute('aria-hidden', 'true');
+  illustration.append(svg(mode === 'scanning' || mode === 'loading' ? Loader : mode === 'category' ? TagIcon : Files));
+  const titleKey = { library: 'emptyTitle', directory: 'emptyFolderTitle', category: 'emptyCategoryTitle', scanning: 'emptyScanningTitle', loading: 'emptyLoadingTitle' }[mode];
+  const hintKey = { library: 'emptyHint', directory: 'emptyFolderHint', category: 'emptyCategoryHint', scanning: 'emptyScanningHint', loading: 'emptyLoadingHint' }[mode];
+  const heading = node('h3', 'empty-heading', tr(titleKey, { tag: tagName(selectedTag ?? DEFAULT_TAG) }));
+  heading.id = 'empty-heading';
+  section.append(illustration, heading, node('p', 'empty-description', tr(hintKey)));
+  if ((mode === 'library' || mode === 'scanning') && libraryPath) {
+    const directory = node('div', 'empty-directory');
+    directory.setAttribute('title', libraryPath);
+    const path = node('code', 'empty-directory-path', libraryPath);
+    directory.append(svg(FolderOpen), node('span', 'empty-directory-label', tr('emptyDirectory')), path);
+    section.append(directory);
+  }
+  if (mode === 'library') {
+    const steps = node('ol', 'empty-steps');
+    for (const [index, key] of ['emptyStepFiles', 'emptyStepScan', 'emptyStepTags'].entries()) {
+      const step = node('li', 'empty-step');
+      step.append(node('span', 'empty-step-number', String(index + 1)), node('span', '', tr(key)));
+      steps.append(step);
+    }
+    section.append(steps, node('p', 'empty-types', tr('emptyTypes')));
+  }
+  return section;
+}
+
+function rowSignature(doc: Document): string { return JSON.stringify([doc, doc.tags.map(id => tags.find(tag => tag.id === id))]); }
+function renderDocs(focusId?: string, preserve = false): void {
   // Rows are rebuilt here, so a menu whose document is gone has to close — but one whose document
   // is still listed keeps its place, which is what makes ticking several categories possible.
   const survivor = rowMenuDoc ? docs.find((doc) => doc.id === rowMenuDoc!.id) ?? null : null;
   // A refresh empties the list before refilling it, and that moment is not a reason to forget the
   // menu: hide it, and the next render puts it back on the row it belongs to.
   if (!survivor) { if (docs.length || !rowMenuDoc) closeRowMenu(); else hideRowMenu(); }
+  byId('knowledge-content').classList.toggle('issues-view', showIssues);
   byId('count').textContent = tr('totalFiles', { count: total });
-  const target = byId('documents'); target.replaceChildren();
-  if (!docs.length) target.append(node('div', 'empty', tr('empty')));
-  for (const doc of docs) target.append(buildRow(doc));
+  byId('document-columns').hidden = docs.length === 0;
+  const target = byId('documents');
+  const existing = new Map(preserve ? Array.from(target.children).map(row => [(row as HTMLElement).dataset.path, row as HTMLElement] as const) : []);
+  if (!preserve || !docs.length) target.replaceChildren();
+  if (!docs.length) {
+    if (showIssues) {
+      const empty = node('section', 'library-empty'); empty.setAttribute('role', 'status');
+      empty.append(node('h3', 'empty-heading', tr(loadingPage ? 'emptyLoadingTitle' : 'sourceIssuesEmpty')), node('p', 'empty-description', tr('sourceIssuesHint'))); target.append(empty);
+    } else target.append(buildEmptyState());
+  }
+  const keep = new Set<HTMLElement>();
+  if (preserve && docs.length) {
+    const wanted = new Set(docs.map(doc => doc.path));
+    for (const row of Array.from(target.children)) if (!wanted.has((row as HTMLElement).dataset.path ?? '')) row.remove();
+  }
+  for (const [index, doc] of docs.entries()) {
+    const previous = preserve ? existing.get(doc.path) : undefined;
+    const row = previous && previous.dataset.signature === rowSignature(doc) ? previous : buildRow(doc);
+    keep.add(row);
+    if (previous && previous !== row) previous.replaceWith(row);
+    if (!preserve) target.append(row);
+    else if (target.children[index] !== row) target.insertBefore(row, target.children[index] ?? null);
+  }
+  if (preserve && docs.length) for (const row of Array.from(target.children)) if (!keep.has(row as HTMLElement)) row.remove();
   if (survivor) restoreRowMenu(survivor, rowMenuFlyoutOpen);
   // Only carry a tail line while rows remain; a fully shown list needs no dangling footer.
-  byId('list-end').textContent = docs.length < total ? tr('loaded', { shown: docs.length, total }) : '';
+  byId('list-end').textContent = docs.length && docs.length < total ? tr('loaded', { shown: docs.length, total }) : '';
   if (focusId) {
     const row = Array.from(target.children).find((element) => (element as HTMLElement).dataset.id === focusId) as HTMLElement | undefined;
     row?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -596,6 +1013,20 @@ function renderDocs(focusId?: string): void {
  * A document outside the loaded window needs no DOM update. It must never trigger a full reload:
  * another toggle can arrive after an earlier one already removed the row from the current scope.
  */
+function patchDocumentStatus(path: string, phase: 'processing' | 'settled', update?: Document): void {
+  const index = docs.findIndex(doc => doc.path === path);
+  if (index < 0) return;
+  const previous = docs[index]!;
+  if (update && update.id !== previous.id) return;
+  if(update?.file_id&&previous.file_id&&update.file_id!==previous.file_id)return;
+  if(update?.source_revision!==undefined&&previous.source_revision!==undefined&&update.source_revision<previous.source_revision)return;
+  docs[index] = phase === 'processing' ? { ...previous, status: 'processing', statusReason: undefined }
+    : update ? { ...previous, ...update, tags: previous.tags } : { ...previous, status: 'unverified' };
+  const row = byId('documents').querySelector<HTMLElement>(`.doc[data-id="${previous.id}"]`);
+  row?.replaceWith(buildRow(docs[index]!));
+  if (rowMenuDoc?.id === previous.id) restoreRowMenu(docs[index]!, rowMenuFlyoutOpen);
+}
+
 function patchTagToggle(documentId: string, nextTags: string[]): void {
   const index = docs.findIndex((doc) => doc.id === documentId);
   if (index === -1) return;
@@ -680,7 +1111,7 @@ function restoreRowMenu(doc: Document, flyoutWasOpen: boolean): void {
   placeMenu(byId('row-menu') as HTMLElement, rowMenuBox ?? anchor.getBoundingClientRect());
   if (flyoutWasOpen) {
     byId('row-classify').setAttribute('aria-expanded', 'true');
-    placeMenu(submenu, byId('row-classify').getBoundingClientRect(), 'left');
+    placeRowSubmenu(submenu);
     // Re-ticking must preserve the user's place, not jump back to the first selected category.
     submenu.scrollTop = submenuScroll;
   }
@@ -698,26 +1129,39 @@ function placeMenu(menu: HTMLElement, anchor: AnchorBox, side: 'below' | 'left' 
   const scrollX = window.scrollX;
   const scrollY = window.scrollY;
   const clamp = (value: number, max: number) => Math.max(8, Math.min(value, max));
-  // 'left' opens away from the panel edge so a flyout never runs off the window.
-  const rawLeft = side === 'left' ? anchor.left - box.width - gap
-    : side === 'right' ? anchor.right + gap
-      : anchor.right - box.width;
+  const point = anchor.width === 0 && anchor.height === 0;
+  const right = anchor.right + (point ? 0 : gap);
+  const left = anchor.left - box.width - (point ? 0 : gap);
+  const fitsRight = right + box.width <= window.innerWidth - 8;
+  const fitsLeft = left >= 8;
+  let rawLeft = anchor.right - box.width;
+  if (point || side !== 'below') {
+    const preferRight = point || side === 'right';
+    rawLeft = preferRight ? (fitsRight || !fitsLeft ? right : left) : (fitsLeft || !fitsRight ? left : right);
+  }
   menu.style.left = `${scrollX + clamp(rawLeft, window.innerWidth - box.width - 8)}px`;
-  // A flyout lines up with the middle of the item it belongs to; a stacked menu sits under its
-  // anchor and flips above it when the window runs out of room.
-  const rawTop = side === 'left'
-    ? anchor.top + anchor.height / 2 - box.height / 2
-    : anchor.bottom + gap + box.height > window.innerHeight - 8
-      ? anchor.top - box.height - gap
-      : anchor.bottom + gap;
+  // Context menus begin at the pointer; flyouts align with their parent item. Flip upward only
+  // when needed, then clamp to keep every action reachable in a short viewport.
+  const below = point ? anchor.top : anchor.bottom + gap;
+  const rawTop = !point && side !== 'below' ? anchor.top
+    : below + box.height > window.innerHeight - 8 ? anchor.top - box.height - (point ? 0 : gap) : below;
   menu.style.top = `${scrollY + clamp(rawTop, window.innerHeight - box.height - 8)}px`;
 }
 
-/** The second level lists every category, marking the one the document already has. */
-/** Fills the category flyout for one document: a checkbox per tag, ticked where it applies. */
+/** Use the outer menu edges so its padding never makes the flyout overlap its parent. */
+function placeRowSubmenu(submenu: HTMLElement): void {
+  const item = byId('row-classify').getBoundingClientRect();
+  const parent = byId('row-menu').getBoundingClientRect();
+  placeMenu(submenu, { top:item.top, bottom:item.bottom, height:item.height, left:parent.left, right:parent.right, width:parent.width }, 'right');
+}
+
+/** A multi-select flyout: independent checkboxes reflect every tag on the document. */
 function fillRowSubmenu(doc: Document): void {
   const submenu = byId('row-submenu') as HTMLElement;
+  const active = document.activeElement as HTMLElement | null;
+  const focusedTag = active && submenu.contains(active) ? active.dataset.tagId : undefined;
   submenu.replaceChildren();
+  submenu.setAttribute('aria-label', tr('menuClassify'));
   // Clicking adds or removes that category without closing anything: several are usually set in one
   // visit, so the flyout stays where it is and re-ticks itself when the reply comes back.
   for (const tag of tags) {
@@ -725,22 +1169,26 @@ function fillRowSubmenu(doc: Document): void {
     const checked = doc.tags.includes(tag.id);
     const choice = node('button', 'menu-item') as HTMLButtonElement;
     choice.type = 'button';
+    choice.dataset.tagId = tag.id;
     choice.setAttribute('role', 'menuitemcheckbox');
     choice.setAttribute('aria-checked', String(checked));
-    choice.append(node('span', 'menu-label', tagName(tag.id)));
+    choice.append(tagDot(tag.color), node('span', 'menu-label', tagName(tag.id)));
     const check = node('span', 'menu-check');
     if (checked) check.append(svg(Check));
     choice.append(check);
     choice.addEventListener('click', () => request('tagToggle', { id: doc.id, tagId: tag.id }));
     submenu.append(choice);
   }
-  // With no categories at all there is nothing to tick, so the flyout says so instead of opening on
-  // an empty box.
-  if (!submenu.children.length) {
-    const note = node('span', 'menu-hint', tr('noTags'));
-    note.setAttribute('role', 'presentation');
-    submenu.append(note);
+  // Creating a tag belongs beside tag assignments, including when there are no tags yet.
+  if (submenu.children.length) {
+    const divider = node('div', 'menu-separator'); divider.setAttribute('role', 'separator'); submenu.append(divider);
   }
+  const create = node('button', 'menu-item') as HTMLButtonElement;
+  create.id = 'row-new-tag'; create.type = 'button'; create.setAttribute('role', 'menuitem');
+  create.append(svg(Plus), node('span', 'menu-label', tr('newTag')));
+  create.addEventListener('click', () => { closeRowMenu(); startTagCreate(); });
+  submenu.append(create);
+  if (focusedTag) Array.from(submenu.querySelectorAll<HTMLButtonElement>('button[data-tag-id]')).find(choice => choice.dataset.tagId === focusedTag)?.focus({ preventScroll: true });
 }
 /**
  * Opens the shared row menu for one document. `at` places it at a point — a right-click — instead
@@ -777,7 +1225,7 @@ function openRowSubmenu(): void {
   rowMenuFlyoutOpen = true;
   const item = byId('row-classify');
   item.setAttribute('aria-expanded', 'true');
-  placeMenu(submenu, item.getBoundingClientRect(), 'left');
+  placeRowSubmenu(submenu);
   // The flyout must be visible before measuring its viewport and selected row.
   scrollToCheckedCategory(submenu);
 }
@@ -786,13 +1234,56 @@ function closeRowSubmenu(): void {
   (byId('row-submenu') as HTMLElement).hidden = true;
   byId('row-classify').setAttribute('aria-expanded', 'false');
 }
+/** External applications must not leave pointer highlights or button focus latched in this view. */
+function wireWindowActivity(): void {
+  const root = document.documentElement;
+  const deactivate = (): void => {
+    root.classList.add('window-inactive', 'pointer-quiet');
+    closeRowMenu(); closeTagColor(); setMenu(false);
+    const active = document.activeElement as HTMLElement | null;
+    // Preserve text drafts when switching applications; only transient action focus is cleared.
+    if (active?.closest('.doc') || active?.matches('button, a')) active.blur();
+  };
+  window.addEventListener('blur', deactivate);
+  window.addEventListener('focus', () => root.classList.remove('window-inactive'));
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) deactivate();
+    else if (document.hasFocus()) root.classList.remove('window-inactive');
+  });
+  const resumePointer = (): void => {
+    if (!document.hidden && document.hasFocus()) {
+      // Embedded views can miss focus events when returning from a host-owned preview.
+      root.classList.remove('window-inactive');
+      root.classList.remove('pointer-quiet');
+    }
+  };
+  document.addEventListener('pointermove', resumePointer, { passive:true });
+  document.addEventListener('pointerdown', resumePointer, { passive:true });
+}
+function wireTagContextMenu(): void {
+  const menu = byId('tag-context-menu');
+  const section = byId('tags').parentElement!;
+  const close = (): void => { menu.hidden = true; };
+  section.addEventListener('contextmenu', event => {
+    if ((event.target as HTMLElement | null)?.closest('input, textarea')) return;
+    event.preventDefault(); event.stopPropagation(); closeRowMenu(); setMenu(false); closeTagColor();
+    const box = section.getBoundingClientRect();
+    const x = event.clientX || box.left + 16, y = event.clientY || box.top + 36;
+    placeMenu(menu, { left:x, right:x, top:y, bottom:y, width:0, height:0 });
+    byId('tag-context-new').focus({ preventScroll: true });
+  });
+  byId('tag-context-new').addEventListener('click', () => { close(); startTagCreate(); });
+  document.addEventListener('pointerdown', event => { if (!menu.hidden && !menu.contains(event.target as Node)) close(); });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !menu.hidden) { event.preventDefault(); close(); byId('new-tag').focus(); }
+  });
+  window.addEventListener('resize', close); window.addEventListener('blur', close);
+  byId('tags').addEventListener('scroll', close, { passive:true });
+}
 function wireRowMenu(): void {
   const menu = byId('row-menu') as HTMLElement;
   const submenu = byId('row-submenu') as HTMLElement;
-  byId('row-open').addEventListener('click', () => {
-    if (rowMenuDoc) request('reveal', { id: rowMenuDoc.id });
-    closeRowMenu();
-  });
+
   byId('row-classify').addEventListener('click', () => {
     if (menuOpenFor(submenu)) closeRowSubmenu(); else openRowSubmenu();
   });
@@ -805,13 +1296,6 @@ function wireRowMenu(): void {
     element.addEventListener('mouseenter', keep);
     element.addEventListener('mouseleave', drop);
   }
-  byId('row-remove').addEventListener('click', async () => {
-    const doc = rowMenuDoc;
-    closeRowMenu();
-    if (!doc) return;
-    const { confirmed } = await bridge.ui.confirm({ title: tr('removeTitle'), message: tr('removeMessage'), variant: 'danger' });
-    if (confirmed) request('delete', { id: doc.id });
-  });
   // Anything outside, a scroll, or Escape dismisses the menu.
   document.addEventListener('pointerdown', (event) => {
     const target = event.target as Node;
@@ -844,8 +1328,9 @@ function moveActiveMatch(delta: number): void {
   setActiveMatch(activeMatch < 0 ? (delta > 0 ? 0 : rows.length - 1) : activeMatch + delta);
 }
 function locateMatch(match: Match): void {
+  showIssues = false; updateSortSizer(); renderDirectories();
   pageEpoch++; loadingPage = false;
-  request('locate', { id: match.document_id, tagId: selectedTag, sort }, 'locate');
+  request('locate', { id: match.document_id, tagId: selectedTag, directory: selectedDirectory, sort, descending: currentDescending() }, 'locate');
 }
 let matches: Match[] = [];
 function renderMatches(next: Match[]): void {
@@ -893,11 +1378,13 @@ function renderEnvironment(state: EnvironmentState): void {
   // The screen exists only while something mandatory is missing. As soon as those parts are in it
   // steps aside by itself — nobody sits and watches an optional engine download — and it comes
   // back if a retry or a reinstall makes the library unusable again.
-  overlay.hidden = state.usable;
-  if (state.usable) return;
+  overlay.hidden = libraryEntered && Boolean(libraryPath) && state.usable && !libraryUnavailable;
+  if (overlay.hidden) return;
   const list = byId('onboard-steps');
   list.replaceChildren();
   renderOnboardLibrary();
+  byId('onboard-title').textContent = tr('onboardTitle');
+  byId('onboard-intro').textContent = tr('onboardIntro');
   const labels: Record<string, string> = { lancedb: tr('onboardLancedb'), anydoc: tr('onboardAnydoc'), ocr: tr('onboardOcr') };
   const statuses: Record<EnvironmentStep['status'], string> = {
     pending: tr('onboardPending'), running: tr('onboardRunning'), ready: tr('onboardReady'), failed: tr('onboardFailed'),
@@ -910,22 +1397,29 @@ function renderEnvironment(state: EnvironmentState): void {
     // The icon is centred against the whole text block, not just its first line.
     const content = node('div', 'onboard-step-content');
     const title = node('div', 'onboard-step-title');
-    title.append(node('span', 'onboard-step-name', labels[step.id] ?? step.id), node('span', 'onboard-step-status', statuses[step.status]));
+    title.append(node('span', 'onboard-step-name', labels[step.id] ?? step.id), node('span', 'onboard-step-status', step.lazy && step.status === 'pending' ? tr('onboardOnDemand') : statuses[step.status]));
     content.append(title);
-    const detail = step.error ?? step.message ?? step.detail ?? (step.status === 'running' ? tr('onboardWorking') : '');
-    if (detail) content.append(node('div', 'onboard-step-detail', detail));
-    if (step.status === 'running' && typeof step.percent === 'number') {
-      const bar = node('div', 'onboard-bar');
-      const fill = node('span', '');
-      fill.style.width = `${Math.max(4, Math.min(100, step.percent))}%`;
-      bar.append(fill);
-      content.append(bar);
-    }
+    const detail = step.error ?? step.message ?? step.detail ?? (step.lazy && step.status === 'pending' ? tr('onboardOcrHint') : step.status === 'running' ? tr('onboardWorking') : '');
+    // Keep both slots in every state: finishing a download must not resize the card.
+    const detailLine = node('div', 'onboard-step-detail', detail);
+    detailLine.setAttribute('title', detail);
+    content.append(detailLine);
+    const bar = node('div', 'onboard-bar');
+    const fill = node('span', '');
+    const showProgress = step.status === 'running' && typeof step.percent === 'number';
+    bar.style.visibility = showProgress ? 'visible' : 'hidden';
+    bar.setAttribute('aria-hidden', String(!showProgress));
+    fill.style.width = `${Math.max(4, Math.min(100, step.percent ?? 0))}%`;
+    bar.append(fill);
+    content.append(bar);
     row.append(content);
     list.append(row);
   }
   const failures = state.steps.filter((step) => step.status === 'failed');
-  const blockingFailure = failures.some((step) => !step.optional);
+  const blockingFailure = failures.some(step => !step.optional);
+  byId('onboard-enter').hidden = false;
+  (byId('onboard-enter') as HTMLButtonElement).disabled = !libraryPath || Boolean(libraryUnavailable) || !state.usable;
+  byId('onboard-enter').textContent = tr('onboardEnter');
   byId('onboard-retry').hidden = state.running || !blockingFailure;
   byId('onboard-help').hidden = state.running || !blockingFailure;
   byId('onboard-note').textContent = blockingFailure ? tr('onboardFailedNote') : '';
@@ -937,12 +1431,12 @@ function renderEnvironment(state: EnvironmentState): void {
  */
 function renderOnboardLibrary(): void {
   const row = byId('onboard-library-row');
-  const state = libraryUnavailable ? 'failed' : libraryBusy ? 'running' : 'ready';
+  const state = libraryUnavailable ? 'failed' : libraryBusy ? 'running' : !libraryPath ? 'pending' : 'ready';
   row.className = `onboard-step onboard-library ${state}`;
   byId('onboard-library-icon').replaceChildren(svg(environmentIcon(state)));
   byId('onboard-library-status').textContent = state === 'running' ? tr('onboardWorking')
     : state === 'failed' ? tr('onboardLibraryUnavailable')
-      : libraryDefault ? tr('onboardLibraryDefault') : tr('onboardLibraryChosen');
+      : state === 'pending' ? tr('onboardPending') : libraryDefault ? tr('onboardLibraryDefault') : tr('onboardLibraryChosen');
   const path = byId('onboard-library-path');
   path.textContent = shortPath(libraryUnavailable || libraryPath);
   path.setAttribute('title', libraryUnavailable || libraryPath);
@@ -959,23 +1453,52 @@ function applyEnvironment(state: EnvironmentState | undefined): void {
   // Report an optional failure once, after the user has already gone back to the library.
   const failures = state.steps.filter((step) => step.status === 'failed' && step.optional);
   // Reported once the run has stopped, and only while the library is actually on screen.
-  if (failures.length && !state.running && previous?.running && state.usable) {
+  if (libraryEntered && failures.length && !state.running && previous?.running && state.usable) {
     toast(tr('onboardOptionalFailed', { name: failures.map((step) => STEP_LABELS[step.id]?.() ?? step.id).join(', ') }), 'error');
   }
   // First sight of a missing runtime starts setup by itself; a failure always waits for a click.
   const untouched = state.steps.every((step) => step.status === 'pending' || step.status === 'ready');
-  if (!state.ready && !state.running && untouched && !environmentAutoStarted) {
+  if (!state.usable && !state.running && untouched && !environmentAutoStarted) {
     environmentAutoStarted = true;
     request('environmentInstall');
   }
 }
-function applyLibrary(info: LibraryInfo | undefined): void {
-  if (!info) return;
-  libraryPath = info.root;
+function applyLibrary(info: LibraryInfo | undefined): boolean {
+  if (!info || (info.version !== undefined && info.version < libraryVersion)) return false;
+  const newerScope = info.version !== undefined && libraryVersion >= 0 && info.version !== libraryVersion;
+  if (info.version !== undefined) libraryVersion = info.version;
+  const nextPath = info.selected === false ? '' : info.root;
+  const changed = libraryPath !== nextPath || newerScope;
+  libraryPath = nextPath;
+  libraryName = info.name ?? '';
+  libraryIndexStorage = info.indexStorage ?? 'source';
+  activeLibraryId = info.activeId ?? '';
+  const preserveStates=info.availabilityEpoch===availabilityEpoch&&(info.availabilityVersion??-1)<availabilityVersion;
+  const previousEntries=libraryEntries;
+  libraryEntries = (info.libraries ?? []).map(entry=>{const previous=previousEntries.find(v=>v.id===entry.id&&libraryStatusFingerprint(v)===libraryStatusFingerprint(entry));return preserveStates&&previous?{...entry,availability:previous.availability}:entry;});
+  if(info.availabilityEpoch!==undefined&&info.availabilityEpoch!==availabilityEpoch){availabilityEpoch=info.availabilityEpoch;availabilityVersion=-1;}
+  if(info.availabilityVersion!==undefined)availabilityVersion=Math.max(availabilityVersion,info.availabilityVersion);
+  if (changed) {
+    editingLibrary=undefined;
+    setMenu(false); setLibraryBusy(false);
+    closeRowMenu(); closeTagColor(); closeSearch();
+    pageEpoch++; loadingPage = false;
+    creatingTag = false; inlineTagEditing = null; draggingTag = null;
+    selectedTag = null; selectedDirectory = null; showIssues = false; issuesTotal = 0;
+    directories = []; expandedDirectories.clear(); tags = []; docs = [];
+    total = 0; beforeOffset = 0; nextOffset = 0;nextCursor=previousCursor=undefined;catalogVersion=-1;
+    documentStatusVersions.clear();
+    updateSortSizer(); renderDirectories(); renderTags(); renderDocs();
+    setScanBusy(false);
+  }
   libraryDefault = info.isDefault;
+  libraryEntered = info.entered === true;
   libraryUnavailable = info.unavailable ?? '';
+  setScanBusy(scanBusy);
   updateLibrary();
   renderOnboardLibrary();
+  if (environment) renderEnvironment(environment);
+  return changed;
 }
 function shortPath(path: string): string {
   const parts = path.split(/[/\\]+/).filter(Boolean);
@@ -984,59 +1507,197 @@ function shortPath(path: string): string {
 }
 function updateLibrary(): void {
   const short = shortPath(libraryPath);
+  byId('heading').textContent = tr('heading');
+  byId('heading').setAttribute('title', tr('heading'));
   const path = byId('library-path');
-  path.textContent = short;
+  path.textContent = libraryName || (libraryUnavailable ? shortPath(libraryUnavailable) : short);
   // The row shows only the folder name, so the tooltip carries what it is and the full path.
-  const reveal = byId('library-reveal');
-  reveal.setAttribute('title', `${libraryUnavailable ? '⚠ ' : ''}${tr('libraryLabel')}\n${libraryUnavailable ?? libraryPath}`);
-  reveal.setAttribute('aria-label', `${tr('libraryLabel')}: ${libraryUnavailable ?? libraryPath}, ${tr('libraryReveal')}`);
+  const reveal = byId('library-picker-button');
+  reveal.setAttribute('title', `${libraryUnavailable ? '⚠ ' : ''}${tr('libraryLabel')}\n${libraryUnavailable || libraryPath}`);
+  reveal.setAttribute('aria-label', `${tr('librariesTitle')}: ${libraryUnavailable || libraryPath}`);
   byId('library-footer').classList.toggle('warning', Boolean(libraryUnavailable));
   const note = byId('library-note');
+  const libraryNote = tr(libraryIndexStorage === 'local' ? 'libraryNoteRemote' : 'libraryNote');
   note.textContent = libraryUnavailable ? `${tr('libraryUnavailable', { path: libraryUnavailable })}
 
-${tr('libraryNote')}` : libraryDefault ? `${tr('libraryDefault')}
+${libraryNote}` : libraryDefault ? `${tr('libraryDefault')}
 
-${tr('libraryNote')}` : tr('libraryNote');
+${libraryNote}` : libraryNote;
+  renderLibraryChoices();
 }
-function setMenu(open: boolean): void {
-  if (open) closeRowMenu();
-  (byId('library-menu') as HTMLElement).hidden = !open;
-  byId('library-menu-button').setAttribute('aria-expanded', String(open));
+function paintLibraryState(target:HTMLElement,state:LibraryState):void{target.dataset.state=state;target.textContent=tr(`libraryState.${state}`);target.title=tr(`libraryStateHint.${state}`);target.setAttribute('aria-label',target.title);}
+function applyLibraryStates(data:Reply):void{
+  if(data.availabilityEpoch!==availabilityEpoch||(data.availabilityVersion??-1)<availabilityVersion)return;
+  availabilityVersion=data.availabilityVersion??availabilityVersion;
+  for(const update of data.states??[]){
+    const entry=libraryEntries.find(v=>v.id===update.id&&libraryStatusFingerprint(v)===update.fingerprint);if(!entry)continue;
+    if(!['unknown','checking','available','offline','unavailable'].includes(update.state))continue;
+    entry.availability=update.state;
+    const row=Array.from(byId('library-list').children).find(v=>(v as HTMLElement).dataset.libraryId===entry.id);
+    const target=row?.querySelector<HTMLElement>('.library-entry-state');if(target)paintLibraryState(target,update.state);
+    row?.querySelector('.library-choice')?.setAttribute('aria-label',`${entry.name} — ${tr(`libraryStateHint.${update.state}`)}`);
+  }
 }
-function menuOpen(): boolean { return !(byId('library-menu') as HTMLElement).hidden; }
-function setLibraryBusy(busy: boolean, label = ''): void {
+function beginLibraryEdit(entry:LibraryChoice):void{
+  if(editingLibrary?.saving)return;
+  editingLibrary={id:entry.id,value:entry.name,saving:false};renderLibraryChoices();
+  const input=byId('library-list').querySelector<HTMLInputElement>('.library-name-input');input?.focus();input?.select();
+}
+function endLibraryEdit():void{
+  const id=editingLibrary?.id;editingLibrary=undefined;renderLibraryChoices();
+  const row=Array.from(byId('library-list').children).find(v=>(v as HTMLElement).dataset.libraryId===id);
+  if(menuOpen('libraries')){row?.querySelector<HTMLButtonElement>('.library-choice')?.focus({preventScroll:true});row?.querySelector<HTMLButtonElement>('[data-action="libraryRename"]')?.focus({preventScroll:true});}
+}
+function saveLibraryEdit():void{
+  if(!editingLibrary||editingLibrary.saving)return;
+  const name=editingLibrary.value.trim();
+  if(!name||name.length>60){editingLibrary.error=tr('libraryNameInvalid');const input=byId('library-list').querySelector<HTMLInputElement>('.library-name-input');input?.setAttribute('aria-invalid','true');if(input)input.title=editingLibrary.error;input?.focus();return;}
+  editingLibrary.saving=true;request('libraryRename',{id:editingLibrary.id,name});
+  const input=byId('library-list').querySelector<HTMLInputElement>('.library-name-input');if(input)input.readOnly=true;
+}
+function renderLibraryChoices(): void {
+  const container = byId('library-list');
+  container.setAttribute('aria-label', tr('librariesTitle'));
+  const scroll=container.scrollTop;
+  container.replaceChildren(...libraryEntries.map(entry => {
+    const row = node('div', 'library-entry');
+    row.dataset.libraryId = entry.id;
+    row.dataset.selected=String(entry.id===activeLibraryId);
+    if(editingLibrary?.id===entry.id){
+      row.classList.add('editing');
+      const main=node('div','library-edit-main');
+      const input=node('input','library-name-input') as HTMLInputElement;
+      input.type='text';input.maxLength=60;input.value=editingLibrary.value;input.readOnly=editingLibrary.saving;
+      input.setAttribute('aria-label',tr('libraryNameLabel'));input.setAttribute('aria-invalid',String(Boolean(editingLibrary.error)));input.title=editingLibrary.error??tr('libraryNameHint');
+      input.addEventListener('input',()=>{if(editingLibrary){editingLibrary.value=input.value;editingLibrary.error=undefined;input.setAttribute('aria-invalid','false');}});
+      input.addEventListener('keydown',event=>{if(event.isComposing)return;if(event.key==='Enter'){event.preventDefault();event.stopPropagation();saveLibraryEdit();}else if(event.key==='Escape'){event.preventDefault();event.stopPropagation();if(!editingLibrary?.saving)endLibraryEdit();}});
+      main.append(input);row.append(main);return row;
+    }
+    const current = entry.id === activeLibraryId;
+    const choice = node('button', 'menu-item library-choice') as HTMLButtonElement;
+    choice.type = 'button'; choice.disabled = libraryBusy;
+    choice.setAttribute('role', 'menuitemradio'); choice.setAttribute('aria-checked', String(current));
+    choice.setAttribute('aria-label',`${entry.name} — ${tr(`libraryStateHint.${entry.availability??'unknown'}`)}`);
+    choice.title = entry.root;
+    const label = node('span', 'library-entry-label');
+    label.append(node('span', 'library-entry-name', entry.name));
+    choice.append(label);
+    choice.addEventListener('click', () => {
+      if (libraryBusy) return;
+      setMenu(false);
+      if (current) return;
+      setLibraryBusy(true); request('librarySwitch', { id: entry.id });
+    });
+    const controls=node('span','library-entry-controls');
+    for(const [action,icon,key] of [['libraryRename',PenLine,'renameLibrary'],['libraryRemove',Trash2,'removeLibrary']] as const){
+      const button=node('button','plain-icon library-manage') as HTMLButtonElement;
+      button.type='button';button.disabled=libraryBusy;button.dataset.action=action;button.setAttribute('role','menuitem');
+      button.title=tr(key,{name:entry.name});button.setAttribute('aria-label',button.title);button.append(svg(icon));
+      button.addEventListener('click',event=>{event.stopPropagation();if(libraryBusy)return;if(action==='libraryRename'){beginLibraryEdit(entry);return;}setMenu(false);setLibraryBusy(true);request(action,{id:entry.id});});
+      controls.append(button);
+    }
+    const tail=node('span','library-entry-tail'),state=node('span','library-entry-state');paintLibraryState(state,entry.availability??'unknown');tail.append(state,controls);
+    row.append(choice,tail);
+    return row;
+  }));
+  container.scrollTop=scroll;
+}
+type LibraryMenuKind = 'libraries' | 'actions';
+let activeLibraryMenu: LibraryMenuKind = 'libraries';
+let libraryMenuAnchor:HTMLElement|undefined;
+function libraryMenuTrigger(): HTMLElement { return libraryMenuAnchor??byId(activeLibraryMenu === 'libraries' ? 'library-picker-button' : 'library-menu-button'); }
+function setMenu(open: boolean, kind: LibraryMenuKind = 'libraries',anchor?:HTMLElement): void {
+  for (const id of ['library-menu', 'library-actions-menu']) byId(id).hidden = true;
+  for (const id of ['library-picker-button', 'library-menu-button','onboard-library-action']) byId(id).setAttribute('aria-expanded', 'false');
+  if(availabilityTimer!==undefined){clearInterval(availabilityTimer);availabilityTimer=undefined;}
+  if (!open) {if(editingLibrary&&!editingLibrary.saving){editingLibrary=undefined;renderLibraryChoices();}return;}
+  activeLibraryMenu = kind;libraryMenuAnchor=anchor;
+  closeRowMenu();
+  const menu = byId(kind === 'libraries' ? 'library-menu' : 'library-actions-menu');
+  // Both menus escape the sidebar clipping boundary, but have independent triggers.
+  document.body.append(menu); menu.classList.add('library-picker-floating');
+  placeMenu(menu, libraryMenuTrigger().getBoundingClientRect());
+  libraryMenuTrigger().setAttribute('aria-expanded', 'true');
+  if(kind==='libraries'){
+    request('libraryAvailability');
+    availabilityTimer=setInterval(()=>{if(!document.hidden)request('libraryAvailability');},15000);
+  }
+}
+function menuOpen(kind?: LibraryMenuKind): boolean {
+  return kind ? !byId(kind === 'libraries' ? 'library-menu' : 'library-actions-menu').hidden
+    : ['library-menu', 'library-actions-menu'].some(id => !byId(id).hidden);
+}
+function setScanBusy(busy: boolean): void {
+  if (!busy || !scanBusy) {
+    scanPercent = null;
+    streamedProgress = '';
+    if (streamedTimer !== undefined) clearTimeout(streamedTimer);
+    streamedTimer = undefined;
+  }
+  scanBusy = busy;
+  const button = byId('sync') as HTMLButtonElement;
+  if (!busy) pauseRequested = false;
+  button.disabled = pauseRequested || libraryBusy || !libraryPath || Boolean(libraryUnavailable);
+  const label = busy ? tr(pauseRequested ? 'scanPausing' : 'scanPause') : tr('syncLabel');
+  byId('sync-label').textContent = label; byId('settings-scan-label').textContent = label;
+  button.setAttribute('aria-label', label);
+  (byId('settings-scan') as HTMLButtonElement).disabled = button.disabled;
+  button.setAttribute('aria-busy', String(busy));
+  button.setAttribute('title', busy ? tr('scanPauseHint') : tr('syncHint'));
+  renderActivity();
+  if (!docs.length) renderDocs();
+}
+/** Completion is a reconciliation boundary, not proof that a batch snapshot reached the page. */
+function finishScan(): void {
+  const wasBusy = scanBusy;
+  setScanBusy(false);
+  if (wasBusy) refreshPage();
+}
+function requestScan(): void {
+  if (libraryBusy || pauseRequested || !libraryPath || libraryUnavailable) return;
+  setMenu(false);
+  if (scanBusy) { pauseRequested = true; setScanBusy(true); request('scanPause'); return; }
+  setScanBusy(true);
+  request('sync');
+}
+function setLibraryBusy(busy: boolean): void {
   libraryBusy = busy;
-  busyLabel = busy ? label : '';
-  for (const id of ['library-location', 'backup', 'library-reveal', 'library-menu-button', 'sync', 'onboard-library-action']) (byId(id) as HTMLButtonElement).disabled = busy;
+  renderLibraryChoices();
+  for (const id of ['library-location', 'library-picker-button', 'library-menu-button', 'open-directory', 'onboard-library-action']) (byId(id) as HTMLButtonElement).disabled = busy;
   if (busy) setMenu(false);
+  setScanBusy(scanBusy);
   renderActivity();
   renderOnboardLibrary();
 }
 function applyCopy(): void {
+  byId('workspace-resizer').setAttribute('aria-label', tr('resizeSidebar'));
+  byId('workspace-resizer').title = tr('resizeSidebar');
   const elements: Record<string, string> = {
-    heading: 'heading', intro: 'intro', add: 'add-label',
+    heading: 'heading', intro: 'intro', openDirectory: 'open-directory-label',
     tagsTitle: 'tags-title',
     sortLabel: 'sort-label',
-    libraryLocation: 'library-location-label', backupLabel: 'backup-label', syncLabel: 'sync-label',
+    libraryLocation: 'library-location-label', syncLabel: 'sync-label',
     libraryEnvironment: 'library-environment-label',
-    menuReveal: 'row-open-label', menuClassify: 'row-classify-label', remove: 'row-remove-label',
+    menuClassify: 'row-classify-label', hideUnsupported: 'hide-unsupported-label',
     onboardTitle: 'onboard-title', onboardIntro: 'onboard-intro', onboardRetry: 'onboard-retry', onboardHelp: 'onboard-help',
     onboardLibraryTitle: 'onboard-library-title', onboardLibraryAction: 'onboard-library-action-label',
     searchLabel: 'search-label',
   };
   for (const [key, id] of Object.entries(elements)) byId(id).textContent = tr(key);
+  const createLabel = document.querySelector('#row-new-tag .menu-label');
+  if (createLabel) createLabel.textContent = tr('newTag');
+  byId('tag-context-new-label').textContent = tr('newTag');
   byId('new-tag').setAttribute('title', tr('newTag')); byId('new-tag').setAttribute('aria-label', tr('newTag'));
   byId('browse').setAttribute('title', tr('browse')); byId('browse').setAttribute('aria-label', tr('browse'));
   byId('onboard-library-action').setAttribute('title', tr('onboardLibraryHint'));
-  byId('sync').setAttribute('title', tr('syncHint'));
+  setScanBusy(scanBusy);
   byId('library-location').setAttribute('title', tr('libraryLocationHint'));
-  byId('library-menu-button').setAttribute('title', tr('menu')); byId('library-menu-button').setAttribute('aria-label', tr('menu'));
+  byId('library-menu-button').setAttribute('title', tr('librarySettings')); byId('library-menu-button').setAttribute('aria-label', tr('librarySettings'));
   (byId('query') as HTMLInputElement).placeholder = tr('searchPlaceholderIn', { tag: tr('all') });
   byId('search-dialog').setAttribute('aria-label', tr('searchLabel'));
-  const options = (byId('sort') as HTMLSelectElement).options;
-  options[0]!.textContent = tr('sortUpdated'); options[1]!.textContent = tr('sortAdded'); options[2]!.textContent = tr('sortName');
   updateSortSizer();
-  renderTags(); renderDocs(); updateLibrary();
+  renderDirectories(); renderTags(); renderDocs(); updateLibrary();
+  if (environment) renderEnvironment(environment);
 }
 async function localeChanged(locale: string): Promise<void> {
   const epoch = ++localeEpoch;
@@ -1053,112 +1714,72 @@ async function localeChanged(locale: string): Promise<void> {
   applyCopy();
   document.documentElement.classList.remove('booting');
 }
-function uploadRequest(type: string, payload: Record<string, unknown> = {}, timeoutMs = 30_000): Promise<Reply> {
-  return new Promise((resolve, reject) => {
-    const requestId = String(++sequence);
-    const timer = window.setTimeout(() => { transfers.delete(requestId); reject(new Error('File transfer timed out.')); }, timeoutMs);
-    transfers.set(requestId, { resolve, reject, timer });
-    try { bridge.postMessage({ type, requestId, ...payload }); }
-    catch (error) { clearTimeout(timer); transfers.delete(requestId); reject(error instanceof Error ? error : new Error(String(error))); }
+function resetSearch(): void {
+  if (debounce !== undefined) clearTimeout(debounce);
+  debounce = undefined;
+  searchEpoch++;
+  for (const [id, task] of pending) if (task.type === 'search') pending.delete(id);
+  searchQuery = ''; matches = []; activeMatch = -1;
+  (byId('query') as HTMLInputElement).value = '';
+  byId('search-dialog').classList.toggle('has-results', false);
+  const results = byId('matches');
+  results.replaceChildren(node('div', 'empty', tr('searchHint')));
+  results.scrollTop = 0;
+}
+function closeSearch(): void {
+  resetSearch();
+  const dialog = byId('search-dialog') as HTMLDialogElement;
+  if (dialog.open) dialog.close();
+}
+function wireSearchDialog(): void {
+  const dialog = byId('search-dialog') as HTMLDialogElement;
+  byId('browse').addEventListener('click', () => {
+    resetSearch(); updateScope(); dialog.showModal(); (byId('query') as HTMLInputElement).focus();
   });
-}
-function base64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-  return btoa(binary);
-}
-async function importOne(file: File, tagId: string): Promise<boolean> {
-  const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-  if (!ALLOWED.has(extension)) throw new Error(tr('unsupported'));
-  if (file.size < 1 || file.size > MAX_FILE) throw new Error(tr('tooLarge', { max: MAX_FILE_MB }));
-  importProgress = { label: tr('reading', { name: file.name }), percent: 0 };
-  renderActivity();
-  await uploadRequest('uploadStart', { name: file.name, size: file.size, tagId });
-  try {
-    for (let offset = 0; offset < file.size; offset += CHUNK_SIZE) {
-      const bytes = new Uint8Array(await file.slice(offset, offset + CHUNK_SIZE).arrayBuffer());
-      await uploadRequest('uploadChunk', { data: base64(bytes) });
-      const percent = Math.floor(Math.min(100, (offset + bytes.length) / file.size * 100));
-      importProgress = { label: tr('uploading', { name: file.name, percent }), percent };
-      renderActivity();
+  dialog.addEventListener('click', event => { if (event.target === dialog) closeSearch(); });
+  dialog.addEventListener('cancel', resetSearch);
+  dialog.addEventListener('close', () => { if (!dialog.open) resetSearch(); });
+  dialog.addEventListener('focusout', event => {
+    // Moving between the query and a result is not leaving the search palette.
+    if (event.relatedTarget instanceof Node && !dialog.contains(event.relatedTarget)) closeSearch();
+  });
+  window.addEventListener('blur', () => { if (dialog.open) closeSearch(); });
+  byId('query').addEventListener('input', queueSearch);
+  dialog.addEventListener('keydown', event => {
+    if (!matches.length) return;
+    if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) {
+      event.preventDefault();
+      const row = matches[activeMatch < 0 ? 0 : activeMatch];
+      if (row) locateMatch(row);
+      return;
     }
-    return (await uploadRequest('uploadFinish', { name: file.name }, 900_000)).unchanged === 1;
-  } catch (error) {
-    bridge.postMessage({ type: 'uploadAbort', requestId: String(++sequence) });
-    throw error;
-  }
-}
-/**
- * A format's engine has to be installed before its bytes are worth sending: the backend refuses
- * such an import on purpose (an engine download must not happen under the library lock), and
- * uploading a 40 MB image first only to be told that is a waste. The mapping mirrors the store.
- */
-const ENGINE_STEPS: Array<{ extensions: string[]; step: string }> = [
-  { extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'tif', 'tiff'], step: 'ocr' },
-  { extensions: ['doc', 'docx', 'pdf'], step: 'anydoc' },
-];
-function pendingEngine(name: string): string | null {
-  const extension = name.split('.').pop()?.toLowerCase() ?? '';
-  const step = ENGINE_STEPS.find((entry) => entry.extensions.includes(extension))?.step;
-  if (!step) return null;
-  const state = environment?.steps.find((item) => item.id === step);
-  return state && state.status !== 'ready' ? step : null;
-}
-/** Returns the names to skip, and asks for the missing engine once. */
-function gateImports(names: string[]): Set<string> {
-  const blocked = new Set<string>();
-  let step: string | null = null;
-  for (const name of names) {
-    const pending = pendingEngine(name);
-    if (!pending) continue;
-    blocked.add(name);
-    step = pending;
-  }
-  if (step) {
-    const label = tr(step === 'ocr' ? 'engineOcr' : 'engineAnydoc');
-    toast(tr('engineNeeded', { name: label }), 'info');
-    environmentAutoStarted = true;
-    request('environmentInstall');
-  }
-  return blocked;
-}
-async function importFiles(files: File[]): Promise<void> {
-  if (!bridge || uploading || !files.length) return;
-  uploading = true;
-  (byId('add') as HTMLButtonElement).disabled = true;
-  const tagId = selectedTag ?? DEFAULT_TAG;
-  let imported = 0; let unchanged = 0;
-  const errors: string[] = [];
-  // Formats whose engine is still missing are held back before a single byte is sent; the toast and
-  // the background install are raised by the guard itself.
-  const blocked = gateImports(files.map((file) => file.name));
-  try {
-    for (const file of files) {
-      if (blocked.has(file.name)) continue;
-      try { if (await importOne(file, tagId)) unchanged++; else imported++; }
-      catch (error) { errors.push(`${file.name}: ${error instanceof Error ? error.message : String(error)}`); }
-    }
-    // Nothing was sent and nothing failed: the engine toast already said why.
-    if (!imported && !unchanged && !errors.length && blocked.size) return;
-    toast(errors.length
-      ? tr('failed', { details: errors.join('; ') })
-      : unchanged > 0 ? tr('completeUnchanged', { count: imported, unchanged }) : tr('complete', { count: imported }),
-    errors.length ? 'error' : 'success');
-  } finally {
-    uploading = false;
-    importProgress = null;
-    renderActivity();
-    (byId('add') as HTMLButtonElement).disabled = false;
-  }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    event.preventDefault(); moveActiveMatch(event.key === 'ArrowDown' ? 1 : -1);
+  });
 }
 function queueSearch(): void {
   if (debounce !== undefined) clearTimeout(debounce);
+  debounce = undefined;
   searchEpoch++;
   const query = (byId('query') as HTMLInputElement).value.trim();
-  if (!query) { byId('matches').replaceChildren(node('div', 'empty', tr('searchHint'))); return; }
-  debounce = window.setTimeout(() => { searchQuery = query; request('search', { query, tagId: selectedTag }); }, 240);
+  if (!query) { resetSearch(); return; }
+  const epoch = searchEpoch;
+  debounce = window.setTimeout(() => {
+    debounce = undefined;
+    if (epoch !== searchEpoch || !(byId('search-dialog') as HTMLDialogElement).open) return;
+    searchQuery = query; request('search', { query, tagId: selectedTag, directory: selectedDirectory });
+  }, 240);
 }
 mountStaticIcons();
+window.addEventListener('pagehide', wireScrollbars(document), { once: true });
+sortControl = createSortMenu({
+  trigger: byId('sort') as HTMLButtonElement, menu: byId('sort-menu'), label: byId('sort-current'),
+  getValue: () => sort,
+  getLabel: sortLabel,
+  onChange(value) { sort = value; sortDescending = undefined; renderColumnHeaders(); resetPage(); },
+  onOpen() { closeRowMenu(); setMenu(false); },
+});
+window.addEventListener('pagehide', () => sortControl?.dispose(), { once: true });
 applyCopy();
 wireRowMenu();
 window.setTimeout(() => {
@@ -1168,15 +1789,69 @@ if (bridge) {
   bridge.onMessage((message: unknown) => {
     const data = message as Reply & { locale?: string };
     if (data.type === 'finch:env') { void localeChanged(data.locale ?? 'en-US'); return; }
-    // Backend progress is backend work (copying, indexing); it belongs on the same hairline.
+    if (!data.library && data.libraryVersion !== undefined && data.libraryVersion < libraryVersion) {
+      if (data.requestId) pending.delete(data.requestId);
+      return;
+    }
+    // Detailed backend messages may refine an active scan, but never start the bar.
     if (data.type === 'progress') { noteProgress(data.message ?? ''); return; }
     if (data.type === 'environment') { applyEnvironment(data.environment); return; }
-    if (data.type === 'removed') {
-      // Entries whose source file vanished are dropped by the backend; say so rather than silently shrinking the list.
-      toast(tr('removedMissing', { count: data.count ?? 0, names: (data.names ?? []).join(', ') }), 'warning');
+    if (data.library?.version !== undefined && data.library.version < libraryVersion) {
+      const task = data.requestId ? pending.get(data.requestId) : undefined;
+      if (data.requestId) pending.delete(data.requestId);
+      if (task?.type.startsWith('library')) setLibraryBusy(false);
+      return;
+    }
+    if (data.preferences) byId('hide-unsupported').setAttribute('aria-checked', String(data.preferences.hideUnsupported));
+    if(data.type==='libraryAvailability'){if(data.requestId)pending.delete(data.requestId);applyLibraryStates(data);return;}
+    if (data.type === 'libraries') {
+      if (applyLibrary(data.library)) { request('tags'); resetPage(); }
+      return;
+    }
+    if (data.type === 'documentStatus') {
+      if (data.root !== libraryPath || !data.path) return;
+      const version = data.version ?? 0;
+      if (version <= (documentStatusVersions.get(data.path) ?? -1)) return;
+      documentStatusVersions.set(data.path, version);
+      patchDocumentStatus(data.path, data.phase ?? 'settled', data.document);
+      return;
+    }
+    if (['scanStarted', 'scanDone', 'scanFailed', 'syncDone'].includes(data.type) && data.root && data.root !== libraryPath) {
+      if (data.requestId) pending.delete(data.requestId);
+      return;
+    }
+    // This is only an acknowledgement; keep the request until its final outcome arrives.
+    if (data.type === 'syncStarted') return;
+    if (data.type === 'scanStarted') { setScanBusy(true); return; }
+    if (data.type === 'scanProgress') {
+      if (data.root && data.root !== libraryPath) return;
+      updateScanProgress(data.percent, data.message);
+      return;
+    }
+    if (data.type === 'scanFailed') { setScanBusy(false); return; }
+    if (data.type === 'scanDone') {
+      finishScan();
+      // Manual scans also get a final reply; only that reply owns their completion toast.
+      if ([...pending.values()].some(task => task.type === 'sync')) return;
+      toast(tr(data.paused ? 'scanPaused' : 'syncFinished'), data.paused ? 'info' : 'success');
       return;
     }
     if (data.type === 'changed') {
+      if (data.root && data.root !== libraryPath) return;
+      if (data.issuesTotal !== undefined) applyIssueCount(data.issuesTotal);
+      applyDirectories(data.directories);
+      if (data.change?.kind === 'scanBatch') {
+        applyTags(data.tags ?? [], false);
+        refreshPage();
+        if ((byId('search-dialog') as HTMLDialogElement).open && ![...pending.values()].some(task => task.type === 'search')) queueSearch();
+        return;
+      }
+      if (data.change?.kind === 'tagColor') {
+        const scroll = byId('documents-scroll').scrollTop;
+        applyTags(data.tags ?? [], false); renderDocs();
+        byId('documents-scroll').scrollTop = scroll;
+        return;
+      }
       // Re-filing one document patches that single row: the list keeps its scroll position and
       // never blanks. Everything else the backend reports — an import, a deletion, a tag rename —
       // still reloads it, because a row can have appeared or disappeared anywhere.
@@ -1185,42 +1860,47 @@ if (bridge) {
         patchTagToggle(String(data.change.documentId ?? ''), data.change.tags ?? []);
         // Catalogue counts also cover changes outside the loaded window. All sources keeps its
         // total: adding/removing a tag cannot add/remove a document (nor may multi-tag counts be summed).
-        if (selectedTag !== null) total = tags.find((tag) => tag.id === selectedTag)?.count ?? total;
+        if (!showIssues && selectedTag !== null) total = tags.find((tag) => tag.id === selectedTag)?.count ?? total;
         byId('count').textContent = tr('totalFiles', { count: total });
         byId('list-end').textContent = docs.length < total ? tr('loaded', { shown: docs.length, total }) : '';
         if ((byId('search-dialog') as HTMLDialogElement).open) queueSearch();
         return;
       }
-      applyTags(data.tags ?? []);
-      resetPage();
+      // Same-library catalogue updates retain the visible snapshot until its replacement arrives.
+      applyTags(data.tags ?? [], false);
+      pageEpoch++; loadingPage = false; refreshQueued = false;
+      refreshPage();
       if ((byId('search-dialog') as HTMLDialogElement).open) queueSearch();
-      return;
-    }
-    const transfer = data.requestId && transfers.get(data.requestId);
-    if (transfer) {
-      clearTimeout(transfer.timer); transfers.delete(data.requestId!);
-      if (data.type === 'error') transfer.reject(new Error(data.error ?? 'File import failed.'));
-      else transfer.resolve(data);
       return;
     }
     const task = data.requestId && pending.get(data.requestId);
     if (!task) return;
     pending.delete(data.requestId!);
-    if (task.type === 'search' && task.epoch !== searchEpoch) return;
+    if (task.root && (task.root !== libraryPath || (task.version !== undefined && task.version !== libraryVersion))) return;
+    if (isLibraryScoped(task.type) && data.root && libraryPath && data.root !== libraryPath) return;
+    if (task.type === 'search' && (task.epoch !== searchEpoch || !(byId('search-dialog') as HTMLDialogElement).open)) return;
     if ((task.type === 'page' || task.type === 'locate') && task.epoch !== pageEpoch) return;
     if (data.type === 'error') {
       loadingPage = false;
       byId('list-end').textContent = '';
-      if (task.type === 'backup') backingUp = false;
-      if (task.type === 'backup' || task.type === 'libraryAction' || task.type === 'libraryReveal') setLibraryBusy(false);
+      if (task.type === 'sync') { setScanBusy(false); return; }
+      if(task.type==='libraryRename'&&editingLibrary&&editingLibrary.id===data.id){editingLibrary.saving=false;editingLibrary.error=data.error;}
+      if (task.type.startsWith('library')) {setLibraryBusy(false);if(data.library){const changed=applyLibrary(data.library);if(changed&&data.library.selected){request('tags');resetPage();}}}
+      if(task.type==='libraryRename'&&editingLibrary&&editingLibrary.id===data.id)byId('library-list').querySelector<HTMLInputElement>('.library-name-input')?.focus();
       toast(data.error ?? '', 'error'); return;
     }
     switch (data.type) {
-      case 'tags':
+      case 'tags': {
+        const changed = applyLibrary(data.library);
+        if (data.issuesTotal !== undefined) applyIssueCount(data.issuesTotal);
+        applyDirectories(data.directories);
         applyTags(data.tags ?? []);
-        applyLibrary(data.library);
         applyEnvironment(data.environment);
+        if (data.scanning !== undefined) setScanBusy(data.scanning);
+        if (changed) resetPage();
         break;
+      }
+      case 'preferences': break;
       case 'environmentHelpOpened':
         // The chat opens in front of this page, so the hand-off speaks for itself.
         break;
@@ -1228,66 +1908,62 @@ if (bridge) {
         applyLibrary(data.library);
         break;
       case 'syncDone': {
-        setLibraryBusy(false);
-        const sync = data.sync ?? { updated: [], removed: [], unchanged: 0, unreachable: [], failed: [] };
-        const changed = sync.updated.length + sync.removed.length;
-        // Every recorded source lands in one of these buckets, so an empty total means the library
-        // simply has no source files to follow up on — not that everything is up to date.
-        const tracked = changed + sync.unchanged + sync.unreachable.length + sync.failed.length;
-        const details: string[] = [];
-        if (!tracked) details.push(tr('syncNoSources'));
-        else if (changed > 0) details.push(tr('syncDone', { updated: sync.updated.length, removed: sync.removed.length, unchanged: sync.unchanged }));
-        else if (!sync.unreachable.length) details.push(tr('syncIdle'));
-        if (sync.unreachable.length) details.push(tr('syncUnreachable', { count: sync.unreachable.length }));
-        if (sync.failed.length) details.push(tr('syncFailed', { count: sync.failed.length }));
-        toast(details.join(' '), sync.failed.length || sync.unreachable.length ? 'warning' : 'success');
-        if (changed) { request('tags'); resetPage(); }
+        finishScan();
+        toast(tr(data.sync?.paused ? 'scanPaused' : 'syncFinished'), data.sync?.paused ? 'info' : 'success');
+        // Also reconciles hosts where only the manual reply reaches the page.
         break;
       }
+      case 'libraryEntered':
+        applyLibrary(data.library);
+        applyEnvironment(data.environment);
+        request('tags'); resetPage();
+        break;
+      case 'libraryRenamed':
+        applyLibrary(data.library);if(editingLibrary?.id===data.id)endLibraryEdit();break;
+      case 'libraryRemoved':
+        setLibraryBusy(false);applyLibrary(data.library);toast(data.warning??tr('libraryRemoved'),data.warning?'warning':'success');break;
       case 'libraryRevealed':
         setLibraryBusy(false); break;
       case 'libraryCanceled':
         setLibraryBusy(false); break;
       case 'libraryDone': {
         setLibraryBusy(false);
+        environmentAutoStarted = false;
         applyLibrary(data.library);
-        // A switched library can still point at files that are not on this disk any more.
-        const missing = data.verified?.missing ?? 0;
-        // An empty outgoing library makes a copy read as a plain new library.
-        const before = data.verified?.before;
-        const wasEmpty = !before || (before.documents === 0 && before.tags === 0);
-        const key = data.mode === 'open' ? 'libraryDoneOpen' : wasEmpty ? 'libraryDoneCreate' : 'libraryDoneMove';
-        const details = [tr(key, { path: data.library?.root ?? '', previous: data.previousRoot ?? '' })];
-        if (missing > 0) details.push(tr('libraryMissing', { missing }));
-        toast(details.join(' '), missing > 0 ? 'warning' : 'success');
+        applyEnvironment(data.environment);
+        const key = data.library?.indexStorage === 'local' ? 'libraryDoneRemote' : data.mode === 'switch' ? 'libraryDoneSwitch' : data.mode === 'open' ? 'libraryDoneOpen' : 'libraryDoneCreate';
+        toast(tr(key, { path: data.library?.root ?? '', name: data.library?.name ?? data.library?.root ?? '' }), 'success');
         // The listing, counts and tags all belong to the previous directory.
         request('tags');
         resetPage();
         break;
       }
-      case 'backupCanceled':
-        backingUp = false; setLibraryBusy(false); break;
-      case 'backupDone':
-        backingUp = false; setLibraryBusy(false);
-        toast(tr((data.missing ?? 0) > 0 ? 'backupPartial' : 'backupDone', {
-          count: data.count ?? 0, missing: data.missing ?? 0, path: data.path ?? '',
-        }), (data.missing ?? 0) > 0 ? 'warning' : 'success');
-        break;
       case 'tagCreated':
         // The inline row closes itself; an error keeps it open so the name can be fixed.
         creatingTag = false;
-        if (data.tag) { selectedTag = data.tag.id; tags.push(data.tag); renderTags(); resetPage(); }
+        if (data.tag) { showIssues = false; updateSortSizer(); selectedDirectory = null; selectedTag = data.tag.id; tags.push(data.tag); renderDirectories(); renderTags(); resetPage(); }
         break;
       case 'page': {
+        if(data.catalogVersion!==undefined&&data.catalogVersion<catalogVersion){loadingPage=false;refreshPage();break;}
+        if(data.catalogVersion!==undefined)catalogVersion=data.catalogVersion;
         const container = byId('documents-scroll');
         const oldHeight = container.scrollHeight;
         const offset = data.offset ?? 0;
         const mode = task.mode ?? 'replace';
-        if (mode === 'replace' || mode === 'locate') { docs = data.documents ?? []; beforeOffset = offset; nextOffset = offset + docs.length; container.scrollTop = 0; }
+        const anchor = mode === 'refresh' ? visibleAnchor() : { path: undefined, index: 0, top: 0 }, scroll = container.scrollTop;
+        if (mode === 'replace' || mode === 'locate' || mode === 'refresh') { docs = data.documents ?? []; beforeOffset = offset; nextOffset = offset + docs.length; if (mode !== 'refresh') container.scrollTop = 0; }
         else if (mode === 'prepend') { docs = [...(data.documents ?? []), ...docs]; beforeOffset = offset; }
         else { docs = [...docs, ...(data.documents ?? [])]; nextOffset = offset + (data.documents?.length ?? 0); }
+        if(mode==='replace'||mode==='locate'||mode==='refresh'||mode==='append')nextCursor=data.nextCursor;
+        if(mode==='replace'||mode==='locate'||mode==='refresh'||mode==='prepend')previousCursor=data.previousCursor;
         total = data.total ?? 0; loadingPage = false;
-        renderDocs(data.focusId);
+        renderDocs(data.focusId, mode === 'refresh');
+        if (mode === 'refresh') {
+          const row = Array.from(byId('documents').children).find(item => (item as HTMLElement).dataset.path === anchor.path);
+          container.scrollTop = scroll;
+          if (row) container.scrollTop += row.getBoundingClientRect().top - container.getBoundingClientRect().top - anchor.top;
+        }
+        if (refreshQueued) refreshPage();
         if (mode === 'prepend') container.scrollTop += container.scrollHeight - oldHeight;
         if (mode === 'locate') (byId('search-dialog') as HTMLDialogElement).close();
         break;
@@ -1299,6 +1975,7 @@ if (bridge) {
   });
   resetPage(); request('ready');
   byId('new-tag').addEventListener('click', startTagCreate);
+  byId('onboard-enter').addEventListener('click', () => request('enterLibrary'));
   byId('onboard-retry').addEventListener('click', () => {
     if (environment) renderEnvironment({ ...environment, running: true });
     request('environmentInstall');
@@ -1307,95 +1984,66 @@ if (bridge) {
     toast(tr('onboardHelpOpening'), 'info');
     request('environmentHelp');
   });
-  // One button, one decision — on the setup screen and in the library menu alike: the backend
-  // inspects the chosen folder, opens the library it finds there, or copies the current one into
-  // an empty folder.
+  // Adding registers the chosen directory and opens its own index in place.
+  // Existing libraries remain registered; no files or index data are copied.
   for (const id of ['onboard-library-action', 'library-location']) {
-    byId(id).addEventListener('click', () => {
-      if (libraryBusy || backingUp) return;
+    byId(id).addEventListener('click', (event) => {
+      if (libraryBusy) return;
+      event.stopPropagation();
+      if(id==='onboard-library-action'&&!libraryPath&&libraryEntries.length){setMenu(!menuOpen('libraries'),'libraries',byId(id));return;}
       setMenu(false);
-      setLibraryBusy(true, tr('libraryWorking'));
+      setLibraryBusy(true);
       request('libraryAction', { mode: 'choose' });
     });
   }
   byId('library-environment').addEventListener('click', () => {
-    if (libraryBusy || backingUp) return;
+    if (libraryBusy) return;
     setMenu(false);
     environmentAutoStarted = true;
     if (environment) renderEnvironment({ ...environment, running: true });
     renderEnvironmentMenu();
     request('environmentInstall');
   });
-  const picker = byId('file-input') as HTMLInputElement;
-  byId('add').addEventListener('click', () => picker.click());
-  // The library lives behind one compact footer button plus an overflow menu.
-  byId('library-menu-button').addEventListener('click', (event) => {
-    event.stopPropagation();
-    if (libraryBusy) return;
-    setMenu(!menuOpen());
-  });
+  for (const [id, kind] of [['library-picker-button', 'libraries'], ['library-menu-button', 'actions']] as const) {
+    byId(id).addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!libraryBusy) setMenu(!menuOpen(kind), kind);
+    });
+  }
   document.addEventListener('click', (event) => {
     if (!menuOpen()) return;
     const target = event.target as Node | null;
-    if (target && byId('library-menu').contains(target)) return;
-    if (target && byId('library-menu-button').contains(target)) return;
+    if (target && ['library-menu', 'library-actions-menu', 'library-picker-button', 'library-menu-button','onboard-library-action'].some(id => byId(id).contains(target))) return;
     setMenu(false);
   });
-  byId('library-menu').addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') { setMenu(false); byId('library-menu-button').focus(); }
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && menuOpen()) { event.preventDefault(); setMenu(false); libraryMenuTrigger().focus(); }
   });
-  byId('library-reveal').addEventListener('click', () => {
+  byId('open-directory').addEventListener('click', () => {
     if (libraryBusy) return;
     setMenu(false);
     setLibraryBusy(true);
     request('libraryReveal');
   });
-  byId('backup').addEventListener('click', () => {
-    if (backingUp || libraryBusy) return;
-    setMenu(false);
-    backingUp = true; setLibraryBusy(true, tr('backupWorking'));
-    request('backup');
-  });
-  byId('sync').addEventListener('click', () => {
-    if (libraryBusy || backingUp) return;
-    setMenu(false);
-    setLibraryBusy(true, tr('syncWorking'));
-    request('sync');
-  });
-  picker.addEventListener('change', () => { const files = Array.from(picker.files ?? []); picker.value = ''; void importFiles(files); });
+  window.addEventListener('resize', () => setMenu(false));
+  byId('sync').addEventListener('click', requestScan);
+  byId('settings-scan').addEventListener('click', requestScan);
+  byId('hide-unsupported').addEventListener('click', () => request('preferences', { hideUnsupported: byId('hide-unsupported').getAttribute('aria-checked') !== 'true' }));
   const isFileDrag = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes('Files');
   document.addEventListener('dragenter', (event) => { if (isFileDrag(event)) { event.preventDefault(); document.body.classList.add('dragging-file'); } });
   document.addEventListener('dragover', (event) => { if (isFileDrag(event)) { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'; } });
   document.addEventListener('dragleave', (event) => { if (!event.relatedTarget) document.body.classList.remove('dragging-file'); });
-  document.addEventListener('drop', (event) => { if (!isFileDrag(event)) return; event.preventDefault(); document.body.classList.remove('dragging-file'); void importFiles(Array.from(event.dataTransfer?.files ?? [])); });
-  (byId('sort') as HTMLSelectElement).addEventListener('change', (event) => {
-    sort = (event.target as HTMLSelectElement).value as typeof sort;
-    updateSortSizer();
-    resetPage();
-  });
+  document.addEventListener('drop', (event) => { if (!isFileDrag(event)) return; event.preventDefault(); document.body.classList.remove('dragging-file'); toast(tr('directoryDropHint'), 'info'); });
   byId('documents-scroll').addEventListener('scroll', () => {
     if (loadingPage || total <= docs.length) return;
     const view = byId('documents-scroll');
     if (view.scrollTop < 80 && beforeOffset > 0) page(Math.max(0, beforeOffset - 50), 'prepend');
     else if (view.scrollTop + view.clientHeight > view.scrollHeight - 180 && nextOffset < total) page(nextOffset, 'append');
   });
-  const dialog = byId('search-dialog') as HTMLDialogElement;
-  byId('browse').addEventListener('click', () => { updateScope(); dialog.showModal(); (byId('query') as HTMLInputElement).focus(); queueSearch(); });
-  // The palette has no close button: Escape and a click on the backdrop both dismiss it.
-  dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
-  byId('query').addEventListener('input', queueSearch);
-  dialog.addEventListener('keydown', (event) => {
-    if (!matches.length) return;
-    // Enter while an IME candidate list is open belongs to the IME, not to this list.
-    if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) {
-      event.preventDefault();
-      const row = matches[activeMatch < 0 ? 0 : activeMatch];
-      if (row) locateMatch(row);
-      return;
-    }
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-    event.preventDefault();
-    moveActiveMatch(event.key === 'ArrowDown' ? 1 : -1);
-  });
-  dialog.addEventListener('close', () => { if (debounce !== undefined) clearTimeout(debounce); searchEpoch++; });
+  wireWindowActivity();
+  wireTagContextMenu();
+  wireColumns();
+  wireWorkspaceResize(byId('workspace'), byId('workspace-resizer'));
+  wireTagColor();
+  wireSearchDialog();
 } else { status(tr('unavailable'), true); void localeChanged(navigator.language || 'en-US'); }

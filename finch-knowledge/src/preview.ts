@@ -8,8 +8,8 @@
  * - Images, which the host answers with its dedicated image viewer: a "look once and close"
  *   popup that takes no navigation level at all.
  *
- * Everything else — PDF, Word — goes back out to the file manager, exactly as it did before the
- * preview existed, rather than being handed to a viewer that would refuse it.
+ * PDF and Office documents use the host document preview as well. Older hosts that reject a
+ * format fall back to the file manager; unknown binary formats never enter the preview.
  *
  * The page-side call is the only workable one here: the backend equivalent
  * (`ctx.ui.openFilePreview`) targets the right-hand Panel surface, which an App View does not
@@ -21,17 +21,19 @@
  * are neither here nor in {@link IMAGE_EXTENSIONS} open externally.
  */
 const TEXT_EXTENSIONS = new Set(['.md', '.markdown', '.txt']);
+const DOCUMENT_EXTENSIONS = new Set(['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']);
 /** Extensions the host answers with its dedicated image viewer. */
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff']);
 
 /** Where a listed document opens: Finch's document preview, its image viewer, or outside Finch. */
-export type PreviewRoute = 'text' | 'image' | 'external';
+export type PreviewRoute = 'text' | 'document' | 'image' | 'external';
 
 /** Routes by extension alone — the library stores no MIME type, and these names are what it has. */
 export function previewRoute(name: string): PreviewRoute {
   const match = /(\.[^./\\]+)$/.exec(name.trim().toLowerCase());
   const extension = match?.[1] ?? '';
   if (TEXT_EXTENSIONS.has(extension)) return 'text';
+  if (DOCUMENT_EXTENSIONS.has(extension)) return 'document';
   if (IMAGE_EXTENSIONS.has(extension)) return 'image';
   return 'external';
 }

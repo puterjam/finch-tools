@@ -38,6 +38,7 @@ export interface RunOptions {
   model?: string;
   minConfidence?: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 function isLikelyUrl(value: string): boolean {
@@ -52,7 +53,7 @@ export async function runOcr(binaryPath: string, options: RunOptions): Promise<O
     args.push('--min-confidence', String(options.minConfidence));
   }
 
-  const { stdout } = await execFilePromise(binaryPath, args, options.timeoutMs);
+  const { stdout } = await execFilePromise(binaryPath, args, options.timeoutMs, options.signal);
 
   const jsonText = extractJson(stdout);
   if (!jsonText) {
@@ -82,14 +83,16 @@ function execFilePromise(
   command: string,
   args: string[],
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  signal?: AbortSignal,
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     execFile(
       command,
       args,
-      { timeout: timeoutMs, maxBuffer: MAX_BUFFER, windowsHide: true },
+      { timeout: timeoutMs, maxBuffer: MAX_BUFFER, windowsHide: true, signal },
       (error, stdout, stderr) => {
         if (error) {
+          if (signal?.aborted) { reject(signal.reason ?? error); return; }
           const code = (error as NodeJS.ErrnoException & { code?: number | string }).code;
           // Exit codes per upstream docs: 0 success, 1 runtime error, 2 usage error.
           reject(

@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { fixtureLink as symlink, nativeTarget, fixtureRm as rm } from './test-platform.mjs';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { DEFAULT_TAG, KnowledgeStore } from '../dist/index.js';
+import { DEFAULT_TAG, KnowledgeStore } from './test-store.mjs';
 
 const translations = JSON.parse(await readFile(new URL('../i18n/en-US.json', import.meta.url), 'utf8'));
 function i18n(key, params = {}) {
   return Object.entries(params).reduce((text, [name, value]) => text.replaceAll(`{${name}}`, String(value)), translations[key] || key);
 }
-function storage() {
-  const values = new Map();
+function storage(root) {
+  const values = new Map([['sourceDirectory', root]]);
   return {
     get: async (key) => values.get(key),
     set: async (key, value) => { values.set(key, value); },
@@ -21,7 +22,7 @@ function storage() {
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'finch-knowledge-tag-edit-'));
-  const target = process.platform === 'darwin' ? 'darwin-arm64' : `${process.platform}-${process.arch}-gnu`;
+  const target = nativeTarget;
   const native = resolve(`node_modules/@lancedb/lancedb-${target}/lancedb.${target}.node`);
   const engine = join(root, 'lancedb-engine', '0.39.0');
   await mkdir(engine, { recursive: true });
@@ -32,10 +33,10 @@ async function fixture() {
 }
 
 async function harness(root, workspace) {
-  const { activate } = await import('../dist/index.js');
+  const { activate } = await import('./test-store.mjs');
   let tool;
   activate({
-    storagePath: root, subscriptions: [], storage: storage(), i18n: { t: i18n },
+    storagePath: root, subscriptions: [], storage: storage(root), i18n: { t: i18n },
     ui: { onDidOpenPanel() { return { dispose() {} }; } },
     composerActions: { register() { return { dispose() {}, notifyUpdate() {} }; } },
     tools: { register(definition) { tool = definition; return { dispose() {} }; } },
@@ -52,12 +53,12 @@ test('a tag can be renamed (edited), and an empty tag is removed without ceremon
     const edited = await tool.execute({ action: 'rename_tag', tag: 'Drafts', name: 'Working drafts' }, exec);
     assert.equal(edited.isError, false);
     assert.match(edited.content[0].text, /Working drafts/);
-    assert.ok((await new KnowledgeStore(root).tags()).some((tag) => tag.name === 'Working drafts'), 'the rename stuck');
+    assert.ok((await new KnowledgeStore(join(root, '.knowledge'), { directoryRoot: root, cachePath: root }).tags()).some((tag) => tag.name === 'Working drafts'), 'the rename stuck');
 
     const removed = await tool.execute({ action: 'delete_tag', tag: 'Working drafts' }, exec);
     assert.equal(removed.isError, false);
     assert.match(removed.content[0].text, /0 document/);
-    const names = (await new KnowledgeStore(root).tags()).map((tag) => tag.name);
+    const names = (await new KnowledgeStore(join(root, '.knowledge'), { directoryRoot: root, cachePath: root }).tags()).map((tag) => tag.name);
     assert.equal(names.includes('Working drafts'), false);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
@@ -68,7 +69,7 @@ test('the declared action list is the whole contract, so nothing is reachable bu
     const { tool } = await harness(root, workspace);
     // The host validates `action` against this enum, so a name outside it can never be called.
     assert.deepEqual(tool.inputSchema.properties.action.enum,
-      ['search', 'tags', 'documents', 'library', 'environment', 'import', 'sync', 'import_url', 'save_document', 'create_tag', 'rename_tag', 'delete_tag', 'tag_document', 'untag_document']);
+      ['search', 'tags', 'documents', 'library', 'environment', 'index', 'sync', 'create_tag', 'rename_tag', 'delete_tag', 'tag_document', 'untag_document']);
     const description = translations['tool.description'];
     const documented = description.match(/action=([a-z_|]+)/)[1].split('|');
     for (const action of documented) {
@@ -83,20 +84,20 @@ test('deleting a tag that still holds documents needs an explicit retry, then ke
     await writeFile(join(workspace, 'a.md'), '# Alpha\n\nFirst note.');
     await writeFile(join(workspace, 'b.md'), '# Beta\n\nSecond note.');
     const { tool, exec } = await harness(root, workspace);
-    await tool.execute({ action: 'import', items: [{ path: 'a.md', tag: 'Contracts' }, { path: 'b.md', tag: 'Contracts' }] }, exec);
+    await tool.execute({ action: 'index', items: [{ path: 'workspace/a.md', tag: 'Contracts' }, { path: 'workspace/b.md', tag: 'Contracts' }] }, exec);
 
     const refused = await tool.execute({ action: 'delete_tag', tag: 'Contracts' }, exec);
     assert.equal(refused.isError, true);
-    assert.match(refused.content[0].text, /still holds 2 document/);
+    assert.match(refused.content[0].text, /still assigned to 2 document/);
     assert.match(refused.content[0].text, /force=true/);
-    const store = new KnowledgeStore(root);
+    const store = new KnowledgeStore(join(root, '.knowledge'), { directoryRoot: root, cachePath: root });
     assert.equal((await store.tags()).some((tag) => tag.name === 'Contracts'), true, 'nothing happened yet');
 
     const forced = await tool.execute({ action: 'delete_tag', tag: 'Contracts', force: true }, exec);
     assert.equal(forced.isError, false);
     assert.match(forced.content[0].text, /Deleted tag Contracts/);
-    // Both documents lose the tag; both had only this one, so both land in Unclassified.
-    assert.match(forced.content[0].text, /2 document\(s\) no longer carry it, 2 of which moved to Unclassified/);
+    // Both documents lose their only tag; neither source file moves.
+    assert.match(forced.content[0].text, /removed it from 2 document\(s\); 2 now have no tags/);
 
     // The documents survive the tag and are searchable where they landed.
     const tags = await store.tags();
@@ -114,14 +115,14 @@ test('Unclassified cannot be renamed or removed, and an unknown tag is reported'
   try {
     const { tool, exec } = await harness(root, workspace);
     for (const action of ['rename_tag', 'delete_tag']) {
-      const guarded = await tool.execute({ action, tag: 'Unclassified', name: 'Nope', force: true }, exec);
+      const guarded = await tool.execute({ action, tag: DEFAULT_TAG, name: 'Nope', force: true }, exec);
       assert.equal(guarded.isError, true);
       assert.match(guarded.content[0].text, /default tag cannot be/);
     }
     const missing = await tool.execute({ action: 'delete_tag', tag: 'Nonexistent' }, exec);
     assert.equal(missing.isError, true);
     assert.match(missing.content[0].text, /Tag not found/);
-    const stored = (await new KnowledgeStore(root).tags()).map((tag) => tag.id);
+    const stored = (await new KnowledgeStore(join(root, '.knowledge'), { directoryRoot: root, cachePath: root }).tags()).map((tag) => tag.id);
     assert.deepEqual(stored, [DEFAULT_TAG]);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

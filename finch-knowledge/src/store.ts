@@ -1,20 +1,27 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { cp, lstat, mkdir, open, rename, stat, unlink } from 'node:fs/promises';
+import { lstat, mkdir, open, stat } from 'node:fs/promises';
 import { existsSync, mkdirSync, createReadStream } from 'node:fs';
-import { basename, dirname, extname, isAbsolute, join, sep } from 'node:path';
-import { backup as backupSqlite, DatabaseSync } from 'node:sqlite';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type * as lancedb from '@lancedb/lancedb';
 import { loadEngine as loadDocumentEngine } from './document-engine.js';
 import { loadEngine as loadOcrEngine } from './ocr-engine.js';
 import { runOcr, type RecognizeResult } from './ocr-runner.js';
 import { loadLanceDB } from './lancedb-engine.js';
 import { fallbackTerms, queryTerms } from './snippet.js';
+import { resolveDocumentStatus, type CoverageState, type SourceState, type DocumentState } from './document-status.js';
 
-export const ACCEPTED = ['.md', '.markdown', '.txt', '.doc', '.docx', '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff'];
+import { directoryKey, indexedDirectories, insideDirectory, TAG_COLORS } from './directories.js';
+import { IndexSkipError } from './indexing-result.js';
+import { interruptible, WorkScope } from './work-scope.js';
+import { remoteIndexRoot } from './index-location.js';
+import { SourceCatalog, type CatalogRow, type CatalogScope } from './source-catalog.js';
+
+export const ACCEPTED = ['.md', '.markdown', '.txt', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff'];
 export const DEFAULT_TAG = 'default';
 const IMAGE = new Set(['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff']);
-const OFFICE = new Set(['.doc', '.docx', '.pdf']);
-const LEGACY_TABLE = 'passages_v1';
+const OFFICE = new Set(['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pdf']);
+const PASSAGES_TABLE = 'passages_directory_v1';
 const DIMENSIONS = 512;
 /**
  * The largest file the library takes. A scanned or exported PDF is usually the biggest thing in a
@@ -41,9 +48,19 @@ export interface Passage {
   [field: string]: unknown;
 }
 /** A document carries every tag it belongs to; none means it sits in Unclassified. */
-export interface DocumentSummary { id: string; path: string; name: string; hash: string; tags: string[]; added_at: number; indexed_at: number; chunks: number; source_path: string | null }
-export interface TagSummary { id: string; name: string; count: number }
-export type DocumentSort = 'name' | 'added' | 'updated';
+export interface DocumentSummary { file_id?: string; source_revision?: number; id: string; path: string; name: string; hash: string; tags: string[]; added_at: number; indexed_at: number; chunks: number; source_path: string | null; size_bytes?: number | null; modified_at?: number | null; file_type?: string }
+export interface DocumentStatus extends DocumentSummary { indexState: CoverageState; indexedChunks: number | null; sourceState: SourceState; status: DocumentState; statusReason?: string }
+export type SourceIssueKind = 'pending' | 'unsupported' | 'failed' | 'empty_file' | 'no_text' | 'image_no_text' | 'unavailable';
+export interface SourceIssue { path: string; kind: SourceIssueKind; reason: string }
+export interface SourceIssueDocument extends DocumentSummary { issueKind: SourceIssueKind; statusReason: string }
+export interface TagSummary { id: string; name: string; count: number; color?: string }
+export type DocumentSort = 'name' | 'added' | 'updated' | 'modified' | 'type' | 'size';
+const compareNames = new Intl.Collator('en', { sensitivity: 'base' }).compare;
+const metadataSort = (sort: DocumentSort) => sort === 'modified' || sort === 'type' || sort === 'size';
+function documentOrder(sort: DocumentSort, descending?: boolean): string {
+  const column = sort === 'name' ? 'd.name COLLATE NOCASE' : sort === 'added' ? 'd.added_at' : 'd.indexed_at';
+  return `${column} ${(descending ?? sort !== 'name') ? 'DESC' : 'ASC'}, d.id ASC`;
+}
 
 /** Character n-gram hashing keeps all data and embedding computation on this machine. */
 export function vectorize(text: string): number[] {
@@ -94,17 +111,20 @@ export function engineForExtension(extension: string): 'ocr' | 'anydoc' | null {
 }
 
 /** Extracts text for indexing; engine caches live in the local cache path, not with the library data. */
-async function readContent(path: string, extension: string, cachePath: string, progress?: (message: string) => void): Promise<string> {
+async function readContent(path: string, extension: string, cachePath: string, progress?: (message: string) => void, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   if (IMAGE.has(extension)) {
-    const binary = await loadOcrEngine(join(cachePath, 'ocr'), progress);
-    const result = await runOcr(binary, { command: 'recognize', source: path, timeoutMs: 120_000 }) as RecognizeResult;
+    const binary = await interruptible(loadOcrEngine(join(cachePath, 'ocr'), progress), signal);
+    signal?.throwIfAborted();
+    const result = await runOcr(binary, { command: 'recognize', source: path, timeoutMs: 120_000, signal }) as RecognizeResult;
     return result.text?.trim() || result.lines?.flat().map((box) => box.text ?? '').join('\n').trim() || '';
   }
   if (OFFICE.has(extension)) {
-    const engine = await loadDocumentEngine(join(cachePath, 'anydoc'), progress);
-    return engine.toMarkdown(path);
+    const engine = await interruptible(loadDocumentEngine(join(cachePath, 'anydoc'), progress), signal);
+    signal?.throwIfAborted();
+    return interruptible(engine.toMarkdown(path), signal);
   }
-  return readText(path);
+  return interruptible(readText(path), signal);
 }
 /**
  * Only the first MAX_TEXT characters are ever indexed, so a huge text file is read to that budget
@@ -126,10 +146,11 @@ async function readText(path: string): Promise<string> {
  * Streams the digest instead of buffering the whole file: a 200 MB PDF has to be hashed on its way
  * past, not held in memory while it is.
  */
-async function hashFile(path: string): Promise<string> {
+async function hashFile(path: string, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   const hash = createHash('sha256');
   await new Promise<void>((resolve, reject) => {
-    const stream = createReadStream(path);
+    const stream = createReadStream(path, { signal });
     stream.on('data', (piece) => hash.update(piece));
     stream.on('error', reject);
     stream.on('end', resolve);
@@ -138,43 +159,108 @@ async function hashFile(path: string): Promise<string> {
 }
 
 export interface LibraryOptions {
+  /** Source directory; source files are never removed or copied. */
+  directoryRoot: string;
   /** Local cache for downloadable engines; kept off network volumes. Defaults to the library directory. */
   cachePath?: string;
+  /** Remote sources use one validated, source-specific index below Finch's local storage. */
+  remoteIndexKey?: string;
+  /** Reject an unmounted or remapped source before indexing or reconciliation. */
+  sourceGuard?: () => Promise<void>;
   progress?: (message: string) => void;
+  onStatusChange?: (path: string, phase: 'processing' | 'settled') => void;
   /** Runs before an import takes the library lock, so a missing engine is reported, not awaited. */
   requireEngine?: (extension: string) => Promise<void>;
 }
 
-/** One scalar catalogue for stable document metadata; one LanceDB table per tag. */
+/** One catalogue for source metadata and tags; one shared table for indexed passages. */
 export class KnowledgeStore {
   private db?: lancedb.Connection;
   private opening?: Promise<lancedb.Connection>;
   private writes: Promise<unknown> = Promise.resolve();
   private closed = false;
   private readonly catalog: DatabaseSync;
+  private readonly sourceCatalog: SourceCatalog;
+  get catalogVersion(): number { return this.sourceCatalog.version; }
+  private readonly processing = new Map<string, number>();
+  private readonly sourceChecks = new Map<string, { stamp: string; hash: string }>();
+  private readonly metadataCache = new Map<string, { expires: number; size_bytes: number | null; modified_at: number | null; file_type: string }>();
+  private readonly onStatusChange?: LibraryOptions['onStatusChange'];
+  readonly directoryRoot: string;
+  readonly indexStorage: 'source' | 'local';
+  /** Bypass a prior scan cooldown when the catalogue has just been rebuilt. */
+  rebuiltIndex = false;
   private readonly cachePath: string;
   private readonly progress?: (message: string) => void;
   private readonly requireEngine?: (extension: string) => Promise<void>;
-  constructor(readonly root: string, options: LibraryOptions = {}) {
+  private readonly sourceGuard?: () => Promise<void>;
+  async assertSourceAvailable(): Promise<void> { this.work.signal.throwIfAborted(); if (this.sourceGuard) await this.work.run(this.sourceGuard()); }
+  constructor(readonly root: string, options: LibraryOptions) {
+    if (!options?.directoryRoot || (options.remoteIndexKey && !options.cachePath)) throw new Error('Only source-directory indexes are supported.');
+    const expected = options.remoteIndexKey && options.cachePath
+      ? remoteIndexRoot(resolve(options.cachePath), options.remoteIndexKey)
+      : join(resolve(options.directoryRoot), '.knowledge');
+    if (resolve(root) !== expected) throw new Error('Only source-directory indexes are supported.');
+    this.indexStorage = options.remoteIndexKey ? 'local' : 'source';
+    this.directoryRoot = options.directoryRoot;
     this.cachePath = options.cachePath ?? root;
     this.progress = options.progress;
+    this.onStatusChange = options.onStatusChange;
     this.requireEngine = options.requireEngine;
+    this.sourceGuard = options.sourceGuard;
     mkdirSync(root, { recursive: true });
+    const existing = existsSync(join(root, 'catalog.sqlite'));
     this.catalog = new DatabaseSync(join(root, 'catalog.sqlite'));
+    let schema: number, compatible: boolean;
+    try {
+      schema = (this.catalog.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+      compatible = schema === 6 && this.hasColumn('documents', 'relative_path');
+    } catch (error) { this.catalog.close(); throw error; }
+    if (existing && !compatible) {
+      this.catalog.close();
+      throw Object.assign(new Error('Unsupported knowledge index format. Choose a source directory with a current .knowledge index.'),
+        { code: schema <= 6 ? 'KNOWLEDGE_LEGACY_INDEX' : 'KNOWLEDGE_FUTURE_INDEX' });
+    }
     this.catalog.exec(`PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS tags (id TEXT PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at INTEGER NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE, name TEXT NOT NULL, hash TEXT NOT NULL, added_at INTEGER NOT NULL, indexed_at INTEGER NOT NULL, chunks INTEGER NOT NULL, source_path TEXT);
       -- A document can carry several tags, so the pairing lives in its own table. Having no row in
       -- here is what Unclassified means; there is no tag row for it.
       CREATE TABLE IF NOT EXISTS document_tags (document_id TEXT NOT NULL, tag_id TEXT NOT NULL, added_at INTEGER NOT NULL, PRIMARY KEY (document_id, tag_id));
-      CREATE INDEX IF NOT EXISTS document_tags_tag ON document_tags(tag_id, document_id);`);
+      CREATE INDEX IF NOT EXISTS document_tags_tag ON document_tags(tag_id, document_id);
+      CREATE TABLE IF NOT EXISTS index_failures (path TEXT PRIMARY KEY, reason TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS source_folders (path TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS source_metadata (path TEXT PRIMARY KEY, size_bytes INTEGER, modified_at REAL, file_type TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS source_issues (path TEXT PRIMARY KEY, kind TEXT NOT NULL, reason TEXT NOT NULL);`);
+    if (!this.hasColumn('tags', 'color')) this.catalog.exec("ALTER TABLE tags ADD COLUMN color TEXT NOT NULL DEFAULT 'gray'");
+    {
+      if (!this.hasColumn('documents', 'relative_path')) this.catalog.exec('ALTER TABLE documents ADD COLUMN relative_path TEXT');
+      try{this.sourceCatalog = new SourceCatalog(this.catalog, this.directoryRoot);}catch(error){this.catalog.close();throw error;}
+      const rows = this.catalog.prepare('SELECT id,path,source_path,relative_path FROM documents WHERE relative_path IS NOT NULL').all() as Array<{ id: string; path: string; source_path: string | null; relative_path: string }>;
+      const update = this.catalog.prepare('UPDATE documents SET path=?,source_path=? WHERE id=?');
+      for (const row of rows) {
+        const path = resolve(this.directoryRoot, row.relative_path);
+        const rel = relative(this.directoryRoot, path);
+        if (rel.startsWith(`..${sep}`) || rel === '..' || isAbsolute(rel)) throw new Error('Invalid stored source path.');
+        if (row.path !== path || row.source_path !== path) update.run(path, path, row.id);
+      }
+      // Keep the current directory-index schema and committed passages unchanged.
+      this.catalog.exec('PRAGMA user_version=6');
+    }
   }
 
   /** Releases both handles so the same process can reopen the library from a different directory. */
+  private readonly work = new WorkScope();
+  get interrupted(): boolean { return this.work.signal.aborted; }
+  interrupt(): void { this.work.cancel(); }
+  resume(): void { this.work.resume(); }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.interrupt();
     await this.writes.catch(() => {});
+    await this.work.drain();
     await this.opening?.catch(() => {});
     this.db?.close();
     this.db = undefined;
@@ -182,13 +268,8 @@ export class KnowledgeStore {
     this.catalog.close();
   }
 
-  private tableName(tagId: string): string {
-    if (tagId === DEFAULT_TAG) return LEGACY_TABLE;
-    if (!/^[a-f\d-]{36}$/i.test(tagId)) throw new Error('Invalid tag ID.');
-    return `passages_tag_${tagId.replaceAll('-', '')}`;
-  }
   assertTag(tagId: string): void {
-    this.tableName(tagId);
+    if (tagId !== DEFAULT_TAG && !/^[a-f\d-]{36}$/i.test(tagId)) throw new Error('Invalid tag ID.');
     if (tagId !== DEFAULT_TAG && !this.catalog.prepare('SELECT 1 FROM tags WHERE id = ?').get(tagId)) throw new Error('Tag no longer exists.');
   }
   private async connection(): Promise<lancedb.Connection> {
@@ -197,97 +278,18 @@ export class KnowledgeStore {
       const sdk = await loadLanceDB(this.cachePath, this.progress);
       await mkdir(this.root, { recursive: true });
       const db = await sdk.connect(join(this.root, 'vectors.lance'));
-      await this.migrateCatalog(db);
       this.db = db;
       return db;
     })().catch((error: unknown) => { this.opening = undefined; throw error; });
     return this.opening;
   }
-  /**
-   * Brings the catalogue up to the current schema. Pass the vector store when it is already
-   * open; without it the one migration that reads legacy passages is deferred, so a panel can
-   * paint before any engine has been downloaded.
-   */
-  private async migrateCatalog(db?: lancedb.Connection): Promise<void> {
-    const version = (): number => (this.catalog.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-    // v1: the original table remains untouched; copy its summaries into the catalogue once.
-    if (version() === 0) {
-      if (db) {
-        if ((await db.tableNames()).includes(LEGACY_TABLE)) {
-          const table = await db.openTable(LEGACY_TABLE);
-          const rows = await table.query().select(['document_id', 'path', 'name', 'hash', 'indexed_at']).toArray() as Passage[];
-          const summaries = new Map<string, DocumentSummary>();
-          for (const row of rows) {
-            const previous = summaries.get(row.document_id);
-            if (previous) previous.chunks++;
-            else summaries.set(row.document_id, { id: row.document_id, path: row.path, name: row.name, hash: row.hash, tags: [], added_at: row.indexed_at, indexed_at: row.indexed_at, chunks: 1, source_path: null });
-          }
-          const insert = this.catalog.prepare('INSERT OR IGNORE INTO documents (id,path,name,hash,added_at,indexed_at,chunks) VALUES (?,?,?,?,?,?,?)');
-          this.catalog.exec('BEGIN');
-          try {
-            for (const doc of summaries.values()) insert.run(doc.id, doc.path, doc.name, doc.hash, doc.added_at, doc.indexed_at, doc.chunks);
-            this.catalog.exec('PRAGMA user_version=1; COMMIT');
-          } catch (error) { this.catalog.exec('ROLLBACK'); throw error; }
-        } else this.catalog.exec('PRAGMA user_version=1');
-      } else if (!existsSync(join(this.root, 'vectors.lance'))) {
-        // Nothing was ever indexed here, so there is no legacy table to read.
-        this.catalog.exec('PRAGMA user_version=1');
-      }
-    }
-    // v2: earlier versions stored managed copies under a content hash. Best effort
-    // only — a copy that cannot be renamed simply keeps its hashed name.
-    // v3: a first build of that pass skipped every tag that had no import folder
-    // yet, so libraries it already stamped are walked once more. The pass is
-    // idempotent, so re-running it on a healthy library changes nothing.
-    if (version() <= 2) {
-      await this.renameManagedCopies();
-    }
-    // v4: documents imported from a workspace file now remember where that file was, so a
-    // later sync can re-index it when it changes. Older rows simply have no source.
-    if (version() <= 3) {
-      if (!this.hasColumn('documents', 'source_path')) {
-        this.catalog.exec('ALTER TABLE documents ADD COLUMN source_path TEXT');
-      }
-      this.catalog.exec('PRAGMA user_version=4');
-    }
-    // v5: tags remember the order the user arranged them in. Only an upgrade adds the column, and
-    // only then are the existing tags seeded — with the order they already showed, so nothing
-    // moves on screen. A catalogue that has the column keeps whatever the user arranged.
-    if (version() <= 4) {
-      if (this.hasColumn('tags', 'sort_order')) {
-        this.catalog.exec('PRAGMA user_version=5');
-      } else {
-        this.catalog.exec('ALTER TABLE tags ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0');
-        const rows = this.catalog.prepare('SELECT id FROM tags ORDER BY created_at, name').all() as Array<{ id: string }>;
-        const update = this.catalog.prepare('UPDATE tags SET sort_order = ? WHERE id = ?');
-        this.catalog.exec('BEGIN');
-        try {
-          rows.forEach((row, index) => update.run(index, row.id));
-          this.catalog.exec('PRAGMA user_version=5; COMMIT');
-        } catch (error) { this.catalog.exec('ROLLBACK'); throw error; }
-      }
-    }
-    // v6: a document may carry several tags, so the single column becomes a link table. An existing
-    // tag becomes one link; Unclassified becomes no link at all, which is what it means now.
-    if (version() <= 5) {
-      if (this.hasColumn('documents', 'tag_id')) {
-        // Insert first, then strip what pointed at the column: SQLite refuses to drop a column an
-        // index still references. Both steps are idempotent, so an interrupted run finishes next time.
-        this.catalog.exec(`INSERT OR IGNORE INTO document_tags (document_id, tag_id, added_at)
-          SELECT id, tag_id, added_at FROM documents WHERE tag_id <> '${DEFAULT_TAG}'`);
-        this.catalog.exec('DROP INDEX IF EXISTS documents_tag_updated; DROP INDEX IF EXISTS documents_tag_name;');
-        this.catalog.exec('ALTER TABLE documents DROP COLUMN tag_id');
-      }
-      this.catalog.exec('PRAGMA user_version=6');
-    }
-  }
   private hasColumn(table: string, column: string): boolean {
     const columns = this.catalog.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     return columns.some((entry) => entry.name === column);
   }
-  private async table(tagId: string): Promise<lancedb.Table | undefined> {
+  private async table(): Promise<lancedb.Table | undefined> {
     const db = await this.connection();
-    const name = this.tableName(tagId);
+    const name = PASSAGES_TABLE;
     return (await db.tableNames()).includes(name) ? db.openTable(name) : undefined;
   }
   private locked<T>(operation: () => Promise<T>): Promise<T> {
@@ -300,15 +302,21 @@ export class KnowledgeStore {
    * Catalogue counts for the first paint. Deliberately never opens the vector engine: on a
    * fresh machine the engines are still downloading, and the setup screen has to appear first.
    */
-  async summary(): Promise<{ documents: number; lastIndexedAt: number | null; tags: TagSummary[] }> {
-    await this.writes;
-    await this.migrateCatalog();
+  async summary(catalogOnly = false): Promise<{ documents: number; lastIndexedAt: number | null; tags: TagSummary[] }> {
+    if (!catalogOnly) await this.writes;
+    this.work.signal.throwIfAborted();
     const { documents, lastIndexedAt } = this.catalog.prepare('SELECT COUNT(*) AS documents, MAX(indexed_at) AS lastIndexedAt FROM documents').get() as { documents: number; lastIndexedAt: number | null };
     return { documents, lastIndexedAt, tags: [{ id: DEFAULT_TAG, name: '', count: this.uncategorizedCount() }, ...this.tagRows()] };
   }
-  async tags(): Promise<TagSummary[]> {
-    await this.writes;
-    await this.connection();
+  catalogOverview(hideUnsupported=false) {
+    this.work.signal.throwIfAborted();this.catalog.exec('SAVEPOINT catalog_overview');
+    try{const result={catalogVersion:this.sourceCatalog.version,tags:[{id:DEFAULT_TAG,name:'',count:this.uncategorizedCount()},...this.tagRows()],directories:this.sourceCatalog.directories(hideUnsupported),issuesTotal:this.sourceCatalog.countIssues(hideUnsupported)};
+      this.catalog.exec('RELEASE catalog_overview');return result;
+    }catch(error){this.catalog.exec('ROLLBACK TO catalog_overview; RELEASE catalog_overview');throw error;}
+  }
+  async tags(catalogOnly = false): Promise<TagSummary[]> {
+    if (!catalogOnly) await this.writes;
+    this.work.signal.throwIfAborted();
     return [{ id: DEFAULT_TAG, name: '', count: this.uncategorizedCount() }, ...this.tagRows()];
   }
   /**
@@ -316,13 +324,14 @@ export class KnowledgeStore {
    * Unclassified — are not stored here at all; they are pinned by the callers.
    */
   private tagRows(): TagSummary[] {
-    return this.catalog.prepare(`SELECT t.id,t.name,COUNT(dt.document_id) AS count FROM tags t LEFT JOIN document_tags dt ON dt.tag_id=t.id GROUP BY t.id ORDER BY t.sort_order,t.created_at,t.name`).all() as unknown as TagSummary[];
+    return this.sourceCatalog.tagRows() as unknown as TagSummary[];
   }
   /** Every document's tags in one pass, keyed by document id. */
   private tagsFor(ids: string[]): Map<string, string[]> {
     const map = new Map<string, string[]>();
     if (!ids.length) return map;
-    const rows = this.catalog.prepare('SELECT document_id, tag_id FROM document_tags').all() as Array<{ document_id: string; tag_id: string }>;
+    const rows: Array<{document_id:string;tag_id:string}> = [];
+    for(let offset=0;offset<ids.length;offset+=500){const batch=ids.slice(offset,offset+500);rows.push(...this.catalog.prepare(`SELECT document_id,tag_id FROM document_tags WHERE document_id IN (${batch.map(()=>'?').join(',')})`).all(...batch) as Array<{document_id:string;tag_id:string}>);}
     const wanted = new Set(ids);
     for (const row of rows) {
       if (!wanted.has(row.document_id)) continue;
@@ -336,31 +345,6 @@ export class KnowledgeStore {
   private hydrate(rows: DocumentSummary[]): DocumentSummary[] {
     const tags = this.tagsFor(rows.map((row) => row.id));
     return rows.map((row) => ({ ...row, tags: tags.get(row.id) ?? [] }));
-  }
-  /** Where a document's passages live: one copy per tag, or the default table while it has none. */
-  private tablesFor(tags: string[]): string[] {
-    return tags.length ? tags : [DEFAULT_TAG];
-  }
-  /**
-   * Copies a document's passages from one tag's table to another. Adding a second tag, or losing the
-   * last one, is exactly this: the same passages indexed again under a different name.
-   */
-  private async copyPassages(id: string, fromTag: string, toTag: string): Promise<void> {
-    if (fromTag === toTag) return;
-    const source = await this.table(fromTag);
-    if (!source) return;
-    const raw = await source.query().where(`document_id = '${id}'`).toArray() as Passage[];
-    if (!raw.length) return;
-    // LanceDB returns an Arrow Vector for each stored embedding; normalize before re-inserting.
-    const rows = raw.map((row) => ({ ...row, vector: Array.from((row.vector as unknown as { toArray?: () => ArrayLike<number> }).toArray?.() ?? row.vector) }));
-    const db = await this.connection();
-    const existing = await this.table(toTag);
-    const target = existing ?? await db.createTable(this.tableName(toTag), rows);
-    if (existing) await target.add(rows);
-  }
-  private async dropPassages(id: string, tagId: string): Promise<void> {
-    const table = await this.table(tagId);
-    if (table) await table.delete(`document_id = '${id}'`);
   }
   private linkTags(id: string, tagIds: string[]): void {
     const insert = this.catalog.prepare('INSERT OR IGNORE INTO document_tags (document_id, tag_id, added_at) VALUES (?,?,?)');
@@ -380,7 +364,7 @@ export class KnowledgeStore {
     return { ...row, tags: this.currentTags(id) };
   }
   private uncategorizedCount(): number {
-    return (this.catalog.prepare('SELECT COUNT(*) AS count FROM documents d WHERE NOT EXISTS (SELECT 1 FROM document_tags dt WHERE dt.document_id = d.id)').get() as { count: number }).count;
+    return this.sourceCatalog.uncategorizedCount();
   }
   async createTag(name: string): Promise<TagSummary> {
     return this.locked(async () => {
@@ -398,6 +382,14 @@ export class KnowledgeStore {
    * Stores the order the user dragged the tags into. Only the tags it names are touched, so a
    * stale list from another panel can never drop a tag the caller had not seen.
    */
+  async setTagColor(id: string, color: string): Promise<void> {
+    if ((!/^#[0-9a-f]{6}$/i.test(color) && !(TAG_COLORS as readonly string[]).includes(color)) || id === DEFAULT_TAG) throw new Error('Invalid tag color.');
+    color = color.toLowerCase();
+    await this.locked(async () => {
+      this.assertTag(id);
+      this.catalog.prepare('UPDATE tags SET color = ? WHERE id = ?').run(color, id);
+    });
+  }
   async reorderTags(ids: string[]): Promise<void> {
     await this.locked(async () => {
       const update = this.catalog.prepare('UPDATE tags SET sort_order = ? WHERE id = ? AND id <> ?');
@@ -408,7 +400,7 @@ export class KnowledgeStore {
       } catch (error) { this.catalog.exec('ROLLBACK'); throw error; }
     });
   }
-  /** Adding a tag copies the passages into that tag's table, so a tag-scoped search finds them. */
+  /** Tags are catalogue metadata; vector passages are never copied or moved. */
   async addTag(id: string, tagId: string): Promise<void> {
     if (!/^[a-f\d-]{36}$/i.test(id)) throw new Error('Invalid document ID.');
     await this.locked(async () => {
@@ -416,22 +408,15 @@ export class KnowledgeStore {
       if (tagId === DEFAULT_TAG) return;
       const doc = this.needDocument(id);
       if (doc.tags.includes(tagId)) return;
-      // Leaving Unclassified means the passages move out of the untagged table.
-      if (!doc.tags.length) await this.copyPassages(id, DEFAULT_TAG, tagId);
-      else await this.copyPassages(id, doc.tags[0], tagId);
-      if (!doc.tags.length) await this.dropPassages(id, DEFAULT_TAG);
       this.linkTags(id, [tagId]);
     });
   }
-  /** Removing the last tag puts the passages back into the untagged table. */
+  /** Removing the last tag leaves the document unclassified. */
   async removeTag(id: string, tagId: string): Promise<void> {
     if (!/^[a-f\d-]{36}$/i.test(id)) throw new Error('Invalid document ID.');
     await this.locked(async () => {
       const doc = this.needDocument(id);
       if (!doc.tags.includes(tagId)) return;
-      const remaining = doc.tags.filter((tag) => tag !== tagId);
-      if (!remaining.length) await this.copyPassages(id, tagId, DEFAULT_TAG);
-      await this.dropPassages(id, tagId);
       this.unlinkTags(id, [tagId]);
     });
   }
@@ -441,15 +426,14 @@ export class KnowledgeStore {
     const wanted = [...new Set(tagIds.filter((tagId) => tagId && tagId !== DEFAULT_TAG))];
     for (const tagId of wanted) this.assertTag(tagId);
     await this.locked(async () => {
-      const current = this.currentTags(id);
-      for (const tagId of wanted) if (!current.includes(tagId)) { this.linkTags(id, [tagId]); await this.copyPassages(id, this.tablesFor(current)[0], tagId); }
-      for (const tagId of current) if (!wanted.includes(tagId)) await this.removeTagUnlocked(id, tagId, wanted);
+      this.needDocument(id);
+      this.catalog.exec('BEGIN');
+      try {
+        this.catalog.prepare('DELETE FROM document_tags WHERE document_id = ?').run(id);
+        this.linkTags(id, wanted);
+        this.catalog.exec('COMMIT');
+      } catch (error) { this.catalog.exec('ROLLBACK'); throw error; }
     });
-  }
-  private async removeTagUnlocked(id: string, tagId: string, staying: string[]): Promise<void> {
-    if (!staying.length) await this.copyPassages(id, tagId, DEFAULT_TAG);
-    await this.dropPassages(id, tagId);
-    this.unlinkTags(id, [tagId]);
   }
   async renameTag(id: string, name: string): Promise<void> {
     await this.locked(async () => {
@@ -461,249 +445,440 @@ export class KnowledgeStore {
     });
   }
 
-  async list(): Promise<DocumentSummary[]> {
-    await this.writes;
-    await this.connection();
+  async list(catalogOnly = false): Promise<DocumentSummary[]> {
+    if (!catalogOnly) await this.writes;
+    this.work.signal.throwIfAborted();
     return this.hydrate(this.catalog.prepare('SELECT * FROM documents ORDER BY indexed_at DESC').all() as unknown as DocumentSummary[]);
   }
-  async page(tagId: string | null, sort: DocumentSort, offset: number, limit = 50): Promise<{ documents: DocumentSummary[]; total: number }> {
-    await this.writes;
-    await this.connection();
-    if (tagId !== null) this.assertTag(tagId);
-    const scope = this.scopeFor(tagId);
-    const order = sort === 'name' ? 'd.name COLLATE NOCASE ASC, d.id ASC' : sort === 'added' ? 'd.added_at DESC, d.id ASC' : 'd.indexed_at DESC, d.id ASC';
-    const total = (this.catalog.prepare(`SELECT COUNT(*) AS count FROM documents d ${scope.from} ${scope.where}`).get(...scope.params) as { count: number }).count;
-    const safeOffset = Math.max(0, Math.min(1_000_000, Math.floor(offset) || 0));
-    const rows = this.catalog.prepare(`SELECT d.* FROM documents d ${scope.from} ${scope.where} ORDER BY ${order} LIMIT ? OFFSET ?`).all(...scope.params, Math.max(1, Math.min(50, limit)), safeOffset) as unknown as DocumentSummary[];
-    return { documents: this.hydrate(rows), total };
+  private fileKey(path: string): string { return process.platform === 'win32' ? path.toLowerCase() : path; }
+  private relativeFile(path: string): string { return relative(this.directoryRoot, path).split(sep).join('/'); }
+  /** Directory-access notices are not files and must never inflate file totals. */
+  private fileIssues(): SourceIssue[] {
+    const folders = new Set((this.catalog.prepare('SELECT path FROM source_folders').all() as Array<{ path: string }>).map(row => this.fileKey(row.path)));
+    const files = new Map<string, SourceIssue>();
+    for (const issue of this.catalog.prepare('SELECT path,kind,reason FROM source_issues').all() as unknown as SourceIssue[]) {
+      if (issue.path !== '' && !folders.has(this.fileKey(issue.path))) files.set(this.fileKey(issue.path), issue);
+    }
+    return [...files.values()];
   }
-  async position(id: string, tagId: string | null, sort: DocumentSort): Promise<number | null> {
-    await this.writes;
-    await this.connection();
-    if (tagId !== null) this.assertTag(tagId);
-    const scope = this.scopeFor(tagId);
-    const order = sort === 'name' ? 'd.name COLLATE NOCASE ASC, d.id ASC' : sort === 'added' ? 'd.added_at DESC, d.id ASC' : 'd.indexed_at DESC, d.id ASC';
-    const row = this.catalog.prepare(`SELECT position FROM (SELECT d.id AS id, ROW_NUMBER() OVER (ORDER BY ${order}) - 1 AS position FROM documents d ${scope.from} ${scope.where}) WHERE id = ?`).get(...scope.params, id) as { position: number } | undefined;
-    return row?.position ?? null;
+  private filePaths(includeIssues = false, hideUnsupported = false): string[] {
+    const paths = new Map<string, string>();
+    for (const row of this.catalog.prepare('SELECT path FROM documents').all() as Array<{ path: string }>) {
+      const path = this.relativeFile(row.path); paths.set(this.fileKey(path), path);
+    }
+    for (const issue of this.fileIssues()) {
+      const key = this.fileKey(issue.path);
+      if ((!includeIssues && issue.kind !== 'pending') || (hideUnsupported && issue.kind === 'unsupported')) paths.delete(key);
+      else if (!paths.has(key)) paths.set(key, issue.path);
+    }
+    return [...paths.values()];
   }
-  async document(id: string): Promise<DocumentSummary | undefined> {
+  async fileCount(hideUnsupported = false, catalogOnly = false): Promise<number> { if (!catalogOnly) await this.writes; this.work.signal.throwIfAborted(); return this.sourceCatalog.countFiles(hideUnsupported); }
+  async directories(hideUnsupported = false, catalogOnly = false) {
+    if (!catalogOnly) await this.writes;
+    this.work.signal.throwIfAborted();
+    return this.sourceCatalog.directories(hideUnsupported) as unknown as Array<{path:string;parent:string|null;name:string;count:number}>;
+  }
+  private async browseOrder(sort: DocumentSort, directory: string | null, descending?: boolean, refresh = false, tagId: string | null = null, hideUnsupported = false, catalogOnly = false): Promise<Array<DocumentSummary | SourceIssueDocument>> {
+    if (!catalogOnly) await this.writes;
+    this.work.signal.throwIfAborted();
+    if (directory !== null) directoryKey(directory);
+    const files = new Map<string, DocumentSummary | SourceIssueDocument>();
+    const issues = this.fileIssues();
+    const allSources = directory === null && tagId === null;
+    const excluded = new Set(issues.filter(issue => issue.kind !== 'pending').map(issue => this.fileKey(issue.path)));
+    const hidden = new Set(hideUnsupported ? issues.filter(issue => issue.kind === 'unsupported').map(issue => this.fileKey(issue.path)) : []);
+    if (tagId !== null) this.assertTag(tagId);
+    const scope = this.scopeFor(tagId, directory);
+    for (const doc of this.catalog.prepare(`SELECT d.* FROM documents d ${scope.from} ${scope.where}`).all(...scope.params) as unknown as DocumentSummary[]) {
+      const key = this.fileKey(this.relativeFile(doc.path));
+      if ((allSources && !hidden.has(key)) || !excluded.has(key)) files.set(key, doc);
+    }
+    if (tagId === null) for (const issue of issues) {
+      const key = this.fileKey(issue.path);
+      if (allSources && issue.kind !== 'pending' && !(hideUnsupported && issue.kind === 'unsupported')) files.set(key, this.issueDocument(issue));
+      else if (issue.kind === 'pending' && !files.has(key)) files.set(key, this.issueDocument(issue));
+    }
+    const rows = [...files.values()].filter(doc => insideDirectory(this.relativeFile(doc.path), directory));
+    if (metadataSort(sort)) {
+      if (catalogOnly) { this.applyCachedMetadata(rows); return this.orderKnownMetadata(rows, sort, descending); }
+      return this.orderMetadata(rows, sort, descending, refresh) as Promise<Array<DocumentSummary | SourceIssueDocument>>;
+    }
+    const reverse = descending ?? sort !== 'name';
+    return rows.sort((a, b) => {
+      const comparison = sort === 'name' ? compareNames(a.name, b.name)
+        : (sort === 'added' ? a.added_at - b.added_at : a.indexed_at - b.indexed_at);
+      return (reverse ? -comparison : comparison) || a.id.localeCompare(b.id);
+    });
+  }
+  /** All sources includes exceptions once per path; folders and tags show normal sources only. */
+  private catalogDocuments(rows: CatalogRow[], indexedOnly = false): Array<DocumentSummary | SourceIssueDocument> {
+    return rows.map(row => {
+      const path = resolve(this.directoryRoot, row.relative_path);
+      const doc: DocumentSummary | SourceIssueDocument = !indexedOnly && (!row.doc_id || (row.issue_kind && row.issue_kind !== 'pending'))
+        ? this.issueDocument({path:row.relative_path,kind:row.issue_kind ?? 'pending',reason:row.reason})
+        : {id:row.doc_id!,path,name:row.document_name??basename(path),hash:row.hash??'',tags:[],added_at:row.added_at,indexed_at:row.indexed_at,chunks:row.chunks??0,source_path:path};
+      return {...doc,file_id:row.file_id,source_revision:row.revision,size_bytes:row.size_bytes,modified_at:row.modified_at,file_type:row.type_key};
+    });
+  }
+  private async catalogPage(scope: CatalogScope, sort: DocumentSort, descending: boolean | undefined,
+    options: Parameters<SourceCatalog['page']>[3], catalogOnly: boolean) {
+    this.work.signal.throwIfAborted();
+    if (scope.tagId != null) this.assertTag(scope.tagId);
+    const page = this.sourceCatalog.page(scope,sort,descending,options);
+    const documents = this.catalogDocuments(page.rows,scope.indexedOnly);
+    void catalogOnly; // Every catalogue page is SQL-only, including legacy callers.
+    const {rows,...info}=page;
+    return {...info,documents:this.hydrate(documents) as Array<DocumentSummary | SourceIssueDocument>};
+  }
+  async browsePage(tagId: string | null, sort: DocumentSort, offset: number, limit = 50, directory: string | null = null, descending?: boolean, hideUnsupported = false, catalogOnly = false, cursor?:string, before=false) {
+    return this.catalogPage({tagId,directory,hideUnsupported},sort,descending,{offset,limit,cursor,before},catalogOnly);
+  }
+  async browsePosition(id: string, tagId: string | null, sort: DocumentSort, directory: string | null = null, descending?: boolean, hideUnsupported = false, catalogOnly = false): Promise<number | null> {
+    if (!catalogOnly) await this.writes;
+    this.work.signal.throwIfAborted();
+    if (tagId!==null) this.assertTag(tagId);
+    return this.sourceCatalog.position(id,{tagId,directory,hideUnsupported},sort,descending);
+  }
+
+  private async scanIdentity(expected: {dev:bigint;ino:bigint}, signal?:AbortSignal): Promise<void> {
+    const combined=signal?AbortSignal.any([signal,this.work.signal]):this.work.signal;
+    combined.throwIfAborted();
+    await interruptible(this.assertSourceAvailable(),combined);
+    const current=await this.work.run(stat(this.directoryRoot,{bigint:true}),combined);
+    if(!current.isDirectory()||current.dev!==expected.dev||current.ino!==expected.ino)throw new Error('The source directory identity changed during discovery.');
+  }
+  private readonly scanDirectories=new Map<string,Map<string,{dev:bigint;ino:bigint}>>();
+  async beginSourceScan(expected:{dev:bigint;ino:bigint},signal?:AbortSignal):Promise<string>{
+    await this.scanIdentity(expected,signal);
+    const id=randomUUID();this.scanDirectories.clear();this.scanDirectories.set(id,new Map([['',expected]]));
+    this.catalog.exec('BEGIN IMMEDIATE');
+    try{
+      this.catalog.prepare("UPDATE source_scan_runs SET state='interrupted',finished_at=? WHERE state='running'").run(Date.now());
+      this.catalog.prepare('INSERT INTO source_scan_runs(id,root_dev,root_ino,state,started_at) VALUES(?,?,?,?,?)').run(id,String(expected.dev),String(expected.ino),'running',Date.now());
+      this.catalog.exec('COMMIT');
+    }catch(error){this.catalog.exec('ROLLBACK');throw error;}
+    return id;
+  }
+  assertScan(id:string):void{
+    this.work.signal.throwIfAborted();
+    if(!(this.catalog.prepare("SELECT 1 FROM source_scan_runs WHERE id=? AND state='running'").get(id)))throw new Error('Source discovery was superseded by another scan.');
+  }
+  /** Bounded, engine-free short transactions, deliberately independent of content writes. */
+  async discoverSourceBatch(id:string,folders:string[],files:Array<{path:string;kind:'pending'|'unsupported'}>,expected:{dev:bigint;ino:bigint},signal?:AbortSignal):Promise<void>{
+    await this.scanIdentity(expected,signal);this.assertScan(id);signal?.throwIfAborted();
+    this.catalog.exec('BEGIN IMMEDIATE');
+    try{
+      const folder=this.catalog.prepare('INSERT INTO source_folders(path) VALUES(?) ON CONFLICT(path) DO NOTHING');
+      for(const path of folders){const canonical=this.fileKey(directoryKey(path));folder.run(canonical);this.catalog.prepare('UPDATE source_directories SET name=? WHERE path=?').run(path.split('/').at(-1)!,canonical);}
+      const issue=this.catalog.prepare(`INSERT INTO source_issues(path,kind,reason) SELECT ?,?,'' WHERE ?='unsupported'
+        OR (NOT EXISTS(SELECT 1 FROM documents WHERE source_key=?) AND NOT EXISTS(SELECT 1 FROM source_issues WHERE catalog_key(path)=?))
+        ON CONFLICT(path) DO UPDATE SET kind=excluded.kind,reason='' WHERE excluded.kind='unsupported' AND source_issues.kind<>'unsupported'`);
+      const seen=this.catalog.prepare('UPDATE source_files SET last_seen=? WHERE path_key=?');
+      for(const file of files){const path=directoryKey(file.path),key=this.fileKey(path);issue.run(key,file.kind,file.kind,key,key);seen.run(id,key);this.catalog.prepare('UPDATE source_files SET relative_path=? WHERE path_key=? AND doc_id IS NULL AND relative_path IS NOT ?').run(path,key,path);}
+      this.catalog.prepare('UPDATE source_scan_runs SET discovered=discovered+? WHERE id=?').run(files.length,id);
+      this.catalog.exec('COMMIT');
+    }catch(error){this.catalog.exec('ROLLBACK');throw error;}
+  }
+  async recordScanMetadata(id:string,entries:Array<{path:string;size:number;mtimeMs:number}>,expected:{dev:bigint;ino:bigint},signal?:AbortSignal):Promise<void>{
+    if(!entries.length)return;
+    if(entries.length>200)throw new Error('Source metadata batches are limited to 200 files.');
+    await this.scanIdentity(expected,signal);this.assertScan(id);signal?.throwIfAborted();
+    this.catalog.exec('BEGIN IMMEDIATE');
+    try{
+      const found=this.catalog.prepare('SELECT 1 FROM source_files WHERE path_key=? AND last_seen=?');
+      for(const entry of entries){const path=directoryKey(entry.path);if(found.get(this.fileKey(path),id))this.rememberMetadata({path:resolve(this.directoryRoot,path)} as DocumentSummary,entry);}
+      this.catalog.exec('COMMIT');
+    }catch(error){this.catalog.exec('ROLLBACK');throw error;}
+  }
+  recordScanDirectory(id:string,path:string,complete:boolean,identity?:{dev:bigint;ino:bigint}):void{
+    this.assertScan(id);if(path)directoryKey(path);
+    if(complete&&identity)this.scanDirectories.get(id)?.set(this.fileKey(path),identity);
+    else if(!complete)this.scanDirectories.get(id)?.delete(this.fileKey(path));
+    this.catalog.prepare('INSERT INTO source_scan_directories(run_id,path,complete) VALUES(?,?,?) ON CONFLICT(run_id,path) DO UPDATE SET complete=excluded.complete').run(id,this.fileKey(path),complete?1:0);
+    if(!complete)this.catalog.prepare("INSERT INTO source_issues(path,kind,reason) VALUES(?,'unavailable','') ON CONFLICT(path) DO UPDATE SET kind='unavailable',reason=''").run(this.fileKey(path));
+    else this.catalog.prepare("DELETE FROM source_issues WHERE catalog_key(path)=? AND kind='unavailable' AND EXISTS(SELECT 1 FROM source_folders WHERE catalog_key(path)=?)").run(this.fileKey(path),this.fileKey(path));
+  }
+  async finishSourceScan(id:string,blocked:string[],expected:{dev:bigint;ino:bigint},signal?:AbortSignal):Promise<void>{
+    await this.scanIdentity(expected,signal);this.assertScan(id);signal?.throwIfAborted();
+    if(!this.catalog.prepare('SELECT 1 FROM source_scan_directories WHERE run_id=? AND path=? AND complete=1').get(id,''))throw new Error('Root discovery did not complete; previous catalogue entries are retained.');
+    const paths=JSON.stringify(blocked.map(path=>this.fileKey(path?directoryKey(path):'')));
+    const safe=(column:string)=>`NOT EXISTS(SELECT 1 FROM json_each(?) b WHERE b.value='' OR ${column}=b.value OR (${column}>=b.value||'/' AND ${column}<b.value||'0'))`;
+    // Recheck unseen candidates outside transactions. A file created again after enumeration
+    // must retain its old row; deletion also uses its captured revision as a compare-and-swap.
+    let after='';
+    while(!signal?.aborted){
+      this.assertScan(id);
+      const batch=this.catalog.prepare(`SELECT file_id,path_key,relative_path,revision FROM source_files WHERE last_seen IS NOT ? AND path_key>? AND ${safe('path_key')} ORDER BY path_key LIMIT 200`).all(id,after,paths) as Array<{file_id:string;path_key:string;relative_path:string;revision:number}>;
+      if(!batch.length)break;
+      after=batch.at(-1)!.path_key;
+      const absent=[];
+      for(const row of batch){
+        signal?.throwIfAborted();
+        try{await this.work.run(lstat(resolve(this.directoryRoot,row.relative_path)),signal);}catch(error){if(['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code??'')){
+          let parent=dirname(resolve(this.directoryRoot,row.relative_path));
+          while(true){
+            const rel=relative(this.directoryRoot,parent);if(rel==='..'||rel.startsWith(`..${sep}`)||isAbsolute(rel))break;
+            const info=await this.work.run(lstat(parent,{bigint:true}),signal).catch((error:NodeJS.ErrnoException)=>['ENOENT','ENOTDIR'].includes(error.code??'')?null:undefined);
+            if(info===undefined)break;
+            if(info){const captured=this.scanDirectories.get(id)?.get(this.fileKey(rel.split(sep).join('/')));if(info.isDirectory()&&!info.isSymbolicLink()&&captured&&captured.dev===info.dev&&captured.ino===info.ino)absent.push(row);break;}
+            if(parent===this.directoryRoot)break;parent=dirname(parent);
+          }
+        }else signal?.throwIfAborted();}
+      }
+      await this.scanIdentity(expected,signal);this.assertScan(id);signal?.throwIfAborted();
+      this.catalog.exec('BEGIN IMMEDIATE');
+      try{const remove=this.catalog.prepare(`DELETE FROM source_issues WHERE catalog_key(path) IN(SELECT path_key FROM source_files WHERE file_id=? AND revision=? AND last_seen IS NOT ?)`);
+        for(const row of absent)remove.run(row.file_id,row.revision,id);
+        this.catalog.exec('COMMIT');
+      }catch(error){this.catalog.exec('ROLLBACK');throw error;}
+      await new Promise<void>(done=>setImmediate(done));
+    }
+    await this.scanIdentity(expected,signal);this.assertScan(id);signal?.throwIfAborted();
+    this.catalog.exec('BEGIN IMMEDIATE');
+    try{
+      this.catalog.prepare(`DELETE FROM source_folders WHERE NOT EXISTS(SELECT 1 FROM source_scan_directories sd WHERE sd.run_id=? AND sd.path=catalog_key(source_folders.path)) AND ${safe('catalog_key(source_folders.path)')}`).run(id,paths);
+      this.catalog.prepare("UPDATE source_scan_runs SET state=?,finished_at=? WHERE id=?").run(blocked.length?'partial':'completed',Date.now(),id);
+      this.catalog.exec('COMMIT');
+    }catch(error){this.catalog.exec('ROLLBACK');throw error;}
+  }
+  interruptSourceScan(id:string):void{
+    this.scanDirectories.delete(id);
+    if(!this.closed)this.catalog.prepare("UPDATE source_scan_runs SET state='interrupted',finished_at=? WHERE id=? AND state='running'").run(Date.now(),id);
+  }
+
+  /** Commit a completed scan inventory; unreadable subtrees retain their last known contents. */
+  async replaceSourceInventory(folders: string[], issues: SourceIssue[], blocked: string[], expected: { dev: bigint; ino: bigint }, signal?: AbortSignal): Promise<void> {
+    await this.locked(async () => {
+      await this.assertSourceAvailable();
+      const current = await stat(this.directoryRoot, { bigint: true }).catch(() => null);
+      if (signal?.aborted || !current?.isDirectory() || current.dev !== expected.dev || current.ino !== expected.ino) return;
+      const clean = (path: string) => path === '' ? '' : directoryKey(path);
+      const unavailable = blocked.map(clean);
+      const retained = (path: string) => unavailable.some(parent => parent === '' || path === parent || path.startsWith(`${parent}/`));
+      const previousFolders = this.catalog.prepare('SELECT path FROM source_folders').all() as Array<{ path: string }>;
+      const previousIssues = this.catalog.prepare('SELECT path,kind,reason FROM source_issues').all() as unknown as SourceIssue[];
+      const nextFolders = new Set(previousFolders.filter(row => retained(row.path)).map(row => row.path));
+      for (const folder of folders) if (folder) nextFolders.add(clean(folder));
+      const nextIssues = new Map(previousIssues.filter(row => retained(row.path)).map(row => [row.path, row]));
+      for (const issue of issues) { const path=this.fileKey(clean(issue.path)); nextIssues.set(path, { ...issue,path,reason:issue.reason.slice(0,1000) }); }
+      this.catalog.exec('BEGIN IMMEDIATE');
+      try {
+        this.catalog.exec('DELETE FROM source_folders; DELETE FROM source_issues;');
+        const folderInsert = this.catalog.prepare('INSERT INTO source_folders(path) VALUES(?)');
+        const issueInsert = this.catalog.prepare('INSERT INTO source_issues(path,kind,reason) VALUES(?,?,?)');
+        for (const path of nextFolders) folderInsert.run(path);
+        for (const issue of nextIssues.values()) issueInsert.run(issue.path, issue.kind, issue.reason);
+        this.catalog.exec('COMMIT');
+      } catch (error) { this.catalog.exec('ROLLBACK'); throw error; }
+    });
+  }
+  /** Checkpoint one completed file without replacing unrelated or still-queued inventory. */
+  async settleSourceFile(path: string, issue: SourceIssue | null, expected: { dev: bigint; ino: bigint }): Promise<boolean> {
+    return this.locked(async () => {
+      await this.assertSourceAvailable();
+      const current = await stat(this.directoryRoot, { bigint: true }).catch(() => null);
+      if (!current?.isDirectory() || current.dev !== expected.dev || current.ino !== expected.ino) return false;
+      path = this.fileKey(directoryKey(path));
+      if (issue) this.catalog.prepare('INSERT OR REPLACE INTO source_issues(path,kind,reason) VALUES(?,?,?)').run(path, issue.kind, issue.reason.slice(0, 1000));
+      else this.catalog.prepare('DELETE FROM source_issues WHERE path=?').run(path);
+      return true;
+    });
+  }
+  async issueCount(hideUnsupported = false, catalogOnly = false): Promise<number> {
+    if (!catalogOnly) await this.writes;
+    this.work.signal.throwIfAborted();
+    return this.sourceCatalog.countIssues(hideUnsupported);
+  }
+  private issueDocument(issue: SourceIssue): SourceIssueDocument {
+    const path = issue.path ? resolve(this.directoryRoot, directoryKey(issue.path)) : this.directoryRoot;
+    return { id: `issue:${issue.path}`, path, name: basename(path), hash: '', tags: [], added_at: 0, indexed_at: 0,
+      chunks: 0, source_path: path, issueKind: issue.kind, statusReason: issue.reason };
+  }
+  async sourceIssue(id: string, catalogOnly = false): Promise<SourceIssueDocument | undefined> {
+    if (!catalogOnly) await this.writes;
+    this.work.signal.throwIfAborted();
+    if (!id.startsWith('issue:')) return;
+    const path = id.slice(6); if (path) directoryKey(path);
+    const issue = this.catalog.prepare('SELECT path,kind,reason FROM source_issues WHERE path=?').get(path) as SourceIssue | undefined;
+    return issue ? this.issueDocument(issue) : undefined;
+  }
+  async issuePage(sort: DocumentSort, offset: number, directory: string | null = null, descending?: boolean, hideUnsupported = false, catalogOnly = false, cursor?:string, before=false) {
+    const page=await this.catalogPage({issues:true,directory,hideUnsupported},sort,descending,{offset,cursor,before},catalogOnly);
+    return {...page,documents:page.documents as SourceIssueDocument[]};
+  }
+  /** Refresh a bounded loaded window around a physical path, including pending-to-indexed ID changes. */
+  async browseWindow(tagId: string | null, sort: DocumentSort, directory: string | null, descending: boolean | undefined,
+    options: { issues?: boolean; hideUnsupported?: boolean; catalogOnly?: boolean; anchorPath?: string; anchorIndex?: number; offset?: number; limit?: number } = {}) {
+    return this.catalogPage({tagId:options.issues?null:tagId,directory,issues:options.issues,hideUnsupported:options.hideUnsupported},sort,descending,
+      {...options,limit:Math.max(50,Math.min(500,options.limit??50)),window:true},!!options.catalogOnly);
+  }
+  async page(tagId: string | null, sort: DocumentSort, offset: number, limit = 50, directory: string | null = null, descending?: boolean): Promise<{ documents: DocumentSummary[]; total: number }> {
+    return this.catalogPage({tagId,directory,indexedOnly:true},sort,descending,{offset,limit},false);
+  }
+  /** Additive SQL metadata cache: browsing never needs to reopen a source file. */
+  private applyCachedMetadata(rows: DocumentSummary[]): void {
+    if (!rows.length) return;
+    const keys = [...new Set(rows.map(doc => this.fileKey(this.relativeFile(doc.path))))];
+    const cached = (keys.length <= 500
+      ? this.catalog.prepare(`SELECT * FROM source_metadata WHERE path IN (${keys.map(() => '?').join(',')})`).all(...keys)
+      : this.catalog.prepare('SELECT * FROM source_metadata').all()) as Array<{ path: string; size_bytes: number | null; modified_at: number | null; file_type: string }>;
+    const metadata = new Map(cached.map(row => [row.path, row]));
+    for (const doc of rows) {
+      const row = metadata.get(this.fileKey(this.relativeFile(doc.path)));
+      const extension = extname(doc.path).slice(1).toLowerCase();
+      Object.assign(doc, { size_bytes: row?.size_bytes ?? null, modified_at: row?.modified_at ?? null,
+        file_type: row?.file_type ?? (({ jpg: 'jpeg', tif: 'tiff', markdown: 'md' } as Record<string, string>)[extension] ?? extension) });
+    }
+  }
+  private rememberMetadata(document: DocumentSummary, info: { size: number; mtimeMs: number } | null, confirmedMissing=false) {
+    const extension = extname(document.path).slice(1).toLowerCase();
+    const metadata = { expires: Date.now() + 30_000, size_bytes: info?.size ?? null, modified_at: info?.mtimeMs ?? null,
+      file_type: ({ jpg: 'jpeg', tif: 'tiff', markdown: 'md' } as Record<string, string>)[extension] ?? extension };
+    this.metadataCache.set(document.path, metadata);
+    if ((info||confirmedMissing) && !this.closed) {
+      try { this.catalog.prepare('INSERT OR REPLACE INTO source_metadata(path,size_bytes,modified_at,file_type) VALUES(?,?,?,?)')
+        .run(this.fileKey(this.relativeFile(document.path)), metadata.size_bytes, metadata.modified_at, metadata.file_type); }
+      catch { /* A best-effort display cache must not alter source validation or content commits. */ }
+      const version=this.catalog.prepare('SELECT file_id,revision AS source_revision FROM source_files WHERE path_key=?').get(this.fileKey(this.relativeFile(document.path)));
+      if(version)Object.assign(document,version);
+    }
+    if (this.metadataCache.size > 50_000) this.metadataCache.delete(this.metadataCache.keys().next().value!);
+    Object.assign(document, { size_bytes: metadata.size_bytes, modified_at: metadata.modified_at, file_type: metadata.file_type });
+    return metadata;
+  }
+  async refreshMetadata(documents: DocumentSummary[], signal?: AbortSignal): Promise<DocumentSummary[]> {
+    const copies = documents.map(doc => ({ ...doc }));
+    await Promise.all(copies.map(doc => this.readMetadata(doc, false, signal)));
+    return copies;
+  }
+  private async readMetadata(document: DocumentSummary, refresh: boolean, callerSignal?: AbortSignal): Promise<void> {
+    const signal = callerSignal ? AbortSignal.any([this.work.signal, callerSignal]) : this.work.signal;
+    signal.throwIfAborted();
+    const cached = this.metadataCache.get(document.path);
+    if (!refresh && cached && cached.expires > Date.now()) {
+      Object.assign(document, { size_bytes: cached.size_bytes, modified_at: cached.modified_at, file_type: cached.file_type }); return;
+    }
+    try {
+      const { assertSourcePath } = await import('./source-directory.js');
+      await interruptible(this.assertSourceAvailable(), signal);
+      await this.work.run(assertSourcePath(this.directoryRoot, document.path), signal);
+      const info = await this.work.run(stat(document.path), signal); this.rememberMetadata(document, info.isFile() ? info : null);
+    } catch { signal.throwIfAborted(); this.rememberMetadata(document, null); }
+  }
+  private async orderMetadata(rows: DocumentSummary[], sort: DocumentSort, descending?: boolean, refresh = false): Promise<DocumentSummary[]> {
+    for (let offset = 0; offset < rows.length; offset += 16) await Promise.all(rows.slice(offset, offset + 16).map(document => this.readMetadata(document, refresh)));
+    return this.orderKnownMetadata(rows, sort, descending);
+  }
+  private orderKnownMetadata(rows: DocumentSummary[], sort: DocumentSort, descending?: boolean): DocumentSummary[] {
+    const key = sort === 'size' ? 'size_bytes' : sort === 'modified' ? 'modified_at' : 'file_type';
+    const reverse = descending ?? sort !== 'type';
+    return rows.sort((a, b) => {
+      const first = a[key], second = b[key];
+      if (first == null || second == null) return first == null && second == null ? a.id.localeCompare(b.id) : first == null ? 1 : -1;
+      const comparison = typeof first === 'number' && typeof second === 'number' ? first - second : compareNames(String(first), String(second));
+      return (reverse ? -comparison : comparison) || a.id.localeCompare(b.id);
+    });
+  }
+  /** Verify source freshness and committed passage coverage with bounded disk concurrency. */
+  async indexStatus(documents: DocumentSummary[], callerSignal?: AbortSignal): Promise<DocumentStatus[]> {
+    if (!documents.length) return [];
+    const signal = callerSignal ? AbortSignal.any([this.work.signal, callerSignal]) : this.work.signal;
+    signal.throwIfAborted();
+    await interruptible(this.writes, signal);
+    let table: lancedb.Table | undefined;
+    let available = true;
+    try { table = await this.work.run(this.table(), signal); } catch { signal.throwIfAborted(); available = false; }
+    const statuses: DocumentStatus[] = [];
+    for (let offset = 0; offset < documents.length; offset += 4) {
+      statuses.push(...await Promise.all(documents.slice(offset, offset + 4).map(async document => {
+        let indexState: CoverageState = 'unavailable';
+        let indexedChunks: number | null = null;
+        if (available) {
+          try {
+            const id = document.id.replaceAll("'", "''"), hash = document.hash.replaceAll("'", "''");
+            indexedChunks = table ? await this.work.run(table.countRows(`document_id = '${id}' AND hash = '${hash}'`), signal) : 0;
+            indexState = indexedChunks === 0 ? 'missing' : indexedChunks === document.chunks && document.chunks > 0 ? 'indexed' : 'partial';
+          } catch { signal.throwIfAborted(); /* Unknown coverage must never be presented as ready. */ }
+        }
+        const sourceState = await this.checkSource(document, signal);
+        signal.throwIfAborted();
+        const failure = this.catalog.prepare('SELECT reason FROM index_failures WHERE path=?').get(this.failurePath(document.path)) as { reason: string } | undefined;
+        const attempt = this.processing.has(document.path) ? 'processing' : failure ? 'failed' : undefined;
+        return { ...document, indexState, indexedChunks, sourceState,
+          status: resolveDocumentStatus(indexState, sourceState, attempt), ...(failure ? { statusReason: failure.reason } : {}) };
+      })));
+    }
+    return statuses;
+  }
+
+  async statusForPath(path: string): Promise<DocumentStatus | undefined> {
     await this.writes;
-    await this.connection();
-    const row = this.catalog.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentSummary | undefined;
+    this.work.signal.throwIfAborted();
+    const document = this.catalog.prepare('SELECT * FROM documents WHERE path=?').get(path) as DocumentSummary | undefined;
+    return document ? (await this.indexStatus(this.hydrate([document])))[0] : undefined;
+  }
+
+  private failurePath(path: string): string { return relative(this.directoryRoot, path); }
+
+  private async checkSource(document: DocumentSummary, signal = this.work.signal): Promise<SourceState> {
+    signal.throwIfAborted();
+    const path = document.source_path ?? document.path;
+    try {
+      const { assertSourcePath } = await import('./source-directory.js');
+      await this.work.run(assertSourcePath(this.directoryRoot, path), signal);
+      const before = await this.work.run(stat(path), signal);
+      this.rememberMetadata(document, before.isFile() ? before : null);
+      if (!before.isFile() || before.size > MAX_FILE_BYTES) return 'unavailable';
+      const stamp = `${before.size}:${before.mtimeMs}:${before.ctimeMs}`;
+      let cached = this.sourceChecks.get(path);
+      if (cached?.stamp !== stamp) {
+        const hash = await hashFile(path, signal);
+        const after = await this.work.run(stat(path), signal);
+        if (`${after.size}:${after.mtimeMs}:${after.ctimeMs}` !== stamp) return 'changed';
+        cached = { stamp, hash };
+        this.sourceChecks.set(path, cached);
+      }
+      return cached.hash === document.hash ? 'same' : 'changed';
+    } catch (error) {
+      signal.throwIfAborted();
+      this.rememberMetadata(document, null);
+      const code = (error as NodeJS.ErrnoException).code;
+      if ((code === 'ENOENT' || code === 'ENOTDIR') && (await stat(dirname(path)).catch(() => null))?.isDirectory()) {
+        try{await interruptible(this.assertSourceAvailable(),signal);this.rememberMetadata(document,null,true);}catch{signal.throwIfAborted();return 'unavailable';}
+        return 'missing';
+      }
+      return 'unavailable';
+    }
+  }
+  async position(id: string, tagId: string | null, sort: DocumentSort, directory: string | null = null, descending?: boolean): Promise<number | null> {
+    this.work.signal.throwIfAborted();
+    if(tagId!==null)this.assertTag(tagId);
+    return this.sourceCatalog.position(id,{tagId,directory,indexedOnly:true},sort,descending);
+  }
+  async document(id: string, catalogOnly = false): Promise<DocumentSummary | undefined> {
+    if (!catalogOnly) await this.writes;
+    this.work.signal.throwIfAborted();
+    const row = this.catalog.prepare('SELECT d.*,f.file_id,f.revision AS source_revision FROM documents d LEFT JOIN source_files f ON f.doc_id=d.id WHERE d.id=?').get(id) as DocumentSummary | undefined;
     return row ? this.hydrate([row])[0] : undefined;
   }
   /** How one tag narrows a document query: Unclassified is the absence of any link. */
-  private scopeFor(tagId: string | null): { from: string; where: string; params: string[] } {
-    if (tagId === null) return { from: '', where: '', params: [] };
-    if (tagId === DEFAULT_TAG) {
-      return { from: '', where: 'WHERE NOT EXISTS (SELECT 1 FROM document_tags dt WHERE dt.document_id = d.id)', params: [] };
+  private scopeFor(tagId: string | null, directory: string | null = null): { from: string; where: string; params: Array<string | number> } {
+    const clauses: string[] = [], params: Array<string | number> = [];
+    if (tagId === DEFAULT_TAG) clauses.push('NOT EXISTS (SELECT 1 FROM document_tags dt WHERE dt.document_id = d.id)');
+    else if (tagId !== null) { clauses.push('dt.tag_id = ?'); params.push(tagId); }
+    if (directory !== null) {
+      const prefix = `${directoryKey(directory)}/`;
+      const path = sep === '\\' ? "replace(COALESCE(d.relative_path,d.name), char(92), '/')" : 'COALESCE(d.relative_path,d.name)';
+      clauses.push(`substr(${path},1,?) = ?`);
+      params.push(Array.from(prefix).length, prefix);
     }
-    return { from: 'JOIN document_tags dt ON dt.document_id = d.id', where: 'WHERE dt.tag_id = ?', params: [tagId] };
+    return { from: tagId !== null && tagId !== DEFAULT_TAG ? 'JOIN document_tags dt ON dt.document_id = d.id' : '', where: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params };
   }
-  /**
-   * Managed copies keep the user's own file name so the library folder stays
-   * browsable. Only characters that are illegal on some platform are replaced,
-   * and the catalogue still stores the untouched original name.
-   */
-  private managedName(name: string): string {
-    const safeBase = basename(name);
-    const extension = extname(safeBase).toLowerCase();
-    const stem = extension ? safeBase.slice(0, -extension.length) : safeBase;
-    const safe = stem
-      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')
-      .replace(/\s+/g, ' ')
-      .replace(/^\.+/, '')
-      .replace(/[. ]+$/, '')
-      .trim()
-      .slice(0, 120)
-      .trim();
-    const reserved = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(safe);
-    return `${safe && !reserved ? safe : 'file'}${extension}`;
-  }
-
-  /** Appends " (2)", " (3)" … until the path is free both in the catalogue and on disk. */
-  private freeManagedPath(tagId: string, name: string, keep?: string): string {
-    const directory = join(this.root, 'imports', tagId);
-    const extension = extname(name);
-    const stem = name.slice(0, name.length - extension.length) || name;
-    const taken = new Set(this.copiesIn(directory).map((path) => path).filter((path) => path !== keep));
-    for (let attempt = 1; attempt < 1000; attempt++) {
-      const candidate = join(directory, attempt === 1 ? name : `${stem} (${attempt})${extension}`);
-      if (!taken.has(candidate) && !existsSync(candidate)) return candidate;
-    }
-    throw new Error('Too many files share this name.');
-  }
-
-  /**
-   * The copies stored under one folder of `imports/`. The folder is chosen when a file is first
-   * imported and never follows a re-tagging, so it names where the copy lives, not what it is.
-   */
-  private copiesIn(directory: string): string[] {
-    const prefix = directory.endsWith(sep) ? directory : directory + sep;
-    const rows = this.catalog.prepare('SELECT path FROM documents WHERE path LIKE ?').all(`${prefix}%`) as Array<{ path: string }>;
-    return rows.map((row) => row.path);
-  }
-  async uploadTarget(tagId: string, name: string): Promise<string> {
-    await this.writes;
-    await this.connection();
-    this.assertTag(tagId);
-    const directory = join(this.root, 'imports', tagId);
-    // A copy of this name already in this folder is replaced in place; that is what makes
-    // re-importing an edited file an update rather than a second entry.
-    const existing = this.copiesIn(directory).find((path) => basename(path).toLowerCase() === this.managedName(name).toLowerCase());
-    if (existing) return existing;
-    return this.freeManagedPath(tagId, this.managedName(name));
-  }
-
-  /**
-   * One-time migration of hash-named managed copies to readable names. Never throws.
-   * It only runs on catalogues older than v4, where a document still had a single tag column —
-   * which is why the folder it files a copy under is read as `tag_id` rather than as a link.
-   */
-  private async renameManagedCopies(): Promise<void> {
-    const managedRoot = join(this.root, 'imports') + sep;
-    interface SingleTagRow { id: string; tag_id: string; path: string; name: string }
-    try {
-      const rows = this.catalog.prepare('SELECT id, tag_id, path, name FROM documents').all() as unknown as SingleTagRow[];
-      for (const row of rows) {
-        if (!row.path.startsWith(managedRoot) || !existsSync(row.path)) continue;
-        const desired = this.managedName(row.name);
-        if (basename(row.path) === desired) continue;
-        try {
-          const target = this.freeManagedPath(row.tag_id, desired, row.path);
-          // A tag that has never had an upload has no directory yet.
-          await mkdir(dirname(target), { recursive: true });
-          await rename(row.path, target);
-          this.catalog.prepare('UPDATE documents SET path = ? WHERE id = ?').run(target, row.id);
-        } catch {
-          // Leave this one as it is; a hashed name is untidy, not broken.
-        }
-      }
-    } catch {
-      // A catalogue without the expected columns is not worth failing the connection over.
-    }
-    this.catalog.exec('PRAGMA user_version=3');
-  }
-
-  /**
-   * Reports what has happened to each document's source file since it was indexed.
-   * Documents without a known source are not listed: nothing can be followed for them.
-   */
-  async sourceStates(): Promise<Array<{ document: DocumentSummary; state: 'same' | 'changed' | 'deleted' | 'unreachable' }>> {
-    await this.writes;
-    await this.connection();
-    const rows = this.hydrate(this.catalog.prepare('SELECT * FROM documents WHERE source_path IS NOT NULL').all() as unknown as DocumentSummary[]);
-    const states: Array<{ document: DocumentSummary; state: 'same' | 'changed' | 'deleted' | 'unreachable' }> = [];
-    for (const doc of rows) {
-      const source = doc.source_path!;
-      const info = await stat(source).catch(() => null);
-      if (!info?.isFile()) {
-        // A missing source in a folder that is still there means deleted; a missing folder
-        // more likely means the volume is away, which is not the library's business.
-        const parent = await stat(dirname(source)).catch(() => null);
-        states.push({ document: doc, state: parent?.isDirectory() ? 'deleted' : 'unreachable' });
-        continue;
-      }
-      if (info.size > MAX_FILE_BYTES) { states.push({ document: doc, state: 'unreachable' }); continue; }
-      const hash = await hashFile(source);
-      states.push({ document: doc, state: hash === doc.hash ? 'same' : 'changed' });
-    }
-    return states;
-  }
-
-  /**
-   * Drops documents whose source file has disappeared.
-   *
-   * A missing managed copy means the library lost its own data, so the entry goes.
-   * Two cases are deliberately left alone, because "gone" is ambiguous there:
-   * a file outside the library may sit on an unmounted volume, and a library whose
-   * managed folder is missing entirely is not fully present yet.
-   */
-  async reconcileMissing(): Promise<DocumentSummary[]> {
-    const rows = this.catalog.prepare('SELECT * FROM documents').all() as unknown as DocumentSummary[];
-    const managedRoot = join(this.root, 'imports') + sep;
-    const managedPresent = (await stat(join(this.root, 'imports')).catch(() => null))?.isDirectory() === true;
-    const removed: DocumentSummary[] = [];
-    for (const doc of rows) {
-      if ((await stat(doc.path).catch(() => null))?.isFile()) continue;
-      const insideLibrary = doc.path.startsWith(managedRoot);
-      if (insideLibrary && !managedPresent) continue;
-      if (!insideLibrary) {
-        const parent = await stat(dirname(doc.path)).catch(() => null);
-        if (!parent?.isDirectory()) continue;
-      }
-      if (await this.remove(doc.id)) removed.push(doc);
-    }
-    return removed;
-  }
-
-  /**
-   * `sourcePath` is the file the content came from, when the caller knows it (a workspace
-   * import does; a sandboxed picker or drop does not). It is what a later sync follows.
-   */
-  async importFile(path: string, displayName = basename(path), tagId = DEFAULT_TAG, sourcePath: string | null = null): Promise<{ document: DocumentSummary; unchanged: boolean }> {
-    const extension = extname(path).toLowerCase();
-    if (!ACCEPTED.includes(extension)) throw new Error(`Unsupported file type: ${extension || '(none)'}.`);
-    // Deliberately outside `locked()`: an engine that still has to download would otherwise hold the
-    // write chain for minutes, and every read in the App View waits on that chain. Formats read
-    // straight from disk do not consult it at all.
-    if (engineForExtension(extension)) await this.requireEngine?.(extension);
-    return this.locked(async () => {
-      await this.connection(); // Ensure legacy metadata exists before checking for a previous version.
-      if (!isAbsolute(path)) throw new Error('Choose a local file with an absolute path.');
-      this.assertTag(tagId);
-      const info = await stat(path);
-      if (!info.isFile() || info.size > MAX_FILE_BYTES) throw new Error(SIZE_LIMIT_MESSAGE);
-      const hash = await hashFile(path);
-      const stored = this.catalog.prepare('SELECT * FROM documents WHERE path = ?').get(path) as DocumentSummary | undefined;
-      const prior = stored ? { ...stored, tags: this.currentTags(stored.id) } : undefined;
-      if (prior?.hash === hash) {
-        // Same bytes: keep the entry, but adopt a newly known source so a sync can follow it, and
-        // take the tag it was just imported under — that is how a file joins a second category.
-        if (sourcePath && sourcePath !== prior.source_path) {
-          this.catalog.prepare('UPDATE documents SET source_path = ? WHERE id = ?').run(sourcePath, prior.id);
-          prior.source_path = sourcePath;
-        }
-        if (tagId !== DEFAULT_TAG && !prior.tags.includes(tagId)) {
-          this.linkTags(prior.id, [tagId]);
-          await this.copyPassages(prior.id, this.tablesFor(prior.tags)[0], tagId);
-          prior.tags.push(tagId);
-        }
-        return { document: prior, unchanged: true };
-      }
-      this.progress?.(`Extracting ${displayName}…`);
-      const text = (await readContent(path, extension, this.cachePath, this.progress)).slice(0, MAX_TEXT);
-      const chunks = chunkText(text);
-      if (!chunks.length) throw new Error(`No extractable text in ${displayName}. Scanned PDFs need a text layer; import images separately for OCR.`);
-      // A replacement keeps the document's identity: the same file, edited, is still the same
-      // entry — only its passages change. That keeps IDs quoted elsewhere valid.
-      const id = prior?.id ?? randomUUID();
-      const now = Date.now();
-      const rows: Passage[] = chunks.map((part, chunk) => ({ id: randomUUID(), document_id: id, path, name: displayName, hash, indexed_at: now, chunk: chunk + 1, text: part, vector: vectorize(part) }));
-      const db = await this.connection();
-      const table = await this.table(tagId);
-      const target = table ?? await db.createTable(this.tableName(tagId), rows);
-      // Drop the previous passages before writing the new ones: a replacement reuses the same
-      // document id, so deleting afterwards would take the fresh rows with it.
-      if (table && prior) await target.delete(`document_id = '${prior.id}'`);
-      if (table) await target.add(rows);
-      const tags = tagId === DEFAULT_TAG ? [] : [...(prior?.tags ?? []), tagId].filter((tag, at, all) => all.indexOf(tag) === at);
-      const document: DocumentSummary = { id, path, name: displayName, hash, tags, added_at: prior?.added_at ?? now, indexed_at: now, chunks: rows.length, source_path: sourcePath ?? prior?.source_path ?? null };
-      this.catalog.exec('BEGIN');
-      try {
-        if (prior) { this.catalog.prepare('DELETE FROM documents WHERE id = ?').run(prior.id); this.unlinkTags(prior.id, prior.tags); }
-        this.catalog.prepare('INSERT INTO documents (id,path,name,hash,added_at,indexed_at,chunks,source_path) VALUES (?,?,?,?,?,?,?,?)')
-          .run(id, path, displayName, hash, document.added_at, now, rows.length, document.source_path);
-        this.linkTags(id, document.tags);
-        this.catalog.exec('COMMIT');
-      } catch (error) { this.catalog.exec('ROLLBACK'); throw error; }
-      return { document, unchanged: false };
-    });
-  }
-
-  /** Kept for callers that re-file a document outright: one tag, replacing whatever it had. */
-  async move(id: string, tagId: string): Promise<void> {
-    await this.setTags(id, tagId === DEFAULT_TAG ? [] : [tagId]);
+  /** Index a source in place; no managed copy or alternate storage mode exists. */
+  async importFile(path: string, displayName = basename(path), tagId = DEFAULT_TAG, signal?: AbortSignal): Promise<{ document: DocumentSummary; unchanged: boolean }> {
+    const combined = signal ? AbortSignal.any([signal, this.work.signal]) : this.work.signal;
+    return this.trackedDirectoryFile(path, displayName, tagId, combined);
   }
   /**
    * Removes a tag. Every document that carried it keeps its other tags; only one that had none left
@@ -719,96 +894,214 @@ export class KnowledgeStore {
       for (const row of documents) {
         const remaining = this.currentTags(row.document_id).filter((tag) => tag !== id);
         if (!remaining.length) orphaned++;
-        await this.removeTagUnlocked(row.document_id, id, remaining);
+        this.unlinkTags(row.document_id, [id]);
       }
       this.catalog.prepare('DELETE FROM tags WHERE id = ?').run(id);
-      // The tag's passages left with its documents; the table itself has nothing left to hold.
-      const db = await this.connection();
-      if ((await db.tableNames()).includes(this.tableName(id))) await db.dropTable(this.tableName(id));
       return { affected: documents.length, orphaned };
     });
   }
 
+  /** Remove only catalogue/vector entries after a scan confirms the source is missing. */
   async remove(id: string): Promise<boolean> {
     if (!/^[a-f\d-]{36}$/i.test(id)) throw new Error('Invalid document ID.');
+    return this.removeDirectoryDocument(id);
+  }
+
+  /** Follow a uniquely identifiable move reported by a complete source scan, without copying files. */
+  async relocateSource(path: string, missingIds: string[], signal = this.work.signal): Promise<string | null> {
+    signal.throwIfAborted();
+    if (!missingIds.length) return null;
+    const { assertSourcePath } = await import('./source-directory.js');
+    path = await assertSourcePath(this.directoryRoot, path);
+    const info = await stat(path);
+    if (!info.isFile() || info.size > MAX_FILE_BYTES) return null;
+    const hash = await hashFile(path, signal), allowed = new Set(missingIds);
+    signal.throwIfAborted();
+    const candidates = (this.catalog.prepare('SELECT * FROM documents WHERE hash=?').all(hash) as unknown as DocumentSummary[])
+      .filter(doc => allowed.has(doc.id) && basename(doc.path) === basename(path));
+    // Equal copies are ambiguous: never assign one file another file's identity or tags.
+    if (candidates.length !== 1) return null;
+    const candidate = candidates[0]!;
     return this.locked(async () => {
-      const row = this.catalog.prepare('SELECT * FROM documents WHERE id = ?').get(id) as DocumentSummary | undefined;
-      if (!row) return false;
-      const tags = this.currentTags(id);
-      for (const tagId of this.tablesFor(tags)) await this.dropPassages(id, tagId);
-      this.catalog.prepare('DELETE FROM documents WHERE id = ?').run(id);
-      this.unlinkTags(id, tags);
-      const source = row.path;
-      if (source.startsWith(join(this.root, 'imports') + sep)) {
-        await unlink(source).catch(() => {}); // Never delete files outside this mini tool's managed imports.
+      signal.throwIfAborted();
+      const current = this.catalog.prepare('SELECT * FROM documents WHERE id=?').get(candidate.id) as DocumentSummary | undefined;
+      if (!current || current.path !== candidate.path || current.hash !== hash) return null;
+      const duplicate = this.catalog.prepare('SELECT * FROM documents WHERE path=?').get(path) as DocumentSummary | undefined;
+      if (duplicate && duplicate.hash !== hash) return null;
+      try { await lstat(current.path); return null; }
+      catch (error) { if (!['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')) return null; }
+      this.catalog.exec('BEGIN');
+      try {
+        if (duplicate) {
+          this.linkTags(current.id, this.currentTags(duplicate.id));
+          this.catalog.prepare('DELETE FROM document_tags WHERE document_id=?').run(duplicate.id);
+          this.catalog.prepare('DELETE FROM documents WHERE id=?').run(duplicate.id);
+        }
+        this.catalog.prepare('UPDATE documents SET path=?,source_path=?,relative_path=?,name=?,source_key=? WHERE id=?')
+          .run(path, path, relative(this.directoryRoot, path), relative(this.directoryRoot, path), this.fileKey(this.relativeFile(path)), current.id);
+        this.catalog.prepare('DELETE FROM index_failures WHERE path=?').run(this.failurePath(current.path));
+        this.catalog.exec('COMMIT');
+      } catch (error) { this.catalog.exec('ROLLBACK'); throw error; }
+      this.sourceChecks.delete(current.path); this.sourceChecks.delete(path);
+      if (duplicate) {
+        const table = await this.table().catch(() => undefined);
+        await table?.delete(`document_id = '${duplicate.id}'`).catch(() => {});
       }
+      return current.id;
+    });
+  }
+
+  private async trackedDirectoryFile(path: string, displayName: string, tagId: string, signal: AbortSignal) {
+    signal.throwIfAborted();
+    await this.work.run(this.assertSourceAvailable(), signal);
+    signal.throwIfAborted();
+    const { assertSourcePath } = await import('./source-directory.js');
+    path = await this.work.run(assertSourcePath(this.directoryRoot, path), signal);
+    signal.throwIfAborted();
+    this.processing.set(path, (this.processing.get(path) ?? 0) + 1);
+    this.notifyStatus(path, 'processing');
+    try {
+      const result = await this.indexDirectoryFile(path, displayName, tagId, signal);
+      this.catalog.prepare('DELETE FROM index_failures WHERE path=?').run(this.failurePath(path));
+      return result;
+    } catch (error) {
+      if (signal.aborted) throw error;
+      const reason = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+      if (error instanceof IndexSkipError) this.catalog.prepare('DELETE FROM index_failures WHERE path=?').run(this.failurePath(path));
+      else this.catalog.prepare('INSERT OR REPLACE INTO index_failures(path,reason) VALUES(?,?)').run(this.failurePath(path), reason);
+      throw error;
+    } finally {
+      const remaining = (this.processing.get(path) ?? 1) - 1;
+      if (remaining) this.processing.set(path, remaining); else this.processing.delete(path);
+      this.sourceChecks.delete(path);
+      this.notifyStatus(path, 'settled');
+    }
+  }
+
+  private notifyStatus(path: string, phase: 'processing' | 'settled'): void {
+    try { this.onStatusChange?.(path, phase); } catch { /* Observers must not change indexing results. */ }
+  }
+
+  private async indexDirectoryFile(path: string, displayName: string, tagId: string, signal: AbortSignal): Promise<{ document: DocumentSummary; unchanged: boolean }> {
+    signal.throwIfAborted();
+    const { assertSourcePath } = await import('./source-directory.js');
+    path = await this.work.run(assertSourcePath(this.directoryRoot, path), signal);
+    signal.throwIfAborted();
+    const extension = extname(path).toLowerCase();
+    if (!ACCEPTED.includes(extension)) throw new Error(`Unsupported file type: ${extension}.`);
+    this.assertTag(tagId);
+    const info = await stat(path);
+    if (!info.isFile() || info.size > MAX_FILE_BYTES) throw new Error(SIZE_LIMIT_MESSAGE);
+    this.rememberMetadata({ path } as DocumentSummary, info);
+    if (info.size === 0) throw new IndexSkipError('empty_file');
+    const hash = await hashFile(path, signal);
+    signal.throwIfAborted();
+    const current = this.catalog.prepare('SELECT * FROM documents WHERE path=?').get(path) as DocumentSummary | undefined;
+    let reusable = current?.hash === hash;
+    if (reusable && current) {
+      try {
+        const table = await this.table();
+        reusable = await table?.countRows(`document_id = '${current.id}' AND hash = '${hash}'`) === current.chunks;
+      } catch { reusable = false; }
+    }
+    if (!reusable && engineForExtension(extension)) await interruptible(Promise.resolve(this.requireEngine?.(extension)), signal);
+    signal.throwIfAborted();
+    // Extraction is outside the commit queue, so slow OCR cannot freeze catalogue readers.
+    const text = reusable ? '' : (await readContent(path, extension, this.cachePath, this.progress, signal)).slice(0, MAX_TEXT);
+    const chunks = reusable ? [] : chunkText(text);
+    if (!reusable && !chunks.length) throw new IndexSkipError(IMAGE.has(extension) ? 'image_no_text' : 'no_text');
+    const vectors: number[][] = [];
+    for (const [index, part] of chunks.entries()) {
+      if (index % 16 === 0) await new Promise<void>(done => setImmediate(done));
+      signal.throwIfAborted();
+      vectors.push(vectorize(part));
+    }
+    if (await hashFile(path, signal) !== hash) throw new Error('Source changed during indexing; scan again.');
+    signal.throwIfAborted();
+    return this.locked(async () => {
+      signal.throwIfAborted();
+      this.assertTag(tagId);
+      const stored = this.catalog.prepare('SELECT * FROM documents WHERE path=?').get(path) as DocumentSummary | undefined;
+      if (stored?.hash === hash && reusable) {
+        if (tagId !== DEFAULT_TAG) this.linkTags(stored.id, [tagId]);
+        return { document: this.needDocument(stored.id), unchanged: true };
+      }
+      if (!chunks.length) throw new Error('Source changed during indexing; scan again.');
+      const id = stored?.id ?? randomUUID();
+      const now = Date.now();
+      const rows: Passage[] = chunks.map((part, chunk) => ({ id: randomUUID(), document_id: id, path: '', name: displayName, hash, indexed_at: now, chunk: chunk + 1, text: part, vector: vectors[chunk]! }));
+      const db = await this.connection();
+      const table = await this.table();
+      const target = table ?? await db.createTable(PASSAGES_TABLE, rows);
+      if (table) {
+        // An interrupted earlier write can have left an uncommitted generation. Remove it first.
+        await target.delete(`document_id = '${id}' AND hash = '${hash}'`);
+        await target.add(rows);
+      }
+      this.catalog.exec('BEGIN');
+      try {
+        this.catalog.prepare(`INSERT INTO documents(id,path,name,hash,added_at,indexed_at,chunks,source_path,relative_path,source_key)
+          VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET path=excluded.path,name=excluded.name,hash=excluded.hash,indexed_at=excluded.indexed_at,chunks=excluded.chunks,source_path=excluded.source_path,relative_path=excluded.relative_path,source_key=excluded.source_key`)
+          .run(id, path, displayName, hash, stored?.added_at ?? now, now, rows.length, path, relative(this.directoryRoot, path), this.fileKey(this.relativeFile(path)));
+        if (tagId !== DEFAULT_TAG) this.linkTags(id, [tagId]);
+        this.catalog.exec('COMMIT');
+      } catch (error) { this.catalog.exec('ROLLBACK'); throw error; }
+      // Readers accept only the catalogue's committed hash, so stale/uncommitted rows never leak.
+      await target.delete(`document_id = '${id}' AND hash != '${hash}'`).catch(() => {});
+      return { document: this.needDocument(id), unchanged: false };
+    });
+  }
+
+  private async removeDirectoryDocument(id: string): Promise<boolean> {
+    return this.locked(async () => {
+      const doc = this.catalog.prepare('SELECT * FROM documents WHERE id=?').get(id) as DocumentSummary | undefined;
+      if (!doc) return false;
+      this.catalog.exec('BEGIN');
+      try {
+        this.catalog.prepare('DELETE FROM document_tags WHERE document_id=?').run(id);
+        this.catalog.prepare('DELETE FROM documents WHERE id=?').run(id);
+        this.catalog.exec('COMMIT');
+      } catch (error) { this.catalog.exec('ROLLBACK'); throw error; }
+      // Removal never touches source files; unreferenced vectors are safe until cleanup succeeds.
+      const table = await this.table();
+      await table?.delete(`document_id = '${id}'`).catch(() => {});
       return true;
     });
   }
 
-  /** Copies catalogue, vectors and managed copies into a directory, serialized against indexed writes. */
-  async copyLibraryTo(directory: string): Promise<{ documents: DocumentSummary[]; tags: TagSummary[] }> {
-    return this.locked(async () => {
-      // A copy moves catalogue files and managed copies only. It deliberately never opens the
-      // vector engine: the setup screen can relocate a library while that engine is still
-      // downloading, and a library that was never indexed has no vectors to copy.
-      await this.migrateCatalog();
-      await backupSqlite(this.catalog, join(directory, 'catalog.sqlite'));
-      const vectors = join(this.root, 'vectors.lance');
-      if ((await stat(vectors).catch(() => null))?.isDirectory()) {
-        await cp(vectors, join(directory, 'vectors.lance'), { recursive: true, errorOnExist: true });
-      }
-      const imports = join(this.root, 'imports');
-      if ((await stat(imports).catch(() => null))?.isDirectory()) {
-        await cp(imports, join(directory, 'imports'), {
-          recursive: true, errorOnExist: true,
-          filter: async (source) => {
-            const path = source.slice(imports.length).replace(/^[/\\]/, '');
-            if (path === '.staging' || path.startsWith(`.staging${sep}`)) return false;
-            if ((await lstat(source)).isSymbolicLink()) throw new Error('Managed imports contain a symbolic link.');
-            return true;
-          },
-        });
-      } else await mkdir(join(directory, 'imports'));
-      const documents = this.hydrate(this.catalog.prepare('SELECT * FROM documents ORDER BY indexed_at DESC').all() as unknown as DocumentSummary[]);
-      const tags = this.catalog.prepare('SELECT id,name,0 AS count FROM tags ORDER BY sort_order,created_at').all() as unknown as TagSummary[];
-      return { documents, tags };
-    });
-  }
-
-  async search(query: string, limit = 5, tagId: string | null = null): Promise<Array<Pick<Passage, 'document_id' | 'path' | 'name' | 'chunk' | 'text'> & { tag_id: string; distance: number; matched: string[] }>> {
+  async search(query: string, limit = 5, tagId: string | null = null, directory: string | null = null) {
     if (!query.trim()) throw new Error('Enter a search query.');
-    await this.writes;
-    await this.connection();
+    const signal = this.work.signal;
+    signal.throwIfAborted();
+    await interruptible(this.writes, signal);
     if (tagId !== null) this.assertTag(tagId);
-    const tagIds = tagId === null ? [DEFAULT_TAG, ...((this.catalog.prepare('SELECT id FROM tags').all() as Array<{ id: string }>).map((row) => row.id))] : [tagId];
-    const vector = vectorize(query);
+    const docs = await this.work.run(this.list(), signal);
+    signal.throwIfAborted();
+    const wanted = docs.filter(doc => insideDirectory(relative(this.directoryRoot, doc.path).split(sep).join('/'), directory) && (tagId === null || (tagId === DEFAULT_TAG ? !doc.tags.length : doc.tags.includes(tagId))));
+    if (!wanted.length) return [];
+    const byId = new Map(wanted.map(doc => [doc.id, doc]));
+    const table = await this.work.run(this.table(), signal);
+    if (!table) return [];
     const count = Math.max(1, Math.min(20, Math.floor(limit) || 5));
-    // A nearest-neighbour query always returns its nearest rows, however far away they are: asking
-    // for a name that nothing mentions used to hand back ten unrelated passages. The index is
-    // lexical, so a candidate has to contain a word of the query — or, failing that, a two-character
-    // run of it — to be a result at all.
-    const terms = queryTerms(query, 1).map((term) => term.toLowerCase());
-    const weak = fallbackTerms(queryTerms(query, 1)).map((term) => term.toLowerCase());
-    const batches = await Promise.all(tagIds.map(async (tag) => {
-      const table = await this.table(tag);
-      if (!table) return [];
-      const rows = await table.vectorSearch(vector).limit(count * 4).toArray() as Passage[];
-      return rows.map((row) => {
-        const text = row.text.toLowerCase();
-        const full = terms.filter((term) => text.includes(term));
-        // Partial runs only count when the passage holds none of the query as written.
-        const partial = full.length ? [] : weak.filter((term) => text.includes(term));
-        return { document_id: row.document_id, path: row.path, name: row.name, chunk: row.chunk, text: row.text,
-          tag_id: tag, distance: row._distance ?? 0, full: full.length, partial: partial.length,
-          // What actually matched, so the App View highlights the words that are really there.
-          matched: full.length ? full : partial };
-      }).filter((row) => row.full > 0 || row.partial > 0);
-    }));
-    return batches.flat()
-      // Most of the query first, then closest: a passage holding both words beats one holding one.
-      .sort((a, b) => b.full - a.full || b.partial - a.partial || a.distance - b.distance)
-      .slice(0, count)
+    const terms = queryTerms(query, 1).map(term => term.toLowerCase());
+    const weak = fallbackTerms(queryTerms(query, 1)).map(term => term.toLowerCase());
+    // Filter before top-k so a small tag cannot be crowded out by unrelated documents.
+    const predicates = wanted.map(doc => `(document_id = '${doc.id}' AND hash = '${doc.hash}')`);
+    const batches: Passage[][] = [];
+    for (let i = 0; i < predicates.length; i += 100) {
+      signal.throwIfAborted();
+      batches.push(await this.work.run(table.vectorSearch(vectorize(query)).where(predicates.slice(i, i + 100).join(' OR ')).limit(count * 4).toArray(), signal) as Passage[]);
+    }
+    return batches.flat().map(row => {
+      const doc = byId.get(row.document_id)!;
+      const text = row.text.toLowerCase();
+      const full = terms.filter(term => text.includes(term));
+      const partial = full.length ? [] : weak.filter(term => text.includes(term));
+      return { document_id: doc.id, path: doc.path, name: doc.name, chunk: row.chunk, text: row.text,
+        tag_id: tagId ?? doc.tags[0] ?? DEFAULT_TAG, distance: row._distance ?? 0, matched: full.length ? full : partial, full: full.length, partial: partial.length };
+    }).filter(row => row.full || row.partial)
+      .sort((a, b) => b.full - a.full || b.partial - a.partial || a.distance - b.distance).slice(0, count)
       .map(({ full, partial, ...row }) => row);
   }
+
 }

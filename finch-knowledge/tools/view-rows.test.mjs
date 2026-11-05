@@ -26,17 +26,18 @@ test('re-filing patches one row instead of reloading the list', async () => {
 
   // The list and the patch share one row builder, so a patched row cannot drift from a rendered
   // one — and the patch itself only ever replaces that single row.
-  assert.match(view, /for \(const doc of docs\) target\.append\(buildRow\(doc\)\);/);
+  assert.match(view, /const row = previous && previous\.dataset\.signature === rowSignature\(doc\) \? previous : buildRow\(doc\);/);
+  assert.match(view, /if \(!preserve\) target\.append\(row\);/);
   assert.match(view, /row\.replaceWith\(buildRow\(updated\)\);/);
   assert.match(view, /function patchTagToggle\(documentId: string, nextTags: string\[\]\): void \{/);
   assert.match(view, /if \(!inScope\(nextTags, selectedTag\)\) \{/);
 
-  // A patched row must not reload the list: the tag-toggle branch has to return before the
-  // resetPage() that every other change still needs.
+  // A tag patch returns before snapshot refresh; generic changes now preserve the old rows.
   const start = view.indexOf("if (data.type === 'changed') {");
   const block = view.slice(start, view.indexOf("\n    }\n", start));
   const patch = block.indexOf("data.change?.kind === 'tagToggle'");
-  const reload = block.indexOf('resetPage();');
+  const reload = block.indexOf('refreshPage();', patch);
+  assert.doesNotMatch(block, /resetPage\(\);/, 'same-library changes cannot clear the current snapshot');
   assert.ok(patch !== -1 && reload !== -1 && patch < reload, 'the tag toggle is handled before the reload');
   assert.match(block, /applyTags\(data\.tags \?\? \[\], false\);/, 'the left column updates without rebuilding the list');
   assert.match(block, /patchTagToggle\(String\(data\.change\.documentId \?\? ''\), data\.change\.tags \?\? \[\]\);/);

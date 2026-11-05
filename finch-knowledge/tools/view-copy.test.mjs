@@ -41,7 +41,7 @@ test('every copy key is defined for both locales and in the fallback', () => {
   }
   // Composer owns templates now; their runtime copy lives in both locale files.
   const keys = [...composer.matchAll(/const QUESTION_KEYS = \[([^\]]+)\]/g)].flatMap((match) => match[1].split(',').map((entry) => entry.trim().replace(/^'|'$/g, '')));
-  assert.equal(keys.length, 7, 'the starting points are read from the Composer provider');
+  assert.equal(keys.length, 6, 'the starting points are read from the Composer provider');
   for (const key of keys) {
     for (const field of [`ask.${key}`, `composer.${key}.label`, `composer.${key}.hint`]) {
       if (!(field in zh) || !(field in en)) missing.push(field);

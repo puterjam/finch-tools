@@ -152,3 +152,71 @@ test('probe walks back a ready step when its files disappear', async () => {
   assert.equal(manager.snapshot().steps[0].status, 'pending');
   assert.equal(manager.snapshot().ready, false);
 });
+
+test('automatic and forced setup both leave lazy OCR untouched', async () => {
+  const search = task('lancedb', { installed: true });
+  const ocr = { ...task('ocr'), optional: true, lazy: true };
+  const manager = new EnvironmentManager([search, ocr]);
+  const snapshot = await manager.install();
+  assert.equal(snapshot.usable, true);
+  assert.equal(snapshot.ready, false);
+  assert.equal(snapshot.steps[1].lazy, true);
+  await manager.install(true);
+  assert.equal(ocr.calls.install, 0);
+  assert.equal(ocr.calls.probe, 0, 'routine setup does not start the lazy component');
+});
+
+test('first OCR demand joins one download, keeps the library usable and emits final completion', async () => {
+  const search = task('lancedb', { installed: true });
+  let release, calls = 0;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const ocr = { id: 'ocr', optional: true, lazy: true, probe: () => false,
+    install: async report => { calls++; report('Downloading OCR', 25); await blocked; } };
+  const seen = [];
+  const manager = new EnvironmentManager([search, ocr], snapshot => seen.push(snapshot));
+  await manager.install();
+  const first = manager.ensure('ocr'), second = manager.ensure('ocr');
+  assert.equal(first, second);
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  assert.equal(manager.snapshot().usable, true);
+  assert.equal(manager.snapshot().running, true);
+  release();
+  const ready = await first;
+  assert.equal(ready.ready, true);
+  assert.equal(seen.at(-1).running, false);
+});
+
+test('OCR demand queues behind required setup without being lost or starting duplicate installers', async () => {
+  let release, calls = 0;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const required = { id: 'lancedb', probe: () => false, install: async () => { await blocked; } };
+  const ocr = { id: 'ocr', optional: true, lazy: true, probe: () => false, install: async () => { calls++; } };
+  const manager = new EnvironmentManager([required, ocr]);
+  const setup = manager.install();
+  const first = manager.ensure('ocr'), second = manager.ensure('ocr');
+  assert.equal(calls, 0);
+  release();
+  await Promise.all([setup, first, second]);
+  assert.equal(calls, 1);
+  assert.equal(manager.snapshot().ready, true);
+});
+
+test('a failed lazy download stays nonblocking, does not loop, and can be explicitly retried', async () => {
+  let fail = true, calls = 0;
+  const ocr = { id: 'ocr', optional: true, lazy: true, probe: () => false,
+    install: async () => { calls++; if (fail) throw new Error('Offline'); } };
+  const manager = new EnvironmentManager([task('lancedb', { installed: true }), ocr]);
+  await manager.install();
+  const failed = await manager.ensure('ocr');
+  assert.equal(failed.usable, true);
+  assert.equal(failed.steps[1].error, 'Offline');
+  assert.equal(calls, 1);
+  await manager.install();
+  assert.equal(calls, 1, 'general runtime checks do not retry OCR');
+  fail = false;
+  const ready = await manager.ensure('ocr');
+  assert.equal(ready.ready, true);
+  assert.equal(ready.steps[1].error, undefined);
+  assert.equal(calls, 2);
+});

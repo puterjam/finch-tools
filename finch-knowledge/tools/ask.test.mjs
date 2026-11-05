@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, symlink, rm, readFile, writeFile } from 'node:fs/promises';
+import { fixtureLink as symlink, nativeTarget, fixtureRm as rm } from './test-platform.mjs';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { activate, KnowledgeStore } from '../dist/index.js';
+import { activate, KnowledgeStore } from './test-store.mjs';
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'finch-knowledge-composer-'));
-  const target = process.platform === 'darwin' ? 'darwin-arm64' : `${process.platform}-${process.arch}-gnu`;
+  const target = nativeTarget;
   const native = resolve(`node_modules/@lancedb/lancedb-${target}/lancedb.${target}.node`);
   const engine = join(root, 'lancedb-engine', '0.39.0');
   await mkdir(engine, { recursive: true });
@@ -20,7 +21,7 @@ async function harness(root, { locale = 'zh-CN', savedRoot } = {}) {
   let provider, openPanel, receive, updates = 0;
   const subscriptions = [], dialogs = [], fills = [], sent = [];
   const handle = { dispose() {}, notifyUpdate() { updates++; } };
-  const values = new Map(savedRoot ? [['libraryRoot', savedRoot]] : []);
+  const values = new Map([['sourceDirectory', savedRoot ?? root]]);
   const panel = {
     view: 'appView', postMessage: async payload => { sent.push(payload); },
     onDidReceiveMessage(handler) { receive = handler; return { dispose() {} }; },
@@ -48,17 +49,17 @@ test('the real toolbar provider fills the current Home and Session Composer with
   try {
     const { provider, actions, fills, copy } = await harness(root);
     for (const surface of ['home', 'session']) {
-      await provider.execute({ surface }, 'article', actions);
+      await provider.execute({ surface }, 'sync', actions);
     }
-    assert.deepEqual(fills, Array(2).fill({ text: copy['ask.article'], options: { mode: 'append' } }));
+    assert.deepEqual(fills, Array(2).fill({ text: copy['ask.sync'], options: { mode: 'append' } }));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('document counts remain in the menu after removal, never on the toolbar button', async () => {
+test('document counts follow filesystem deletion and scanning, never the retired removal action', async () => {
   const root = await fixture();
   try {
     await writeFile(join(root, 'notes.md'), '# Notes\n\nA real document.');
-    const store = new KnowledgeStore(root);
+    const store = new KnowledgeStore(join(root, '.knowledge'), { directoryRoot: root, cachePath: root });
     const imported = await store.importFile(join(root, 'notes.md'), 'notes.md');
     const summary = await store.summary();
     await store.close();
@@ -69,6 +70,9 @@ test('document counts remain in the menu after removal, never on the toolbar but
     assert.equal(menu.find(item => item.id === 'library-indexed').description,
       new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'medium' }).format(new Date(summary.lastIndexedAt)));
     await receive({ type: 'delete', requestId: 'delete', id: imported.document.id });
+    assert.equal((await provider.getMenu({})).find(item => item.id === 'library-count').description, '1 份资料', 'stale removal requests cannot hide existing sources');
+    await rm(join(root, 'notes.md'));
+    await receive({ type: 'sync', requestId: 'scan' });
     assert.equal(await provider.getBadge({}), undefined);
     assert.equal((await provider.getMenu({})).find(item => item.id === 'library-count').description, '0 份资料');
     assert.ok(updates() > 0, 'library edits notify the Composer provider');
