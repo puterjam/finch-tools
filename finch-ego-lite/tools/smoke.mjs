@@ -39,6 +39,16 @@ function makeCtx() {
       onDidChangeLocale() { return { dispose() {} }; },
     },
     icons: { register: () => ({ dispose() {} }) },
+    storage: (() => {
+      const kv = new Map();
+      return {
+        async get(key) { return kv.get(key); },
+        async set(key, value) { kv.set(key, value); },
+        async delete(key) { kv.delete(key); },
+        async clear() { kv.clear(); },
+        async keys() { return [...kv.keys()]; },
+      };
+    })(),
     composerActions: {
       register() { return { notifyUpdate() {}, dispose() {} }; },
     },
@@ -114,6 +124,33 @@ async function run() {
   const activations = bundleSrc.match(/['"]-a['"],\s*['"]ego lite['"]/g) ?? [];
   check('the bundle activates Ego in exactly one place (cold start)', activations.length === 1, activations.length);
   check('no leftover focus helper in the bundle', !/focusEgo/.test(bundleSrc));
+
+  // 6. Every i18n key the source asks for exists in both locales, and every
+  //    `ext:` icon it references is actually registered. Both failures are
+  //    silent at runtime (raw key text / missing glyph), so catch them here.
+  const src = readFileSync(path.join(here, '..', 'src', 'index.ts'), 'utf8');
+  const locales = ['en-US', 'zh-CN'].map((locale) => ({
+    locale,
+    data: JSON.parse(readFileSync(path.join(here, '..', 'i18n', `${locale}.json`), 'utf8')),
+  }));
+  const usedKeys = [...src.matchAll(/\bt\(\s*'([a-zA-Z0-9_.]+)'/g)].map((m) => m[1]);
+  check('source references i18n keys', usedKeys.length > 10, usedKeys.length);
+  for (const { locale, data } of locales) {
+    const missing = [...new Set(usedKeys)].filter((key) => {
+      const value = key.split('.').reduce((node, part) => (node ? node[part] : undefined), data);
+      return typeof value !== 'string';
+    });
+    check(`${locale} defines every referenced key`, missing.length === 0, missing);
+  }
+
+  const registeredIcons = [...src.matchAll(/^\s{4}'?([a-z0-9-]+)'?:\s\{\s*$/gm)].map((m) => m[1]);
+  const referencedIcons = [...new Set([...src.matchAll(/ext:ego-browser-icons\/([a-z0-9-]+)/g)].map((m) => m[1]))];
+  check('every ext: icon is registered', referencedIcons.every((id) => registeredIcons.includes(id)), {
+    referenced: referencedIcons,
+    registered: registeredIcons,
+  });
+  check('the update row and the upgrade command are wired up',
+    /__version__/.test(src) && /'upgrade'/.test(src) && /update is available/.test(src));
 
   console.log(failures === 0 ? '\nall checks passed\n' : `\n${failures} check(s) failed\n`);
   process.exit(failures === 0 ? 0 : 1);

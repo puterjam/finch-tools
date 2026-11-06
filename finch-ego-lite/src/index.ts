@@ -125,6 +125,7 @@ async function runCommand(file: string, args: string[], timeout = 20_000): Promi
       env: { ...process.env, PATH: `${localBinDir()}${delimiter}${process.env.PATH ?? ''}` },
     }, (error, stdout, stderr) => {
       const output = [stdout, stderr].filter(Boolean).join('\n').trim();
+      scanUpdateNotice(output);
       if (error) {
         reject(new Error(output || error.message));
         return;
@@ -172,7 +173,37 @@ async function probeInstall(binary: string, running: boolean): Promise<{
   version?: string;
 }> {
   const version = (running && cachedVersion?.value) || await probeVersion(binary);
+  // A notice about a version the CLI no longer reports is stale: either Ego
+  // moved on by itself or an update landed, so stop offering to update.
+  if (updateNotice?.version && version && updateNotice.version !== version) void clearUpdateNotice();
   return { installed: running || Boolean(version), version };
+}
+
+// The CLI is the only thing that knows whether a self-update is pending, and it
+// says so on stderr of a normal call:
+//   [ego-browser:notice] Ego Lite update is available (current 0.6.2.7). ...
+// There is no `check` command and the notice is rate limited, so every call is
+// scanned and the answer is remembered (across reloads) until the reported
+// version actually moves or an upgrade runs.
+const UPDATE_NOTICE_RE = /\[ego-browser:notice\][^\n]*update is available[^\n]*/i;
+
+type UpdateNotice = { version?: string; at: number };
+
+let updateNotice: UpdateNotice | undefined;
+let storageRef: finch.Storage | undefined;
+
+function scanUpdateNotice(output: string): void {
+  if (!UPDATE_NOTICE_RE.test(output)) return;
+  const version = output.match(/current\s+([\w.]+)/i)?.[1] ?? cachedVersion?.value;
+  if (updateNotice && updateNotice.version === version) return;
+  updateNotice = { version, at: Date.now() };
+  void storageRef?.set('updateNotice', updateNotice);
+}
+
+async function clearUpdateNotice(): Promise<void> {
+  if (!updateNotice) return;
+  updateNotice = undefined;
+  await storageRef?.delete('updateNotice');
 }
 
 // Wait until a freshly launched Ego is actually up. A fixed sleep is not
@@ -475,6 +506,13 @@ function statusText(status: EgoStatus, t: Translate): string {
 export function activate(ctx: finch.ExtensionContext): void {
   const t: Translate = (key, values) => ctx.i18n.t(key, values);
 
+  // The pending-update flag survives a reload: the CLI only prints its notice
+  // occasionally, so losing it would make the menu row flicker away.
+  storageRef = ctx.storage;
+  void ctx.storage.get<UpdateNotice>('updateNotice').then((stored) => {
+    if (stored && typeof stored.at === 'number') updateNotice = stored;
+  }).catch(() => undefined);
+
   ctx.subscriptions.push(ctx.icons.register('ego-browser-icons', {
     ego: {
       svg: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"><path stroke-width=".77" d="M4.78 3.634c1.066 0 2.042.38 2.803 1.012-.421.91-.668 2.099-.668 3.384s.248 2.474.669 3.384a4.396 4.396 0 1 1-2.804-7.78Zm4.938 0c.446 0 .95.367 1.367 1.19.405.8.667 1.934.667 3.206s-.262 2.406-.667 3.206c-.416.823-.92 1.19-1.367 1.19-.38 0-.803-.266-1.179-.858A5.15 5.15 0 0 0 9.944 8.03c0-1.37-.535-2.616-1.405-3.54.376-.59.799-.856 1.179-.856Zm5.05.007c.024.015.076.06.152.184.12.196.24.505.348.921.212.826.348 1.987.348 3.284s-.136 2.459-.348 3.285c-.107.415-.229.724-.348.92a.6.6 0 0 1-.151.183.6.6 0 0 1-.15-.184c-.12-.195-.242-.504-.348-.92-.213-.825-.348-1.987-.348-3.284s.135-2.458.348-3.284c.106-.416.228-.725.347-.92a.6.6 0 0 1 .15-.185Z"/></svg>',
@@ -493,6 +531,13 @@ export function activate(ctx: finch.ExtensionContext): void {
     },
     play: {
       svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>',
+    },
+    // lucide-static v1.70.0 (ISC): circle-arrow-up, terminal
+    'circle-arrow-up': {
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4"/><path d="M12 16V8"/></svg>',
+    },
+    terminal: {
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19h8"/><path d="m4 17 6-6-6-6"/></svg>',
     },
   }));
 
@@ -713,6 +758,21 @@ export function activate(ctx: finch.ExtensionContext): void {
         });
       }
 
+      // The CLI version belongs in this menu: it is what actually gets updated,
+      // and `ego-browser upgrade` is the only way to move it.
+      items.push({
+        id: '__version_divider__',
+        label: '',
+        separator: true,
+      }, {
+        id: '__version__',
+        label: t('menu.version.label', { version: status.version ?? t('menu.version.unknown') }),
+        description: updateNotice ? t('menu.version.update') : t('menu.version.check'),
+        iconName: updateNotice
+          ? 'ext:ego-browser-icons/circle-arrow-up'
+          : 'ext:ego-browser-icons/terminal',
+      });
+
       return items;
     },
 
@@ -724,6 +784,51 @@ export function activate(ctx: finch.ExtensionContext): void {
         }
         if (itemId === '__empty__') {
           await actions.composer.fill(t('composer.startPrompt'));
+          return;
+        }
+        if (itemId === '__version__') {
+          const version = cachedStatus?.version ?? cachedVersion?.value;
+          const confirmed = await ctx.ui.showConfirmDialog({
+            title: t('dialog.update.title'),
+            description: t('dialog.update.description', { version: version ?? t('menu.version.unknown') }),
+            message: t('dialog.update.message'),
+            confirmLabel: t('dialog.update.confirm'),
+            cancelLabel: t('dialog.update.cancel'),
+          });
+          if (!confirmed.confirmed) return;
+
+          const binary = egoBinary();
+          if (!binary) {
+            await ctx.ui.showToast({ title: t('toast.actionFailed'), variant: 'error', position: 'TC' });
+            return;
+          }
+          // A self-update downloads and can restart Ego, so this gets far more
+          // time than a status read.
+          try {
+            const output = await runCommand(binary, ['upgrade'], 180_000);
+            await clearUpdateNotice();
+            const detail = output.split('\n').map((line) => line.trim()).filter(Boolean).slice(-1)[0];
+            await ctx.ui.showToast({
+              title: t('toast.updateDone'),
+              description: detail ? detail.slice(0, 120) : undefined,
+              variant: 'success',
+              position: 'TC',
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            await ctx.ui.showToast({
+              title: t('toast.updateFailed'),
+              description: message.split('\n')[0]?.slice(0, 120),
+              variant: 'error',
+              position: 'TC',
+            });
+          }
+          // The version probe and the cached status are both stale now: Ego may
+          // have repointed its own active_version_dir.
+          cachedVersion = undefined;
+          cachedStatus = undefined;
+          action.notifyUpdate();
+          void waitForRunning().then(() => refreshStatus(true));
           return;
         }
         if (itemId === '__launch__') {

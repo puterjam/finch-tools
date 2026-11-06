@@ -54,6 +54,12 @@
     "space": {
       "fallback": "Task space {id}"
     },
+    "version": {
+      "label": "CLI {version}",
+      "unknown": "unknown",
+      "update": "Update available — click to update",
+      "check": "Click to check for updates"
+    },
     "empty": {
       "label": "Agent is taking a break",
       "description": "Click to start a browsing task",
@@ -84,13 +90,22 @@
   "toast": {
     "launched": "Ego Lite launched",
     "closed": "Task space closed",
-    "actionFailed": "Could not open the Ego page"
+    "actionFailed": "Could not open the Ego page",
+    "updateDone": "Ego Lite update finished",
+    "updateFailed": "Ego Lite update failed"
   },
   "dialog": {
     "close": {
       "title": "Close this Ego task space?",
       "message": "This will close all {count} pages inside.",
       "confirm": "Close",
+      "cancel": "Cancel"
+    },
+    "update": {
+      "title": "Update Ego Lite?",
+      "description": "Current CLI version: {version}.",
+      "message": "Ego Lite checks for the latest version, then downloads and installs it. It may restart, and a task in flight can ask you to confirm first.",
+      "confirm": "Update",
       "cancel": "Cancel"
     }
   },

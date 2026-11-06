@@ -54,6 +54,12 @@
     "space": {
       "fallback": "任务空间 {id}"
     },
+    "version": {
+      "label": "CLI {version}",
+      "unknown": "未知",
+      "update": "发现新版本，点击更新",
+      "check": "点击检查更新"
+    },
     "empty": {
       "label": "Agent 在休息中",
       "description": "点击发起浏览任务",
@@ -84,13 +90,22 @@
   "toast": {
     "launched": "Ego Lite 已启动",
     "closed": "任务空间已关闭",
-    "actionFailed": "无法打开 Ego 页面"
+    "actionFailed": "无法打开 Ego 页面",
+    "updateDone": "Ego Lite 更新完成",
+    "updateFailed": "Ego Lite 更新失败"
   },
   "dialog": {
     "close": {
       "title": "关闭 Ego 任务空间？",
       "message": "将关闭其中 {count} 个页面。",
       "confirm": "关闭",
+      "cancel": "取消"
+    },
+    "update": {
+      "title": "更新 Ego Lite？",
+      "description": "当前 CLI 版本：{version}。",
+      "message": "Ego Lite 会检查最新版本并下载安装，过程中可能重启；如果有任务正在跑，它会先请你确认。",
+      "confirm": "更新",
       "cancel": "取消"
     }
   },
