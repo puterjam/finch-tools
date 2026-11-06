@@ -57,8 +57,7 @@
     "version": {
       "label": "CLI {version}",
       "unknown": "unknown",
-      "update": "Update available — click to update",
-      "check": "Click to check for updates"
+      "update": "Update available — click to update"
     },
     "empty": {
       "label": "Agent is taking a break",

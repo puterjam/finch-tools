@@ -532,12 +532,9 @@ export function activate(ctx: finch.ExtensionContext): void {
     play: {
       svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>',
     },
-    // lucide-static v1.70.0 (ISC): circle-arrow-up, terminal
+    // lucide-static v1.70.0 (ISC): circle-arrow-up
     'circle-arrow-up': {
       svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m16 12-4-4-4 4"/><path d="M12 16V8"/></svg>',
-    },
-    terminal: {
-      svg: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19h8"/><path d="m4 17 6-6-6-6"/></svg>',
     },
   }));
 
@@ -687,8 +684,12 @@ export function activate(ctx: finch.ExtensionContext): void {
         label: t('menu.summary.spaces', { count: status.spaces.length }),
         description: t('menu.summary.pages', { count: status.pageCount }),
         // When the space read fails while Ego is up, say so here instead of
-        // showing an empty list with no explanation.
-        hoverText: status.error ? t('status.error', { error: status.error }) : undefined,
+        // showing an empty list with no explanation. The CLI version lives on
+        // hover: it is only interesting when something can be updated.
+        hoverText: [
+          status.error ? t('status.error', { error: status.error }) : '',
+          status.version ? t('menu.version.label', { version: status.version }) : '',
+        ].filter(Boolean).join('\n') || undefined,
         iconName: 'ext:ego-browser-icons/compass',
         disabled: true,
       }, {
@@ -758,20 +759,21 @@ export function activate(ctx: finch.ExtensionContext): void {
         });
       }
 
-      // The CLI version belongs in this menu: it is what actually gets updated,
-      // and `ego-browser upgrade` is the only way to move it.
-      items.push({
-        id: '__version_divider__',
-        label: '',
-        separator: true,
-      }, {
-        id: '__version__',
-        label: t('menu.version.label', { version: status.version ?? t('menu.version.unknown') }),
-        description: updateNotice ? t('menu.version.update') : t('menu.version.check'),
-        iconName: updateNotice
-          ? 'ext:ego-browser-icons/circle-arrow-up'
-          : 'ext:ego-browser-icons/terminal',
-      });
+      // Only worth a row while an update is pending. Once Ego is up to date the
+      // CLI stops printing its notice, and a permanent "check for updates"
+      // entry would just be noise — the version stays on the summary hover.
+      if (updateNotice) {
+        items.push({
+          id: '__version_divider__',
+          label: '',
+          separator: true,
+        }, {
+          id: '__version__',
+          label: t('menu.version.label', { version: status.version ?? t('menu.version.unknown') }),
+          description: t('menu.version.update'),
+          iconName: 'ext:ego-browser-icons/circle-arrow-up',
+        });
+      }
 
       return items;
     },

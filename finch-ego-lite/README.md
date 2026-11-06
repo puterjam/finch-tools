@@ -22,7 +22,7 @@ The Ego button beside the Composer shows the current connection status. Open its
 - jump directly to any page in Ego Lite;
 - tell whether the Agent is working, waiting for you, or under user control;
 - close a completed task space and all pages inside it;
-- see which CLI version is installed, and update Ego Lite from the same menu when a newer build is available.
+- update Ego Lite from the same menu when a newer build is available (the row only shows up while an update is pending; the CLI version is on the status line hover).
 
 When a task space contains many pages, the menu shows up to six at a time and lets you scroll through the rest.
 
@@ -75,7 +75,7 @@ Finch 会在 Ego Lite 的独立任务空间中打开网页。你不需要学习�
 - 点击任意页面，直接跳转到 Ego Lite 中查看；
 - 分辨当前由 Agent 操作、等待你操作，还是由你控制；
 - 在任务结束后关闭整个任务空间及其中的页面；
-- 看到当前安装的 CLI 版本，有新版本时直接在同一个菜单里更新 Ego Lite。
+- 有新版本时直接在同一个菜单里更新 Ego Lite（只有待更新时才会出现这一行，CLI 版本在首行悬停里）。
 
 任务空间里页面较多时，菜单最多展示六项并支持滚动，不会占满屏幕。
 

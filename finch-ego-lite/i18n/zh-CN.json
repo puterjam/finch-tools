@@ -57,8 +57,7 @@
     "version": {
       "label": "CLI {version}",
       "unknown": "未知",
-      "update": "发现新版本，点击更新",
-      "check": "点击检查更新"
+      "update": "发现新版本，点击更新"
     },
     "empty": {
       "label": "Agent 在休息中",

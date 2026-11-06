@@ -150,7 +150,8 @@ async function run() {
     registered: registeredIcons,
   });
   check('the update row and the upgrade command are wired up',
-    /__version__/.test(src) && /'upgrade'/.test(src) && /update is available/.test(src));
+    /if \(updateNotice\)\s*\{[\s\S]{0,400}__version__/.test(src) && /'upgrade'/.test(src) && /update is available/.test(src));
+  check('no leftover "check for updates" copy', !/version\.check/.test(src));
 
   console.log(failures === 0 ? '\nall checks passed\n' : `\n${failures} check(s) failed\n`);
   process.exit(failures === 0 ? 0 : 1);
