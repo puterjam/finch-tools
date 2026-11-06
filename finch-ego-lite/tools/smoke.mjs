@@ -106,7 +106,15 @@ async function run() {
   check('win32 actions pass the platform gate',
     !/macOS and Windows/.test(winAction.content[0].text), winAction.content[0].text);
 
+  // 5. No app activation on the action path: `open -a` may only live in the
+  //    cold-start launcher, never before an action (citrolabs/ego-lite#680).
   setPlatform('darwin');
+  const bundleSrc = readFileSync(bundle, 'utf8');
+  // esbuild rewrites the quotes, so accept either style.
+  const activations = bundleSrc.match(/['"]-a['"],\s*['"]ego lite['"]/g) ?? [];
+  check('the bundle activates Ego in exactly one place (cold start)', activations.length === 1, activations.length);
+  check('no leftover focus helper in the bundle', !/focusEgo/.test(bundleSrc));
+
   console.log(failures === 0 ? '\nall checks passed\n' : `\n${failures} check(s) failed\n`);
   process.exit(failures === 0 ? 0 : 1);
 }

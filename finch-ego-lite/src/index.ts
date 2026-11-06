@@ -296,21 +296,6 @@ async function launchEgo(): Promise<void> {
   throw new Error(`Ego Lite does not run on this platform (${process.platform}).`);
 }
 
-// Ego's CLI has no window/UI follow API: switchTaskSpace only changes the
-// command target, the window stays wherever the user left it. Bring Ego to
-// the front so agent activity is visible instead of running in the background.
-async function focusEgo(): Promise<void> {
-  if (process.platform === 'darwin') {
-    await execFileAsync('open', ['-a', 'ego lite'], { timeout: 5000 }).catch(() => {});
-    return;
-  }
-  if (process.platform === 'win32') {
-    const exe = egoAppPath();
-    if (!exe) return;
-    await execFileAsync('cmd', ['/c', 'start', '', exe], { timeout: 5000 }).catch(() => {});
-  }
-}
-
 async function openWebsite(): Promise<void> {
   const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
   const args = process.platform === 'win32' ? ['/c', 'start', '', WEBSITE] : [WEBSITE];
@@ -908,9 +893,13 @@ Reuse task spaces, respect user ownership, verify meaningful actions, and comple
         if (!(await waitForRunning())) {
           return { content: [{ type: 'text', text: t('error.launchTimeout') }], isError: true };
         }
-      } else {
-        await focusEgo();
       }
+      // An already running Ego is deliberately left where it is. Bringing it
+      // forward is an app-level activation (`open -a` on macOS) and steals the
+      // frontmost app from the user, which makes background browsing unusable
+      // while they type somewhere else — see citrolabs/ego-lite#680. Only a
+      // cold start above, or an explicit click on a page in the menu, moves
+      // Ego's window to the front.
 
       const script = buildScript(actionName, request, spaceId);
       const timeout = Math.min(300, Math.max(1, request.timeout_seconds ?? 60)) * 1000;
