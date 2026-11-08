@@ -195,6 +195,26 @@ const HEADING_LINE_HEIGHT = 1.6;
 // fraction expresses the body-relative band in the gutter's own units, which
 // keeps it correct at every step of the font-size menu.
 const GUTTER_FONT_SCALE = 12 / CM_ROOT_PX;
+// Line-number gutter geometry. The column is fixed at "a four-digit document
+// plus one character of air" — it must not grow with the document (9 → 10 →
+// 100 lines), because the reading column is centred in whatever the gutter
+// leaves and any width change would shift the text sideways. `ch` is exact
+// here: every glyph in the gutter is a fill character of the same monospace
+// font, so four digits are four `ch`.
+const GUTTER_DIGITS = 4;
+const GUTTER_GAP_CH = 1;
+// The numbers' only inset on the left; the right one is the character of air
+// above, so the digits end exactly where the reading column's margin begins.
+const NUMBER_LEFT_PAD = 8;
+// The same gutter width expressed in the *content's* `em`, for the reading
+// column's `max-width` below: the gutter font is GUTTER_FONT_SCALE of the root
+// and a monospace fill character is 0.6em, so one gutter character is
+// GUTTER_FONT_SCALE * 0.6 of the content's em at every font-size tier.
+const GUTTER_WIDTH_EM = Number(((GUTTER_DIGITS + GUTTER_GAP_CH) * GUTTER_FONT_SCALE * 0.6).toFixed(3));
+// The reading column keeps at least this much empty space on each side, so the
+// text never crowds the pane's edges on a narrow panel. Both margins are the
+// same width by construction (the column is centred); this is the floor.
+const CONTENT_MIN_MARGIN_PX = 48;
 
 // Fenced code renders in a tighter box than prose, and the opening fence is a
 // taller header bar. Both are body-relative ratios like everything else here,
@@ -369,7 +389,12 @@ const finchTheme = EditorView.theme({
     boxSizing: 'border-box',
     paddingInline: CM_SELECTION_BLEED,
     width: `calc(${CM_LINE_WIDTH} + 2 * ${CM_SELECTION_BLEED})`,
-    maxWidth: `calc(${CM_LINE_MAX_WIDTH} + 2 * ${CM_SELECTION_BLEED})`,
+    // `min()` of the old proportional cap and "pane − gutter − both minimum
+    // margins". The reading column is centred, so subtracting the whole gutter
+    // (and twice the floor) here is what guarantees each visible margin is at
+    // least CONTENT_MIN_MARGIN_PX wide; the gutter's own width must be
+    // expressed in the same units, see GUTTER_WIDTH_EM.
+    maxWidth: `min(${CM_LINE_MAX_WIDTH}, calc(100% - ${GUTTER_WIDTH_EM}em - ${NUMBER_LEFT_PAD + 2 * CONTENT_MIN_MARGIN_PX}px))`,
     marginInline: 'auto',
     // CodeMirror's base theme sets flex-grow:2/flex-shrink:0, which would
     // stretch the column back to full width and refuse to shrink inside a
@@ -826,15 +851,18 @@ const finchTheme = EditorView.theme({
   // geometry — and a wrapped row still anchors to its first line, because
   // the line box stays one row tall regardless of how many visual rows the
   // block below grows into.
-  // No right padding: the reading column is centred in the space the gutter
-  // leaves, so any phantom padding on the gutter column's right edge widens
-  // the text's visible left margin without widening its right one. With the
-  // padding pulled to the left, CodeMirror's own `textAlign: right` keeps the
-  // digits flush against the column edge at every digit count, and the
-  // visible margin left of the text is exactly the column's centring margin —
-  // the same one the text has on the right.
+  // The numbers sit flush against the pane's left edge behind one small left
+  // pad — `textAlign: left` overrides CodeMirror's right alignment so the
+  // gutter's own inset is that pad and nothing more. The column is sized for a
+  // four-digit document plus one character of air after the digits (see
+  // GUTTER_DIGITS), which also keeps the reading column from shifting as the
+  // file passes 9/99/999 lines. Everything right of the digits then belongs to
+  // the reading column's left margin, which its `max-width` keeps in step with
+  // the right one.
   '.cm-lineNumbers .cm-gutterElement': {
-        padding: '0 0 0 8px',
+        padding: `0 0 0 ${NUMBER_LEFT_PAD}px`,
+        minWidth: `calc(${GUTTER_DIGITS + GUTTER_GAP_CH}ch + ${NUMBER_LEFT_PAD}px)`,
+        textAlign: 'left',
         lineHeight: 'calc(var(--md-gutter-line-height, 32px) + 2 * var(--md-line-pad-y, 2px))',
         color: 'color-mix(in srgb, var(--muted) 35%, transparent)',
         fontFamily: 'var(--finch-font-mono)',
@@ -865,14 +893,28 @@ const finchTheme = EditorView.theme({
   // The line-number gutter keeps its normal position and look; the rewrite
   // indicator is a separate column placed to its right in the same gutter row.
   //
-  // No font-size here. `--md-gutter-line-height` (and every `em` the AI
-  // markers are sized with) resolves against whatever font-size the consumer
-  // has — a `10px` on this column would shrink every band below to
-  // ~10/16ths of the true row height, so spinner/dot/corner all sit high
-  // and the rail never lines up. Inheriting `.cm-gutters`' 12px keeps the
+  // That column is a zero-width overlay: the rail, dot and spinner paint in
+  // the reading column's left margin, immediately after the numbers, exactly
+  // where they used to sit. As a real 22px column it consumed layout width
+  // *between* the numbers and the text, and since the reading column is
+  // centred in whatever `.cm-gutters` leaves, that pushed the text 22px off
+  // centre (the visible left margin came out more than twice the right one).
+  // Zero width plus `overflow: visible` hands that space back to the margin —
+  // now symmetric and at least CONTENT_MIN_MARGIN_PX wide — while leaving
+  // every marker's own geometry untouched (they are laid out inside
+  // `.cm-gutterElement`, which keeps its full 22px below). This column must
+  // stay registered *after* `lineNumbers()` so its rows begin where the digits
+  // end.
+  //
+  // No font-size is set on this column. `--md-gutter-line-height` (and every
+  // `em` the AI markers are sized with) resolves against whatever font-size
+  // the consumer has — a `10px` here would shrink every band below to
+  // ~10/16ths of the true row height, so spinner/dot/corner would all sit high
+  // and the rail would never line up. Inheriting `.cm-gutters`' 12px keeps the
   // bands identical to the line-number column's.
   '.cm-gutters .cm-ai-gutter': {
-    width: '22px',
+    width: '0',
+    overflow: 'visible',
   },
   // Everything is positioned against the row's *first* line box, matching the
   // line number (which is centered with `line-height: band + 2*--md-line-pad-y`).
@@ -882,6 +924,10 @@ const finchTheme = EditorView.theme({
   // desyncs it from the height map.
   '.cm-ai-gutter .cm-gutterElement': {
     position: 'relative',
+    // The column itself is zero-width (see above); the row box is what the
+    // markers are positioned inside, so it keeps the full 22px and simply
+    // overflows into the margin.
+    width: '22px',
     // The generic `.cm-gutterElement` rule pads `0 8px 0 10px` for the line
     // numbers, but in this 22px column it leaves only ~4px of content space,
     // which squeezes the 6px completed dot into 4px and mis-centers the
@@ -3880,18 +3926,6 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       // off or the caret is not on a blank line, and Space types normally.
       aiHintKeymap,
       markdownEditorKeymap,
-      // The AI marker column must be registered BEFORE the line-number
-      // gutter. Gutters are appended to `.cm-gutters` in extension order, and
-      // this column reserves a hard 22px (`.cm-gutters .cm-ai-gutter`).
-      // Registered after `lineNumbers()` it sat *between* the numbers and the
-      // reading column, and since the reading column is centred in whatever
-      // the gutters leave, that 22px of phantom width pushed the text 22px
-      // further from the pane's left edge than from its right — the visible
-      // left margin of the text was more than twice the right one. On the
-      // outer side of the numbers the same 22px is still reserved (the rail,
-      // spinner and dot markers need it) but it no longer lands inside the
-      // margin the reader measures.
-      aiWorkingGutter,
       markdownEditorSetup,
       // Replace CodeMirror's generic text/keyword glyphs with actual Lucide
       // SVGs for slash blocks; non-Markdown completion sources simply render
@@ -3904,6 +3938,10 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       codeGutterLineHighlighter,
       aiWorkingGutterField,
       aiAddedGutterField,
+      // After `lineNumbers()` on purpose: gutter columns are laid out in
+      // extension order, and this one is a zero-width overlay that paints in
+      // the margin right after the digits (see `.cm-gutters .cm-ai-gutter`).
+      aiWorkingGutter,
       aiHintPlugin,
       selectionHighlightPlugin,
       markdownSupport,
