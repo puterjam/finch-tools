@@ -413,6 +413,23 @@ const finchTheme = EditorView.theme({
     // Body-relative so the gutter can mirror it exactly; see gutterBandEm.
     lineHeight: `calc(var(--md-line-ratio, ${PROSE_LINE_RATIO.compact}) * 1em)`,
   },
+  // CodeMirror's base theme insets every line by 6px on the left and 2px on
+  // the right (`.cm-line { padding: 0 2px 0 6px }`). While the line box *is*
+  // the whole editor width that is invisible, but this editor centres a fixed
+  // reading column inside the pane, and an asymmetric inset inside a centred
+  // column reads as an off-centre text block: the gap left of the text
+  // (gutter edge → text) came out 4px wider than the gap right of it (text →
+  // pane edge). Keep the same total inset, split evenly, so the text is
+  // centred within the column and both visible margins match.
+  //
+  // `.cm-content > .cm-line` (one class more than the base rule, one less
+  // than the `.cm-line:not(…)` rule above) is deliberate: the more specific
+  // list / quote / fenced-code rules declared below still win their own
+  // horizontal padding, and the table cell's embedded editor is untouched
+  // because its lines are not direct children of this `.cm-content`.
+  '.cm-content > .cm-line': {
+    paddingInline: '4px',
+  },
   // The table package leaves a source-line box before its block widget and
   // owns the matching gutter layout, so collapse that package-specific box.
   // Images deliberately do NOT use this rule: collapsing their content row
@@ -809,8 +826,15 @@ const finchTheme = EditorView.theme({
   // geometry — and a wrapped row still anchors to its first line, because
   // the line box stays one row tall regardless of how many visual rows the
   // block below grows into.
+  // No right padding: the reading column is centred in the space the gutter
+  // leaves, so any phantom padding on the gutter column's right edge widens
+  // the text's visible left margin without widening its right one. With the
+  // padding pulled to the left, CodeMirror's own `textAlign: right` keeps the
+  // digits flush against the column edge at every digit count, and the
+  // visible margin left of the text is exactly the column's centring margin —
+  // the same one the text has on the right.
   '.cm-lineNumbers .cm-gutterElement': {
-        padding: '0 5px 0 8px',
+        padding: '0 0 0 8px',
         lineHeight: 'calc(var(--md-gutter-line-height, 32px) + 2 * var(--md-line-pad-y, 2px))',
         color: 'color-mix(in srgb, var(--muted) 35%, transparent)',
         fontFamily: 'var(--finch-font-mono)',
@@ -3856,6 +3880,18 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       // off or the caret is not on a blank line, and Space types normally.
       aiHintKeymap,
       markdownEditorKeymap,
+      // The AI marker column must be registered BEFORE the line-number
+      // gutter. Gutters are appended to `.cm-gutters` in extension order, and
+      // this column reserves a hard 22px (`.cm-gutters .cm-ai-gutter`).
+      // Registered after `lineNumbers()` it sat *between* the numbers and the
+      // reading column, and since the reading column is centred in whatever
+      // the gutters leave, that 22px of phantom width pushed the text 22px
+      // further from the pane's left edge than from its right — the visible
+      // left margin of the text was more than twice the right one. On the
+      // outer side of the numbers the same 22px is still reserved (the rail,
+      // spinner and dot markers need it) but it no longer lands inside the
+      // margin the reader measures.
+      aiWorkingGutter,
       markdownEditorSetup,
       // Replace CodeMirror's generic text/keyword glyphs with actual Lucide
       // SVGs for slash blocks; non-Markdown completion sources simply render
@@ -3868,7 +3904,6 @@ function createMarkdownEditor(options: MarkdownEditorOptions): MarkdownEditorHan
       codeGutterLineHighlighter,
       aiWorkingGutterField,
       aiAddedGutterField,
-      aiWorkingGutter,
       aiHintPlugin,
       selectionHighlightPlugin,
       markdownSupport,
