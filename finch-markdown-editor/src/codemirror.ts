@@ -916,6 +916,17 @@ const finchTheme = EditorView.theme({
     width: '0',
     overflow: 'visible',
   },
+  // `highlightActiveLineGutter()` tags *every* gutter's row for the current
+  // line, including this one — and because the column is a zero-width overlay
+  // that would paint its 22px of tint straight into the reading column's
+  // margin, twice over the active line's own background (so a visibly lighter
+  // band next to the numbers), and its `color: var(--text) !important` would
+  // also repaint the spinner. The line numbers already carry the active-row
+  // highlight where it belongs, so restore this column's own styling here.
+  '.cm-ai-gutter .cm-gutterElement.cm-activeLineGutter': {
+    backgroundColor: 'transparent',
+    color: 'var(--accent) !important',
+  },
   // Everything is positioned against the row's *first* line box, matching the
   // line number (which is centered with `line-height: band + 2*--md-line-pad-y`).
   // A marker whose vertical center should sit on the row uses this as its
