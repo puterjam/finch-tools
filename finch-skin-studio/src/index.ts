@@ -7,13 +7,28 @@ import { join, sep } from 'node:path';
 
 type SkinBase = 'light' | 'dark';
 
+/** What `getTheme()` reports as the app-wide theme preference. */
+type ThemePreference = 'light' | 'dark' | 'system' | 'custom';
+
+/** Same shape as `finch.AppearanceThemeSnapshot` — the read half of the
+ * appearance surface, so "tweak whatever is on screen" does not have to guess. */
+interface ThemeSnapshot {
+  themePreference: ThemePreference;
+  /** The live custom skin; absent when Finch is on its own system theme. */
+  customTheme?: { name: string; base: SkinBase; colors: SkinColors };
+}
+
 /**
- * `ctx.appearance` (setTheme / setHomeBackground) is documented in the mini
- * tool authoring skill but not yet present in the published
+ * `ctx.appearance` (setTheme / setHomeBackground / getTheme) is documented in
+ * the mini tool authoring skill but not yet present in the published
  * `@finchtoys/minitool-api` type package this repo depends on. Declared here
  * as a local ambient type + safe runtime cast, the same pattern finch-delivery
  * uses for `ctx.ui.openFilePreview` — remove this shim once the published
  * types catch up.
+ *
+ * Member order mirrors the SDK contract (setTheme / setHomeBackground /
+ * getTheme). `getTheme` arrived after the first appearance build, so it is
+ * optional here and every caller must feature-detect it.
  */
 interface AppearanceApi {
   setTheme(options: {
@@ -30,6 +45,7 @@ interface AppearanceApi {
     tone?: 'brightest' | 'bright' | 'balanced' | 'dark' | 'darkest';
     clear?: boolean;
   }): Promise<void>;
+  getTheme?(): Promise<ThemeSnapshot>;
 }
 
 function getAppearance(ctx: finch.MiniToolContext): AppearanceApi {
@@ -42,14 +58,47 @@ function getAppearance(ctx: finch.MiniToolContext): AppearanceApi {
   return appearance;
 }
 
+/**
+ * Reads what is actually on screen right now. Returns `undefined` when the host
+ * build predates `getTheme()` or the call fails — callers then fall back to
+ * what this mini tool recorded locally, which is exactly the old behaviour.
+ * Never throws: a read-only nicety must not break apply/save.
+ */
+async function readLiveTheme(ctx: finch.MiniToolContext): Promise<ThemeSnapshot | undefined> {
+  const appearance = (ctx as unknown as { appearance?: AppearanceApi }).appearance;
+  if (!appearance || typeof appearance.getTheme !== 'function') return undefined;
+  try {
+    const snapshot = await appearance.getTheme();
+    return snapshot && typeof snapshot.themePreference === 'string' ? snapshot : undefined;
+  } catch (err) {
+    ctx.logger.warn(`ctx.appearance.getTheme() failed, falling back to stored state: ${String(err)}`);
+    return undefined;
+  }
+}
+
+/** True when the snapshot is a custom skin we can hand back to setTheme(). */
+function liveCustomTheme(snapshot: ThemeSnapshot | undefined): { name: string; base: SkinBase; colors: SkinColors } | undefined {
+  const custom = snapshot?.customTheme;
+  if (!custom || typeof custom.name !== 'string') return undefined;
+  const colors = sanitizeColors(custom.colors);
+  if (Object.keys(colors).length === 0) return undefined;
+  return { name: custom.name, base: custom.base === 'dark' ? 'dark' : 'light', colors };
+}
+
 /** Same shape as finch.AppearanceCustomThemeColors — kept local so this file
  * has no hard runtime dependency on exact SDK type exports. */
 interface SkinColors {
   bgRoot?: string;
   bgMain?: string;
   bgSidebar?: string;
+  /** Card / popover / input / bubble surface. Must sit one clear step away
+   * from bgMain (darker on light, lighter on dark) — closer than that and the
+   * host pushes it a step itself so the hierarchy does not collapse. */
   bgElevated?: string;
+  /** Hover veil. Recommended to leave out: omitted, the host derives a few
+   * percent of ink over bgElevated, so the intensity follows the theme. */
   bgHover?: string;
+  /** Pressed veil. Same rule as bgHover. */
   bgActive?: string;
   textPrimary?: string;
   textSecondary?: string;
@@ -104,8 +153,21 @@ const KEY_LAST_APPLIED = 'lastApplied';
 const KEY_ACTIVE_MODE = 'activeMode';
 
 // ── Built-in presets: 3 light + 3 dark ─────────────────────────────────────
+//
+// Each preset only sets the three axes the host cannot invent for it:
+//   · surface axis  bgRoot → bgMain → bgSidebar → bgElevated, one visible step
+//     apart. bgElevated keeps ≥ 12/255 from bgMain on purpose: below 8/255 the
+//     host treats the pair as flat and pushes elevated a full step itself.
+//   · interaction axis — deliberately absent. bgHover / bgActive are a sheer
+//     veil over the current surface, not another surface, so they are left to
+//     the host's derivation (light: 6% / 12% ink over elevated, dark: 8% / 15%
+//     of white). Hand-written ones used to sit a hair above elevated and read
+//     as "nothing happened" on hover.
+//   · accent axis   accent + accentDim, plus border as an outline that is not
+//     part of the hierarchy.
 
-const BUILTIN_SKINS: BuiltinSkin[] = [
+// Exported for tools/smoke.mjs, which asserts the palette contract below.
+export const BUILTIN_SKINS: BuiltinSkin[] = [
   {
     id: 'light-snow',
     name: 'Snow White',
@@ -114,15 +176,13 @@ const BUILTIN_SKINS: BuiltinSkin[] = [
       bgRoot: '#ffffff',
       bgMain: '#ffffff',
       bgSidebar: '#f6f6f8',
-      bgElevated: '#ffffff',
-      bgHover: '#f0f1f3',
-      bgActive: '#e6e8eb',
+      bgElevated: '#f0f1f3',
       textPrimary: '#1c1c1f',
       textSecondary: '#5b5d66',
       textTertiary: '#9a9ca6',
       accent: '#2f6fed',
       accentDim: '#e2ebfd',
-      border: '#e6e7eb',
+      border: '#e3e4e9',
     },
   },
   {
@@ -130,18 +190,16 @@ const BUILTIN_SKINS: BuiltinSkin[] = [
     name: 'Mint Morning',
     base: 'light',
     colors: {
-      bgRoot: '#f6fbf8',
-      bgMain: '#f6fbf8',
-      bgSidebar: '#eef7f1',
+      bgRoot: '#f3faf6',
+      bgMain: '#f3faf6',
+      bgSidebar: '#e9f4ee',
       bgElevated: '#ffffff',
-      bgHover: '#e6f3ea',
-      bgActive: '#d8ecdf',
       textPrimary: '#173226',
       textSecondary: '#4d6b5b',
-      textTertiary: '#93ab9d',
+      textTertiary: '#8aa79a',
       accent: '#0e9f6e',
       accentDim: '#d9f4e6',
-      border: '#dcece2',
+      border: '#d5e8dc',
     },
   },
   {
@@ -149,18 +207,16 @@ const BUILTIN_SKINS: BuiltinSkin[] = [
     name: 'Peach Cream',
     base: 'light',
     colors: {
-      bgRoot: '#fff8f6',
-      bgMain: '#fff8f6',
-      bgSidebar: '#fdeeec',
+      bgRoot: '#fff4f0',
+      bgMain: '#fff4f0',
+      bgSidebar: '#fbe8e3',
       bgElevated: '#ffffff',
-      bgHover: '#fbe3e0',
-      bgActive: '#f7d2ce',
       textPrimary: '#3a1f1d',
       textSecondary: '#7a4e49',
-      textTertiary: '#b78d87',
+      textTertiary: '#b08a84',
       accent: '#e0527a',
       accentDim: '#fbdce6',
-      border: '#f3ddd8',
+      border: '#f2d8d2',
     },
   },
   {
@@ -168,18 +224,16 @@ const BUILTIN_SKINS: BuiltinSkin[] = [
     name: 'Graphite',
     base: 'dark',
     colors: {
-      bgRoot: '#17181b',
+      bgRoot: '#16171a',
       bgMain: '#1b1c20',
-      bgSidebar: '#131417',
-      bgElevated: '#222327',
-      bgHover: '#28292e',
-      bgActive: '#313239',
+      bgSidebar: '#212227',
+      bgElevated: '#26272c',
       textPrimary: '#f2f2f4',
       textSecondary: '#a7a8b2',
-      textTertiary: '#6c6d78',
+      textTertiary: '#7a7b86',
       accent: '#6366f1',
       accentDim: '#26264a',
-      border: '#2b2c31',
+      border: '#2f3037',
     },
   },
   {
@@ -187,18 +241,16 @@ const BUILTIN_SKINS: BuiltinSkin[] = [
     name: 'Midnight Berry',
     base: 'dark',
     colors: {
-      bgRoot: '#180f16',
+      bgRoot: '#170e14',
       bgMain: '#1d1219',
-      bgSidebar: '#140c12',
-      bgElevated: '#25151f',
-      bgHover: '#2c1a25',
-      bgActive: '#38212e',
+      bgSidebar: '#241722',
+      bgElevated: '#2a1a26',
       textPrimary: '#f6eef2',
       textSecondary: '#c39cae',
-      textTertiary: '#8a6577',
+      textTertiary: '#9a7285',
       accent: '#e02a8b',
       accentDim: '#3d1530',
-      border: '#301c29',
+      border: '#36202d',
     },
   },
   {
@@ -206,18 +258,16 @@ const BUILTIN_SKINS: BuiltinSkin[] = [
     name: 'Deep Teal',
     base: 'dark',
     colors: {
-      bgRoot: '#0d1a1c',
+      bgRoot: '#0c1a1c',
       bgMain: '#0f2124',
-      bgSidebar: '#0a1517',
-      bgElevated: '#15292c',
-      bgHover: '#1a3134',
-      bgActive: '#20393c',
+      bgSidebar: '#14282b',
+      bgElevated: '#1a3033',
       textPrimary: '#eaf5f4',
       textSecondary: '#9fc0bf',
-      textTertiary: '#5f8583',
+      textTertiary: '#6f9391',
       accent: '#0d9488',
       accentDim: '#0f3a35',
-      border: '#1c3335',
+      border: '#23393c',
     },
   },
 ];
@@ -410,23 +460,97 @@ function sanitizeColors(input: unknown): SkinColors {
   return out;
 }
 
+/**
+ * The skin "currently applied" that save / "extract current skin" keeps.
+ * getTheme() first — the look on screen may have come from Appearance Settings
+ * or AppCall's setAppearance and never passed through this mini tool — then the
+ * locally recorded last-applied skin, which is all an older build can offer.
+ */
+async function extractCurrentSkin(
+  ctx: finch.MiniToolContext,
+): Promise<{ name: string; base: SkinBase; colors: SkinColors } | undefined> {
+  const live = liveCustomTheme(await readLiveTheme(ctx));
+  if (live) return live;
+  const lastApplied = await loadLastApplied(ctx);
+  return lastApplied
+    ? { name: lastApplied.name, base: lastApplied.base, colors: lastApplied.colors }
+    : undefined;
+}
+
+/** One skin's palette, spelled out — `current` hands this back to setTheme, so
+ * every token has to stay visible. */
+function formatSkinSnapshot(skin: { name: string; base: SkinBase; colors: SkinColors }, id?: string): string {
+  const lines = [`Skin: "${skin.name}" (base: ${skin.base})${id ? ` [library id ${id}]` : ''}`];
+  for (const [key, value] of Object.entries(skin.colors)) {
+    if (value) lines.push(`  ${key}: ${value}`);
+  }
+  return lines.join('\n');
+}
+
+// ── What is actually on screen ──────────────────────────────────────────────
+
+function sameColors(a: SkinColors, b: SkinColors): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)] as Array<keyof SkinColors>);
+  for (const key of keys) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+
+/**
+ * Which library card the live skin corresponds to. Colors are compared rather
+ * than the name, because two entries may share a name and because the host
+ * keeps the exact tokens it was handed.
+ */
+function matchLibrarySkin(live: { base: SkinBase; colors: SkinColors }, customSkins: CustomSkin[]): string | undefined {
+  const builtinHit = BUILTIN_SKINS.find((s) => s.base === live.base && sameColors(s.colors, live.colors));
+  if (builtinHit) return builtinHit.id;
+  return customSkins.find((s) => s.base === live.base && sameColors(s.colors, live.colors))?.id;
+}
+
+/**
+ * What the panel should highlight. `getTheme()` wins when the host exposes it:
+ * a skin can also arrive through Appearance Settings or AppCall's setAppearance,
+ * and neither of those goes through `applySkin()`. Without it (older build) the
+ * locally recorded state is the best available answer.
+ */
+async function resolveActiveState(
+  ctx: finch.MiniToolContext,
+  customSkins: CustomSkin[],
+  lastApplied: LastApplied | undefined,
+  storedMode: ActiveMode | undefined,
+): Promise<{ activeSkinId?: string; activeMode: ActiveMode | null }> {
+  const live = await readLiveTheme(ctx);
+  if (!live) return { activeSkinId: lastApplied?.id, activeMode: storedMode ?? null };
+  if (live.themePreference !== 'custom') {
+    const systemTheme = live.themePreference === 'light' || live.themePreference === 'dark' ? live.themePreference : 'system';
+    return { activeSkinId: undefined, activeMode: { mode: 'system', systemTheme } };
+  }
+  const custom = liveCustomTheme(live);
+  return {
+    activeSkinId: (custom ? matchLibrarySkin(custom, customSkins) : undefined) ?? lastApplied?.id,
+    activeMode: { mode: 'skin' },
+  };
+}
+
 // ── Panel state payload ─────────────────────────────────────────────────────
 
 async function buildStatePayload(ctx: finch.MiniToolContext, panel: finch.AppPanel) {
-  const [customSkins, background, lastApplied, activeMode] = await Promise.all([
+  const [customSkins, background, lastApplied, storedMode] = await Promise.all([
     loadCustomSkins(ctx),
     loadBackground(ctx),
     loadLastApplied(ctx),
     loadActiveMode(ctx),
   ]);
+  const { activeSkinId, activeMode } = await resolveActiveState(ctx, customSkins, lastApplied, storedMode);
   const builtin = BUILTIN_SKINS.map((s) => ({ id: s.id, name: builtinSkinName(ctx, s), base: s.base, colors: s.colors }));
   return {
     type: 'state',
     builtin,
     custom: customSkins,
     background,
-    lastAppliedId: lastApplied?.id,
-    activeMode: activeMode ?? null,
+    lastAppliedId: activeSkinId,
+    activeMode,
     env: {
       sessionId: panel.sessionId ?? '',
       view: panel.view ?? '',
@@ -500,8 +624,8 @@ async function handlePanelMessage(ctx: finch.MiniToolContext, panel: finch.AppPa
     }
 
     case 'requestSaveCurrent': {
-      const lastApplied = await loadLastApplied(ctx);
-      if (!lastApplied) {
+      const current = await extractCurrentSkin(ctx);
+      if (!current) {
         await panel.postMessage({
           type: 'error',
           message: tr(
@@ -525,7 +649,7 @@ async function handlePanelMessage(ctx: finch.MiniToolContext, panel: finch.AppPa
             label: tr(ctx, 'modal.saveSkin.nameLabel', 'Skin name'),
             type: 'text',
             required: true,
-            default: lastApplied.name,
+            default: current.name,
             placeholder: tr(ctx, 'modal.saveSkin.namePlaceholder', 'My Custom Skin'),
           },
         ],
@@ -535,13 +659,13 @@ async function handlePanelMessage(ctx: finch.MiniToolContext, panel: finch.AppPa
         ],
       });
       if (result.action !== 'save') break;
-      const name = String(result.values?.name ?? '').trim() || lastApplied.name;
+      const name = String(result.values?.name ?? '').trim() || current.name;
       const custom = await loadCustomSkins(ctx);
       const entry: CustomSkin = {
         id: randomUUID(),
         name,
-        base: lastApplied.base,
-        colors: lastApplied.colors,
+        base: current.base,
+        colors: current.colors,
         createdAt: Date.now(),
       };
       custom.push(entry);
@@ -704,14 +828,19 @@ function registerThemeTool(ctx: finch.MiniToolContext): finch.Disposable {
     description:
       'Design, apply, save, and remove Finch color skins. Changes take effect immediately, same as editing Appearance Settings.\n' +
       'action:\n' +
-      '  list   — list built-in presets (3 light + 3 dark) and the user\'s saved custom skins.\n' +
-      '  apply  — apply a skin. Pass id to apply a built-in preset or a saved custom skin. To design and apply a new AI-generated skin in one step, omit id and pass name+base+colors instead; add save:true to also persist it as a custom skin in the same call. To switch back to Finch\'s own built-in theme instead of a custom color skin, pass systemTheme ("system"|"light"|"dark") and omit id/name/colors.\n' +
-      '  save   — persist a skin into the custom library. Pass name+base+colors to save a specific palette (e.g. one just designed by AI), or omit colors to save the most recently applied skin under a new name ("extract current skin").\n' +
-      '  remove — delete a custom skin by id (built-in presets cannot be removed).',
+      '  list    — list built-in presets (3 light + 3 dark) and the user\'s saved custom skins.\n' +
+      '  current — read what is on screen right now: the theme preference and, when a custom skin is active, its name, base and colors. Call this before tweaking a skin you did not apply yourself instead of guessing a palette.\n' +
+      '  apply   — apply a skin. Pass id to apply a built-in preset or a saved custom skin. To design and apply a new AI-generated skin in one step, omit id and pass name+base+colors instead; add save:true to also persist it as a custom skin in the same call. To switch back to Finch\'s own built-in theme instead of a custom color skin, pass systemTheme ("system"|"light"|"dark") and omit id/name/colors.\n' +
+      '  save    — persist a skin into the custom library. Pass name+base+colors to save a specific palette (e.g. one just designed by AI), or omit colors to save the skin currently applied under a new name ("extract current skin").\n' +
+      '  remove  — delete a custom skin by id (built-in presets cannot be removed).\n' +
+      'Colors are a partial map — set only what you want, the rest inherits from base. Think in three axes, not one lightness ramp:\n' +
+      '  · surface axis bgRoot → bgMain → bgSidebar → bgElevated. bgElevated (cards / popovers / inputs / bubbles) must sit one clear step away from bgMain — darker on light, lighter on dark; closer than that and Finch pushes it a step itself.\n' +
+      '  · interaction axis bgHover / bgActive is a sheer veil over the current surface, not another surface. Recommended to leave both out: when omitted they are derived from bgElevated at a few percent intensity that follows the theme, which keeps every skin consistent.\n' +
+      '  · accent axis accent (must stay dark/saturated enough for white text) + accentDim; border is an outline and takes no part in the hierarchy.',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'apply', 'save', 'remove'] },
+        action: { type: 'string', enum: ['list', 'current', 'apply', 'save', 'remove'] },
         id: { type: 'string', description: 'Built-in preset id or custom skin id. Required for remove; for apply, provide this, OR name+base+colors, OR systemTheme.' },
         systemTheme: {
           type: 'string',
@@ -723,7 +852,7 @@ function registerThemeTool(ctx: finch.MiniToolContext): finch.Disposable {
         colors: {
           type: 'object',
           description:
-            'Partial color map — only set what you want, rest inherit from base. Keys: bgRoot, bgMain, bgSidebar, bgElevated, bgHover, bgActive, textPrimary, textSecondary, textTertiary, accent (must stay dark/saturated enough for white text), accentDim, border.',
+            'Partial color map — only set what you want, rest inherit from base. Keys: bgRoot, bgMain, bgSidebar, bgElevated, textPrimary, textSecondary, textTertiary, accent (must stay dark/saturated enough for white text), accentDim, border. bgHover / bgActive exist but should normally be left out — omitted, they are derived from bgElevated as a thin veil that follows the theme.',
           properties: {
             bgRoot: { type: 'string' }, bgMain: { type: 'string' }, bgSidebar: { type: 'string' },
             bgElevated: { type: 'string' }, bgHover: { type: 'string' }, bgActive: { type: 'string' },
@@ -744,6 +873,36 @@ function registerThemeTool(ctx: finch.MiniToolContext): finch.Disposable {
           const builtin = BUILTIN_SKINS.map((s) => ({ ...s, name: builtinSkinName(ctx, s) }));
           const custom = await loadCustomSkins(ctx);
           return text(formatSkinList(builtin, custom));
+        }
+
+        case 'current': {
+          const live = await readLiveTheme(ctx);
+          if (!live) {
+            const lastApplied = await loadLastApplied(ctx);
+            if (!lastApplied) {
+              return text(
+                'This Finch build has no ctx.appearance.getTheme(), and no skin has been applied through Skin Studio yet, so the current palette cannot be read. Update Finch, or apply a skin through Skin Studio first.',
+                true,
+              );
+            }
+            return text(
+              'This Finch build has no ctx.appearance.getTheme(), so this is the last skin applied through Skin Studio, not necessarily what is on screen.\n' +
+                formatSkinSnapshot({ name: lastApplied.name, base: lastApplied.base, colors: lastApplied.colors }, lastApplied.id),
+            );
+          }
+          if (live.themePreference !== 'custom') {
+            return text(
+              `Theme preference: ${live.themePreference} — Finch's own built-in theme is active, there is no custom skin to tweak. `
+              + 'Design one with action=apply (name+base+colors) if the user wants a custom look.',
+            );
+          }
+          const custom = liveCustomTheme(live);
+          if (!custom) return text('Theme preference: custom, but the host reported no usable custom skin colors.');
+          const matched = matchLibrarySkin(custom, await loadCustomSkins(ctx));
+          return text(
+            `Theme preference: custom${matched ? ` (matches library id ${matched})` : ' (not in the Skin Studio library)'}.\n` +
+              formatSkinSnapshot(custom),
+          );
         }
 
         case 'apply': {
@@ -793,12 +952,12 @@ function registerThemeTool(ctx: finch.MiniToolContext): finch.Disposable {
             base = b;
             colors = sanitizeColors(input.colors);
           } else {
-            const lastApplied = await loadLastApplied(ctx);
-            if (!lastApplied) {
-              return text('No skin has been applied through Skin Studio yet, so there is nothing to extract. Pass base+colors explicitly, or apply a skin first.', true);
+            const current = await extractCurrentSkin(ctx);
+            if (!current) {
+              return text('No custom skin is applied right now (and this Finch build cannot read one), so there is nothing to extract. Pass base+colors explicitly, or apply a skin first.', true);
             }
-            base = lastApplied.base;
-            colors = lastApplied.colors;
+            base = current.base;
+            colors = current.colors;
           }
           const custom = await loadCustomSkins(ctx);
           const entry: CustomSkin = { id: randomUUID(), name, base, colors, createdAt: Date.now() };

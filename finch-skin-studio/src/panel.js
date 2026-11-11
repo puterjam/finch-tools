@@ -84,9 +84,13 @@
   }
 
   // ── Color helpers ─────────────────────────────────────────────────────
+  // Mirrors Finch's own light/dark presets (renderer/styles/tokens.css), so a
+  // custom skin that leaves a token out previews the color it will really
+  // inherit instead of a guess made up here. Only the surface / text / accent
+  // tokens are actually drawn by buildThumb.
   var BASE_DEFAULTS = {
-    light: { bgRoot: '#ffffff', bgMain: '#ffffff', bgSidebar: '#f5f5f7', bgElevated: '#ffffff', textPrimary: '#18181b', textSecondary: '#71717a', textTertiary: '#a1a1aa', accent: '#2563eb', accentDim: '#dbeafe', border: '#e4e4e7' },
-    dark: { bgRoot: '#18181b', bgMain: '#1c1c1f', bgSidebar: '#141416', bgElevated: '#232326', textPrimary: '#f4f4f5', textSecondary: '#a1a1aa', textTertiary: '#71717a', accent: '#6366f1', accentDim: '#26264a', border: '#2b2b2f' },
+    light: { bgRoot: '#ffffff', bgMain: '#ffffff', bgSidebar: '#f9f8f7', bgElevated: '#f0f0f0', textPrimary: '#1f2933', textSecondary: '#4f565f', textTertiary: '#707780', accent: '#0dc169', accentDim: '#edf0ef', border: 'rgba(35, 49, 45, 0.12)' },
+    dark: { bgRoot: '#191919', bgMain: '#191919', bgSidebar: '#202020', bgElevated: '#222222', textPrimary: '#e6eaf0', textSecondary: '#9ba6b2', textTertiary: '#87909d', accent: '#269d71', accentDim: '#1b2022', border: 'rgba(255, 255, 255, 0.12)' },
   };
   function mergedColors(skin) {
     var defaults = BASE_DEFAULTS[skin.base] || BASE_DEFAULTS.light;

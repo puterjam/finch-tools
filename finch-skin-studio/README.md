@@ -23,7 +23,8 @@ Design and manage how Finch looks — Home background and color skins — from o
 
 ## Notes
 
-- Skin Studio can only "remember" a skin's exact colors if it was applied, saved, or imported through Skin Studio itself (a built-in preset, an AI-designed skin, or something you explicitly saved/imported) — it has no way to read an already-applied skin that came from somewhere else.
+- Skin Studio reads what is actually on screen: "Save current skin" keeps the look you are really using — even one set from Appearance Settings or by the assistant directly — and the gallery highlights the card that matches it. On a Finch build without the read API it falls back to the last skin applied through Skin Studio.
+- Presets only define the surfaces (page, sidebar, cards). Hover and pressed tints are a thin veil Finch derives from the card color itself, so they always land at the strength the theme intends — a skin never has to guess them.
 - Copied skin snippets only contain color values and a name — no personal data, background images, or paths.
 - All data (saved skins, last-set background path, dropped background copies) is stored locally in this mini tool's private storage; nothing is sent over the network.
 - Requires a Finch version whose Appearance API is enabled; older builds show a clear error instead of silently failing.
@@ -55,7 +56,8 @@ Design and manage how Finch looks — Home background and color skins — from o
 
 ## 说明
 
-- 换肤工坊只能"记住"通过它自己应用、保存或导入过的皮肤配色（内置预设、AI 设计的皮肤、或手动保存/导入过的皮肤）——无法读取从其他途径应用、从未经过换肤工坊的皮肤。
+- 换肤工坊读的是屏幕上真正生效的外观：「保存当前皮肤」保存的就是你此刻正在用的配色——哪怕它是从外观设置或 AI 直接改上去的——画廊也会高亮真正匹配的那张卡片。若当前 Finch 版本没有这个读取接口，则退回为最近一次通过换肤工坊应用的皮肤。
+- 预设只定义表面（页面、侧栏、卡片）。悬停与按下是 Finch 自己从卡片色派生的一层薄纱，强度永远跟着主题走，皮肤不需要自己去猜。
 - 复制出来的皮肤数据只包含颜色值和名称，不含个人数据、背景图或路径信息。
 - 所有数据（已保存的皮肤、最近设置的背景路径、拖放进来的背景图副本）都保存在本小程序的本地私有存储中，不会上传到网络。
 - 需要 Finch 版本已启用外观（Appearance）API；旧版本会给出明确的错误提示，而不是静默失败。
