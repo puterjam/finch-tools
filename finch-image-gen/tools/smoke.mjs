@@ -693,6 +693,9 @@ panelSent = sent;
     `${locale['model.sunburst']}|Image 2.5`,
     `${locale['model.previous']}|Image 2`,
     `${locale['model.legacy']}|Image 1.5`,
+    // The free-text row belongs to the same submenu: a relay or Azure deployment
+    // name is not one of the six built-ins and has to be typeable somewhere.
+    `${locale['menu.model.custom']}|${locale['menu.model.custom.hint']}`,
   ].join(',');
   const modelRows = modelRow.children.map((child) => `${child.label}|${child.description}`).join(',');
   check('model rows are the variant plus its family', modelRows === expectedModels, modelRows);
@@ -1184,6 +1187,55 @@ panelSent = sent;
   const modelParam = tool.inputSchema.properties.model.description;
   check('model param says the default comes from the toolbar', /default the user configured/i.test(modelParam), modelParam);
   check('model param labels no id as the default', !/gpt-image-[a-z0-9.-]+\s*\([^)]*default/i.test(modelParam), modelParam);
+}
+
+// 24 — a relay or Azure deployment name can become the everyday default.
+// The six built-in rows can never cover it, and Azure answers DeploymentNotFound
+// for the model name itself (deployment names cannot contain dots), so the
+// submenu has to offer a free-text row and the 404 has to say why.
+{
+  const composerMenu = menus.composer['image-gen-settings'];
+  const scoped = { sessionId: 'sess-1', spaceId: '', surface: 'session', cwd: '/tmp' };
+  const specs = [];
+  const dialog = ctx.ui.showModalDialog;
+
+  const rows = await composerMenu.getMenu(scoped);
+  check(
+    'the model submenu offers a custom id row',
+    rows.find((item) => item.id === 'set-model').children.some((child) => child.id === 'model:__custom__'),
+    rows.find((item) => item.id === 'set-model').children.map((child) => child.id).join(','),
+  );
+
+  ctx.ui.showModalDialog = async (spec) => {
+    specs.push(spec);
+    return { action: 'save', values: { model: 'gpt-image-2-5-flare' } };
+  };
+  await composerMenu.execute(scoped, 'model:__custom__', { composer: {}, navigation: {} });
+  check('the custom row asks before storing', specs.length === 1 && specs[0].fields?.[0]?.key === 'model', JSON.stringify(specs));
+  check('the typed id is stored verbatim', (await store.get('defaultModel')) === 'gpt-image-2-5-flare', String(await store.get('defaultModel')));
+
+  const sent = await run(base);
+  check('a stored custom id is sent unchanged', sent.call.json.model === 'gpt-image-2-5-flare', sent.call.json.model);
+
+  const marked = await composerMenu.getMenu(scoped);
+  const modelRow = marked.find((item) => item.id === 'set-model');
+  check('the parent row shows the custom id', modelRow.description === 'gpt-image-2-5-flare', modelRow.description);
+  check('the custom row is marked current', modelRow.children.find((child) => child.id === 'model:__custom__')?.current === true);
+
+  ctx.ui.showModalDialog = async () => ({ action: 'save', values: { model: '   ' } });
+  await composerMenu.execute(scoped, 'model:__custom__', { composer: {}, navigation: {} });
+  check('an empty custom id goes back to the built-in default', (await store.get('defaultModel')) === undefined, String(await store.get('defaultModel')));
+
+  ctx.ui.showModalDialog = async () => ({ action: 'cancel' });
+  await composerMenu.execute(scoped, 'model:__custom__', { composer: {}, navigation: {} });
+  check('cancelling the dialog changes nothing', (await store.get('defaultModel')) === undefined);
+  ctx.ui.showModalDialog = dialog;
+
+  check(
+    'a 404 explains the Azure deployment name',
+    formatApiError({ message: 'no', code: 'DeploymentNotFound' }, '404 Not Found').includes('deployment name'),
+    formatApiError({ message: 'no', code: 'DeploymentNotFound' }, '404 Not Found'),
+  );
 }
 
 rmSync(storagePath, { recursive: true, force: true });

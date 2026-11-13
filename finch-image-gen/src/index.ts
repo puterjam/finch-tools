@@ -33,6 +33,12 @@ const BASE_URL_STORAGE_KEY = 'baseUrl';
 const API_KEY_STORAGE_KEY = 'openaiApiKey';
 const PROXY_STORAGE_KEY = 'proxyUrl';
 const MODEL_STORAGE_KEY = 'defaultModel';
+/**
+ * Submenu row that opens a text dialog instead of storing its id, so a relay or
+ * an Azure deployment name (which the six built-in rows can never cover) can
+ * become the everyday default. Underscores keep it from colliding with a real id.
+ */
+const CUSTOM_MODEL_ID = '__custom__';
 const QUALITY_STORAGE_KEY = 'defaultQuality';
 const SIZE_STORAGE_KEY = 'defaultSize';
 
@@ -456,6 +462,11 @@ export function formatApiError(error: ApiErrorBody | undefined, statusLine: stri
   if (!hint && status === 401) hint = 'Check the API key (Composer toolbar → Image Gen settings → OpenAI API Key).';
   if (!hint && status === 403) {
     hint = 'The key lacks access to this model. GPT Image models may require OpenAI API organization verification.';
+  }
+  if (!hint && (status === 404 || error?.code === 'DeploymentNotFound' || error?.code === 'ModelNotFound')) {
+    // Azure answers with DeploymentNotFound when `model` names a model instead
+    // of a deployment, and deployment names cannot contain dots.
+    hint = 'The endpoint has no model or deployment by that name. Azure OpenAI wants the deployment name in `model`, and deployment names cannot contain dots — a model listed as "gpt-image-2.5-flare" is typically deployed as "gpt-image-2-5-flare". Check the deployment name, or set it in the Image Tool toolbar (model → custom model ID). Do not retry this request unchanged.';
   }
   if (!hint && status === 429) hint = 'Rate limit or quota reached — wait a moment, or lower quality/size.';
 
@@ -1853,12 +1864,23 @@ export function activate(ctx: finch.MiniToolContext): void {
             iconName: 'ext:image-gen-icons/cpu-ai',
             // A relay's own model id has no short name, so it stays as-is.
             description: knownModel ? t(knownModel.labelKey) : effectiveModel,
-            children: MODEL_CHOICES.map((choice) => ({
-              id: `model:${choice.id}`,
-              label: t(choice.labelKey),
-              description: choice.family,
-              current: choice.id === effectiveModel,
-            })),
+            children: [
+              ...MODEL_CHOICES.map((choice) => ({
+                id: `model:${choice.id}`,
+                label: t(choice.labelKey),
+                description: choice.family,
+                current: choice.id === effectiveModel,
+              })),
+              // A relay or Azure deployment name is not one of the six built-ins,
+              // and without this row there is nowhere to type it at all.
+              {
+                id: `model:${CUSTOM_MODEL_ID}`,
+                label: t('menu.model.custom'),
+                iconName: 'ext:image-gen-icons/settings',
+                description: knownModel ? t('menu.model.custom.hint') : effectiveModel,
+                current: !knownModel,
+              },
+            ],
           },
           {
             id: 'set-quality',
@@ -1899,6 +1921,33 @@ export function activate(ctx: finch.MiniToolContext): void {
         // Submenu rows save straight away — no dialog to confirm a single choice.
         const [kind, ...rest] = itemId.split(':');
         const chosen = rest.join(':');
+        if (kind === 'model' && chosen === CUSTOM_MODEL_ID) {
+          const stored = await ctx.storage.get<string>(MODEL_STORAGE_KEY);
+          const result = await ctx.ui.showModalDialog({
+            title: t('menu.model.custom'),
+            description: t('dialog.model.desc'),
+            fields: [
+              {
+                key: 'model',
+                label: t('menu.model'),
+                type: 'text',
+                placeholder: 'gpt-image-2-5-flare',
+                default: stored?.trim() ?? '',
+              },
+            ],
+            actions: [
+              { id: 'cancel', label: t('dialog.cancel') },
+              { id: 'save', label: t('dialog.save'), variant: 'primary' },
+            ],
+          });
+          const typed = result?.action === 'save' ? String(result.values?.model ?? '').trim().slice(0, 120) : null;
+          if (typed === null) return;
+          // An empty field means "back to the built-in default", same as picking it.
+          if (!typed || typed === DEFAULT_MODEL) await ctx.storage.delete(MODEL_STORAGE_KEY);
+          else await ctx.storage.set(MODEL_STORAGE_KEY, typed);
+          composerMenu?.notifyUpdate();
+          return;
+        }
         if (kind === 'model' && chosen) {
           if (chosen === DEFAULT_MODEL) await ctx.storage.delete(MODEL_STORAGE_KEY);
           else await ctx.storage.set(MODEL_STORAGE_KEY, chosen);
