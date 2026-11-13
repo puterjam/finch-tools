@@ -1435,7 +1435,7 @@ export function activate(ctx: finch.MiniToolContext): void {
           },
           size: {
             type: 'string',
-            description: `Output size. "auto" (default) or WIDTHxHEIGHT — popular: 1024x1024 (square), 1536x1024 (landscape), 1024x1536 (portrait), 2048x2048, 2048x1152, 2560x1440, 3840x2160. Custom sizes need multiples of 16, aspect ratio within 3:1, edges ≤3840px, total pixels 655360-8294400.`,
+            description: `Output size. Omit it to use the default the user configured on the Image Tool toolbar; "auto" lets the model decide, or pass WIDTHxHEIGHT — popular: 1024x1024 (square), 1536x1024 (landscape), 1024x1536 (portrait), 2048x2048, 2048x1152, 2560x1440, 3840x2160. Custom sizes need multiples of 16, aspect ratio within 3:1, edges ≤3840px, total pixels 655360-8294400.`,
           },
           quality: {
             type: 'string',
@@ -1512,7 +1512,7 @@ export function activate(ctx: finch.MiniToolContext): void {
           model: {
             type: 'string',
             description:
-              'Image model id, e.g. "gpt-image-2.6-flare" (fast everyday, default), "gpt-image-2.6-sunburst" (editing precision), "gpt-image-2.5-flare" / "gpt-image-2.5-sunburst" (previous generation), "gpt-image-2", "gpt-image-1.5". Shorthands "flare" / "sunburst" mean the current generation. Omit to use the configured default.',
+              'Image model id. Omit it to use the default the user configured on the Image Tool toolbar, and only pass a model when the user names one or explicitly asks for a different one — naming one yourself silently outranks whatever they set. Known ids: "gpt-image-2.6-flare" / "gpt-image-2.6-sunburst" (current generation: fast everyday / precise editing), "gpt-image-2.5-flare" / "gpt-image-2.5-sunburst" (previous generation), "gpt-image-2", "gpt-image-1.5". The shorthands "flare" / "sunburst" mean the current generation; any other id is forwarded unchanged, so a relay can expose its own.',
           },
           output_name: {
             type: 'string',

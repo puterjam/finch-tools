@@ -1146,6 +1146,46 @@ panelSent = sent;
   await store.delete('defaultModel');
 }
 
+// 23 — the AI-facing text must never name a concrete model as "the default".
+// execute() only falls back to the stored toolbar default when the caller omits
+// `model`, so a prompt that reads "the default is gpt-image-2.6-flare" makes the
+// agent pass that id on every call and silently outrank whatever the user picked
+// (that is exactly how a stored 2.5 default got bypassed in a real session).
+{
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const en = JSON.parse(readFileSync(join(root, 'i18n/en-US.json'), 'utf8'));
+  const zh = JSON.parse(readFileSync(join(root, 'i18n/zh-CN.json'), 'utf8'));
+  const MODEL_ID = /gpt-image-[0-9][0-9.]*(?:[-.][a-z0-9]+)?/i;
+  // Sentences split on a full stop even when CJK text has no space after it.
+  const costPolicy = (text) =>
+    text.split(/(?<=[.。])\s*/).find((sentence) => /COST POLICY|费用约定/.test(sentence)) ?? '';
+  const saysOmit = /omit|leaves? [^.。]{0,60}out|configured default|不传|默认/i;
+
+  for (const [where, text] of [
+    ['manifest systemPrompt', manifest.finch.systemPrompt],
+    ['en systemPrompt', en.systemPrompt],
+    ['zh systemPrompt', zh.systemPrompt],
+  ]) {
+    const policy = costPolicy(text);
+    check(`${where}: has a cost policy sentence`, policy.length > 0);
+    check(`${where}: cost policy names no model id`, !MODEL_ID.test(policy), policy.slice(0, 180));
+    check(`${where}: cost policy says omit to get the configured default`, saysOmit.test(policy), policy.slice(0, 180));
+  }
+
+  for (const [where, description] of [
+    ['en tool.description', en['tool.description']],
+    ['zh tool.description', zh['tool.description']],
+  ]) {
+    const bullet = description.split('\n').find((line) => line.trim().startsWith('- quality')) ?? '';
+    check(`${where}: quality bullet names no model id`, !MODEL_ID.test(bullet), bullet.slice(0, 180));
+    check(`${where}: quality bullet points at the configured default`, saysOmit.test(bullet), bullet.slice(0, 180));
+  }
+
+  const modelParam = tool.inputSchema.properties.model.description;
+  check('model param says the default comes from the toolbar', /default the user configured/i.test(modelParam), modelParam);
+  check('model param labels no id as the default', !/gpt-image-[a-z0-9.-]+\s*\([^)]*default/i.test(modelParam), modelParam);
+}
+
 rmSync(storagePath, { recursive: true, force: true });
 
 console.log(`\n${failures === 0 ? 'all checks passed' : `${failures} check(s) failed`}`);
