@@ -1,0 +1,138 @@
+{
+  "name": "元宝搜索",
+  "description": "用腾讯云元宝搜索做联网检索，给 AI 返回带标题、链接、来源站点、发布时间和摘要的排序结果。",
+  "systemPrompt": "需要实时信息、近期新闻或不确定事实时调用 yuanbao_search 做联网检索，它会返回带标题、URL、来源、时间和摘要的排序结果。",
+  "settingsMenu": {
+    "tooltip": "元宝搜索设置"
+  },
+
+  "tool.title": "元宝搜索",
+  "tool.description": "用腾讯云「元宝搜索」做联网检索。需要实时信息、新闻、近期资料、不确定的事实，或用户让你「上网查一下」时使用。返回按相关性排序的结果列表：标题、URL、来源站点、发布时间、摘要。\n参数约定：count 只能是 10/20/30/40/50；timeRange 用 d1-d30（近 N 天）/ m1-m12（近 N 月）/ y1-y5（近 N 年），也接受「近一周」这类说法或 yyyy-mm-dd（区间用逗号）；industry 限 gov/news/acad/finance；mode 0=公开网页自然结果、1=权威垂直信源、2=混合；site 传 example.com 只在站内搜，传 exclude:a.com|b.com 排除这些站点（最多 5 个）。\n默认只返回摘要。确实需要更长正文时才传 includeContent，别默认打开——单条正文可能有几千字。\n失败时结果里带错误码和可操作的修复建议，请按建议调整后再试，不要原样重试。",
+  "tool.p.query": "搜索词，必填。",
+  "tool.p.count": "返回结果条数，只能是 {allowed} 之一。省略时用服务端默认条数。",
+  "tool.p.timeRange": "时效范围：d1-d30（近 N 天）、m1-m12（近 N 月）、y1-y5（近 N 年）、yyyy-mm-dd，或 yyyy-mm-dd,yyyy-mm-dd 表示区间。",
+  "tool.p.mode": "结果类型：0 公开网页自然结果（默认）、1 权威垂直信源、2 混合。极速版不支持。",
+  "tool.p.industry": "垂直领域检索：gov 政府 / news 新闻 / acad 学术 / finance 财经。极速版不支持。",
+  "tool.p.site": "限定或排除站点：example.com 表示只搜该域名；exclude:a.com|b.com 表示排除（最多 5 个）。",
+  "tool.p.deeplinks": "是否返回结果的附件子链。仅旗舰版支持。",
+  "tool.p.includeContent": "额外返回更长的动态摘要（正文）。会明显变长，只在确实需要原文时传 true。",
+  "tool.p.snippetChars": "摘要保留的最大字符数，默认 300。",
+  "tool.p.includeRaw": "在结果末尾附上接口返回的原始 JSON。",
+
+  "progress.searching": "正在搜索「{query}」",
+
+  "form.title": "配置腾讯云密钥",
+  "form.desc": "还没有可用的腾讯云密钥。填入一次即可，密钥会保存在系统钥匙串里，不会写进代码、仓库或聊天记录。",
+  "form.submit": "保存并继续",
+
+  "menu.status": "密钥 {id}",
+  "menu.status.secrets": "来自系统钥匙串",
+  "menu.status.env": "来自环境变量",
+  "menu.status.none": "未配置密钥",
+  "menu.configure": "配置腾讯云密钥",
+  "menu.configure.desc": "填入 SecretId 与 SecretKey",
+  "menu.import": "从本机密钥文件导入",
+  "menu.import.desc": "读取 {path}",
+  "menu.test": "测试连接",
+  "menu.test.desc": "发一次真实搜索请求",
+
+  "dialog.title": "配置腾讯云密钥",
+  "dialog.message": "密钥保存在系统钥匙串里，不会写进代码、仓库或聊天记录。子用户只需要 wsa:SearchPro 权限。",
+  "dialog.cancel": "取消",
+  "dialog.save": "保存",
+  "dialog.saved.title": "已保存",
+  "dialog.saved.message": "密钥已存入系统钥匙串（{id}）。",
+  "dialog.ok": "好",
+  "dialog.import.title": "导入密钥文件",
+  "dialog.import.ok": "已把密钥文件里的密钥对存入系统钥匙串。",
+  "dialog.import.none": "没能在 {path} 读到完整的密钥对。",
+
+  "probe.noKey": "未配置密钥",
+  "probe.ok": "可用 · {count} 条结果",
+  "probe.ok.title": "连接正常",
+  "probe.ok.message": "接口可用，返回 {count} 条结果（账号版本 {version}）。\nRequestId: {requestId}",
+  "probe.fail": "失败：{title}",
+  "probe.fail.title": "测试连接失败",
+
+  "page.untitled": "(无标题)",
+  "page.url": "URL",
+  "page.site": "来源",
+  "page.date": "时间",
+  "page.score": "相关度",
+  "page.authority": "权威度",
+  "page.passage": "摘要",
+  "page.content": "正文",
+  "page.deeplink": "子链",
+  "page.deeplinks": "子链",
+
+  "result.header": "元宝搜索「{query}」 · 版本 {version} · {count} 条结果",
+  "result.serverMsg": "服务端提示: {msg}",
+  "result.empty": "没有返回任何结果。可以换个说法、放宽时效范围，或去掉 Site / Industry 限定后重试。",
+  "result.requestId": "RequestId: {requestId}",
+  "result.raw": "原始 JSON:",
+
+  "warn.countRounded": "count 只支持 {allowed}，{from} 已按 {to} 请求。",
+  "warn.countInvalid": "count={value} 不是有效数字，已改用服务端默认条数。",
+  "warn.modeIgnored": "mode={value} 无效（只支持 0/1/2），已忽略该参数。",
+  "warn.industryIgnored": "industry={value} 无效（只支持 {allowed}），已忽略该参数。",
+  "warn.siteSingle": "Site 指定搜索时只支持一个域名，已只取 {value}。",
+  "warn.siteTruncated": "Site 排除模式最多 5 个域名，已截断到前 5 个。",
+  "warn.pagesDropped": "有 {count} 条结果无法解析，已跳过。",
+
+  "err.blocked": "元宝搜索失败：{title}",
+  "err.hintLine": "怎么办：{hint}",
+  "err.meta.code": "错误码: {code}",
+  "err.meta.http": "HTTP {status}",
+  "err.meta.requestId": "RequestId: {requestId}",
+  "err.meta.detail": "服务端信息: {detail}",
+
+  "err.noCreds.title": "还没有配置腾讯云密钥",
+  "err.noCreds.hint": "两种配置方式任选其一：① 在工具箱（Toolcase）里打开「元宝搜索」的设置菜单 →「配置腾讯云密钥」，粘贴 SecretId / SecretKey；② 在启动 Finch 的环境里设置 TENCENTCLOUD_SECRETID 与 TENCENTCLOUD_SECRETKEY。密钥保存在系统钥匙串里，不会写进代码、仓库或聊天记录。",
+
+  "err.notActivated.title": "元宝搜索服务当前不可用（未开通或地域不支持）",
+  "err.notActivated.hint": "本小程序调用 wsa.tencentcloudapi.com 时不发送任何地域头——该接口对所有具名地域（ap-guangzhou / ap-beijing / ap-shanghai 等）都返回 UnsupportedRegion，所以这不是地域配置问题。如果仍然报这个错，请到腾讯云控制台搜索「元宝搜索 / 联网搜索」完成开通，并确认该子用户已授权使用 wsa:SearchPro。",
+
+  "err.unauthorized.title": "权限不足（CAM 未授权）",
+  "err.unauthorized.hint": "给这个 CAM 子用户附加一条允许 wsa:SearchPro 的策略，保存后等几秒重试；如果用的是临时密钥，请确认票据还没有过期。",
+
+  "err.auth.secretId.title": "SecretId 不存在",
+  "err.auth.secretId.hint": "请重新填写 SecretId（注意不要带空格或换行），并在 CAM 控制台确认这个密钥处于「启用」状态。",
+  "err.auth.signature.title": "签名校验失败（SecretKey 可能不对）",
+  "err.auth.signature.hint": "SecretKey 填错了。请在工具箱里重新填写 SecretId / SecretKey，注意不要带空格或换行。",
+  "err.auth.generic.title": "身份校验失败",
+  "err.auth.generic.hint": "请在工具箱里重新填写 SecretId / SecretKey。如果用的是临时密钥，还需要一并填写 Token。",
+
+  "err.badResponse.title": "接口返回的不是 JSON",
+  "err.badResponse.hint": "多半是被代理、网关或登录页拦截了。请确认本机能直连 wsa.tencentcloudapi.com。",
+  "err.invalidParam.title": "请求参数不合法",
+  "err.invalidParam.hint": "count 只能是 10/20/30/40/50；timeRange 只能是 d1-d30 / m1-m12 / y1-y5 或 yyyy-mm-dd（区间用逗号）；industry 只能是 gov/news/acad/finance；mode 只能是 0/1/2。",
+  "err.param.count": "count={value} 无效，只能是 10/20/30/40/50。",
+  "err.param.freshness": "timeRange={value} 无法识别。请用 d1-d30（近 N 天）、m1-m12（近 N 月）、y1-y5（近 N 年），或 yyyy-mm-dd / yyyy-mm-dd,yyyy-mm-dd。",
+  "err.param.query": "query 不能为空，请给出要搜索的关键词。",
+
+  "err.rateLimit.title": "请求过于频繁（已限流）",
+  "err.rateLimit.hint": "等几秒再试。如果持续出现，说明账号配额已用完，请到腾讯云控制台查看元宝搜索的用量与限流额度。",
+
+  "err.invalidAction.title": "接口或版本不存在",
+  "err.invalidAction.hint": "本小程序使用 Action=SearchPro、Version=2025-05-08（以腾讯云官方文档为准）。如果腾讯云调整了接口，请更新 finch-yuanbao-search。",
+
+  "err.failedOp.title": "服务端处理失败",
+  "err.failedOp.hint": "换个搜索词重试。持续失败请带上 RequestId 给腾讯云提工单。",
+
+  "err.internal.title": "腾讯云服务端错误",
+  "err.internal.hint": "稍后重试。持续出现请带上 RequestId 给腾讯云提工单。",
+
+  "err.generic.title": "元宝搜索返回错误（{code}）",
+  "err.generic.hint": "按上面的服务端说明处理；需要进一步排查时请提供 RequestId。",
+
+  "err.net.dns.title": "无法解析 wsa.tencentcloudapi.com（DNS）",
+  "err.net.dns.hint": "检查本机网络或代理设置，确认能访问腾讯云开放接口域名。",
+  "err.net.connect.title": "无法连接腾讯云接口",
+  "err.net.connect.hint": "检查网络与代理。如果公司网络需要代理，请确认代理放行了 *.tencentcloudapi.com。",
+  "err.net.tls.title": "TLS 证书校验失败",
+  "err.net.tls.hint": "通常是代理或安全软件在做中间人拦截。请放行 tencentcloudapi.com 后重试。",
+  "err.net.timeout.title": "请求超时",
+  "err.net.timeout.hint": "元宝搜索一般在几秒内返回。请检查网络后重试。",
+  "err.net.generic.title": "请求未能发出或未收到响应",
+  "err.net.generic.hint": "检查网络连通性后重试。"
+}

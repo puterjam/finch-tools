@@ -13,9 +13,11 @@ Mini tools that extend [Finch](https://finchwork.app/) with focused, user-facing
 - [`finch-delivery`](./finch-delivery/) — tracks and browses deliverables (Markdown, Word, PPT, PDF, Excel, web pages, images) produced by the AI across all sessions, with a card gallery Panel and Markdown text previews.
 - [`finch-multi-agent`](./finch-multi-agent/) — splits one goal into parallel sub-agent Sessions, run right inside the current conversation, coordinating through immutable artifacts, versioned reports and structured handoffs.
 - [`finch-skin-studio`](./finch-skin-studio/) — sets the Home background image and tiling, saves AI-designed or current color schemes as custom skins, and switches between 6 built-in and custom skins from a card gallery Panel.
+- [`finch-yuanbao-search`](./finch-yuanbao-search/) — live web search through Tencent Yuanbao Search, returning ranked results with title, URL, source site, date and snippet so the AI can cite what it looked up.
 - [`finch-markdown-editor`](./finch-markdown-editor/) — edits Markdown with contextual AI revisions and bm.md-powered WeChat Official Account previews.
 - [`finch-shell`](./finch-shell/) — opens a real interactive terminal in Finch with workspace-aware startup, full-screen terminal programs, colors, and resize support.
 - [`finch-cli-bridge`](./finch-cli-bridge/) — pairs the `finch` command-line tool with Finch over a loopback-only, user-approved HTTP bridge, so a terminal can drive Sessions, watch events, and answer permission cards.
+- [`finch-webui`](./finch-webui/) — runs a password-protected local browser UI for creating normal Chat or Space Sessions and viewing their replies as they stream.
 - [`finch-cli`](./finch-cli/) — the `finch` command-line tool itself (`npm i -g finch-cli`); talks to `finch-cli-bridge`. See [`docs/finch-cli-design.md`](./docs/finch-cli-design.md) for the full protocol.
 
 ---
@@ -34,8 +36,10 @@ Mini tools that extend [Finch](https://finchwork.app/) with focused, user-facing
 - [`finch-helper`](./finch-helper/)：一个基于官方文档知识库回答 Finch 用法、功能与小程序开发问题的助手。
 - [`finch-delivery`](./finch-delivery/)：记录和浏览 AI 生成的交付物（Markdown、Word、PPT、PDF、Excel、网页、图片），以卡片画廊面板展示，支持 Markdown 文字预览和跨会话浏览。
 - [`finch-multi-agent`](./finch-multi-agent/)：在当前对话里把一个目标拆成多个并行的子智能体会话，通过不可变产物、版本化报告和结构化交接协作。
+- [`finch-yuanbao-search`](./finch-yuanbao-search/)：用腾讯云元宝搜索做联网检索，返回带标题、链接、来源站点、时间和摘要的排序结果，让 AI 能给出查过的出处。
 - [`finch-skin-studio`](./finch-skin-studio/)：设置首页背景图与平铺方式，把 AI 设计或当前使用的配色保存为自定义皮肤，用卡片画廊面板在 6 套内置与自定义皮肤间切换。
 - [`finch-markdown-editor`](./finch-markdown-editor/)：专注 Markdown 编辑体验，支持上下文 AI 改稿与 bm.md 驱动的公众号预览。
 - [`finch-shell`](./finch-shell/)：在 Finch 中打开真正的交互式终端，支持工作区目录启动、全屏终端程序、彩色输出与尺寸同步。
 - [`finch-cli-bridge`](./finch-cli-bridge/)：把 `finch` 命令行工具与 Finch 配对——通过一个只监听本机、需要用户点头确认的 HTTP 桥接，让终端能创建/驱动会话、查看事件、应答权限卡。
+- [`finch-webui`](./finch-webui/)：启动受密码保护的本地浏览器界面，用来创建普通 Chat 或 Space 会话，并实时查看流式回复。
 - [`finch-cli`](./finch-cli/)：`finch` 命令行工具本体（`npm i -g finch-cli`），与 `finch-cli-bridge` 对接。完整协议见 [`docs/finch-cli-design.md`](./docs/finch-cli-design.md)。

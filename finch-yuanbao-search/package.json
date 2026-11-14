@@ -1,0 +1,89 @@
+{
+  "name": "finch-yuanbao-search",
+  "version": "0.1.0",
+  "description": "Web search through Tencent Yuanbao Search (腾讯云元宝搜索) — real-time search results with titles, URLs, snippets and sources, straight from the Finch chat.",
+  "author": {
+    "name": "PuterJam",
+    "url": "https://github.com/puterjam"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/puterjam/finch-tools.git",
+    "directory": "finch-yuanbao-search"
+  },
+  "homepage": "https://github.com/puterjam/finch-tools/tree/main/finch-yuanbao-search#readme",
+  "bugs": {
+    "url": "https://github.com/puterjam/finch-tools/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "keywords": [
+    "finch",
+    "finch-minitool",
+    "search",
+    "web-search",
+    "tencent",
+    "yuanbao",
+    "元宝搜索"
+  ],
+  "scripts": {
+    "icons": "node tools/build-icons.mjs",
+    "build": "npm run icons && esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "smoke": "npm run build && node tools/smoke.mjs",
+    "test": "npm run smoke",
+    "prepublishOnly": "npm run typecheck && npm run build && npx @finchtoys/minitools doctor ."
+  },
+  "finch": {
+    "manifestVersion": 1,
+    "minVersion": "1.7.0",
+    "name": "Yuanbao Search",
+    "description": "Real-time web search powered by Tencent Yuanbao Search — titles, URLs, snippets, sources and dates for the AI to cite.",
+    "systemPrompt": "Use yuanbao_search when the answer needs live web results, recent news, facts you are not sure about, or anything the user asks you to look up online. It returns ranked results with title, URL, source site, publish date and a snippet.",
+    "main": "dist/index.js",
+    "activationEvents": [
+      "onStartup"
+    ],
+    "miniToolType": "local",
+    "categories": [
+      "productivity",
+      "research"
+    ],
+    "contributes": {
+      "tools": true,
+      "iconPacks": [
+        {
+          "id": "yuanbao-search-icons",
+          "label": "Yuanbao Search Icons"
+        }
+      ],
+      "settingsMenu": {
+        "icon": "ext:yuanbao-search-icons/search",
+        "tooltip": "Yuanbao Search settings"
+      }
+    },
+    "permissions": {
+      "filesystem": "read",
+      "network": true,
+      "shell": false,
+      "secrets": [
+        "tencentcloud.secretId",
+        "tencentcloud.secretKey"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@finchtoys/minitool-api": "^0.3.16",
+    "@types/node": "^26.1.0",
+    "esbuild": "^0.28.1",
+    "lucide-static": "^1.61.0",
+    "typescript": "^6.0.3"
+  },
+  "files": [
+    "dist/",
+    "i18n/",
+    "icons/",
+    "README.md"
+  ]
+}

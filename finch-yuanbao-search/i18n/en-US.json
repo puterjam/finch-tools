@@ -1,0 +1,138 @@
+{
+  "name": "Yuanbao Search",
+  "description": "Live web search through Tencent Yuanbao Search — ranked results with title, URL, source site, publish date and snippet.",
+  "systemPrompt": "Call yuanbao_search for live web results when you need recent news or facts you are not sure about; it returns ranked results with title, URL, source, date and snippet.",
+  "settingsMenu": {
+    "tooltip": "Yuanbao Search settings"
+  },
+
+  "tool.title": "Yuanbao Search",
+  "tool.description": "Web search through Tencent Yuanbao Search. Use it for live information, news, recent material, facts you are unsure about, or whenever the user asks you to look something up online. Returns relevance-ranked results with title, URL, source site, publish date and snippet.\nParameter rules: count must be one of 10/20/30/40/50; timeRange uses d1-d30 (last N days) / m1-m12 (last N months) / y1-y5 (last N years), or yyyy-mm-dd (comma for a range); industry is one of gov/news/acad/finance; mode 0 = open web results, 1 = authoritative vertical sources, 2 = mixed; site=example.com restricts to one domain, site=exclude:a.com|b.com filters domains out (max 5).\nOnly snippets are returned by default. Pass includeContent only when you really need the longer summary — a single entry can run to several thousand characters.\nOn failure the result carries an error code plus a concrete fix; adjust accordingly instead of retrying unchanged.",
+  "tool.p.query": "Search query. Required.",
+  "tool.p.count": "Number of results. Must be one of {allowed}. Omit to use the server default.",
+  "tool.p.timeRange": "Time range: d1-d30 (last N days), m1-m12 (last N months), y1-y5 (last N years), yyyy-mm-dd, or yyyy-mm-dd,yyyy-mm-dd for a range.",
+  "tool.p.mode": "Result type: 0 open web results (default), 1 authoritative vertical sources, 2 mixed. Not supported on the lite tier.",
+  "tool.p.industry": "Vertical search: gov / news / acad / finance. Not supported on the lite tier.",
+  "tool.p.site": "Restrict or exclude sites: example.com searches only that domain; exclude:a.com|b.com filters those out (max 5).",
+  "tool.p.deeplinks": "Also return each result's sub-links. Flagship tier only.",
+  "tool.p.includeContent": "Also return the longer dynamic summary. Considerably longer output — only when you need the text.",
+  "tool.p.snippetChars": "Maximum characters kept from the snippet. Defaults to 300.",
+  "tool.p.includeRaw": "Append the raw JSON returned by the API.",
+
+  "progress.searching": "Searching “{query}”",
+
+  "form.title": "Set up Tencent Cloud credentials",
+  "form.desc": "No usable Tencent Cloud key pair is configured yet. Enter it once — it is stored in the system keychain and never written into code, the repository, or the chat log.",
+  "form.submit": "Save and continue",
+
+  "menu.status": "Key {id}",
+  "menu.status.secrets": "from the system keychain",
+  "menu.status.env": "from environment variables",
+  "menu.status.none": "No key configured",
+  "menu.configure": "Configure Tencent Cloud key",
+  "menu.configure.desc": "Enter SecretId and SecretKey",
+  "menu.import": "Import from local key file",
+  "menu.import.desc": "Read {path}",
+  "menu.test": "Test connection",
+  "menu.test.desc": "Send one real search request",
+
+  "dialog.title": "Configure Tencent Cloud key",
+  "dialog.message": "Keys are stored in the system keychain, never in code, the repository, or the chat log. The sub-user only needs wsa:SearchPro.",
+  "dialog.cancel": "Cancel",
+  "dialog.save": "Save",
+  "dialog.saved.title": "Saved",
+  "dialog.saved.message": "The key pair is now in the system keychain ({id}).",
+  "dialog.ok": "OK",
+  "dialog.import.title": "Import key file",
+  "dialog.import.ok": "The key pair from the key file is now in the system keychain.",
+  "dialog.import.none": "Could not read a complete key pair from {path}.",
+
+  "probe.noKey": "No key configured",
+  "probe.ok": "Working · {count} results",
+  "probe.ok.title": "Connection OK",
+  "probe.ok.message": "The API works — {count} results returned (account tier {version}).\nRequestId: {requestId}",
+  "probe.fail": "Failed: {title}",
+  "probe.fail.title": "Connection test failed",
+
+  "page.untitled": "(untitled)",
+  "page.url": "URL",
+  "page.site": "Source",
+  "page.date": "Date",
+  "page.score": "Score",
+  "page.authority": "Authority",
+  "page.passage": "Snippet",
+  "page.content": "Full text",
+  "page.deeplink": "Sub-link",
+  "page.deeplinks": "Sub-links",
+
+  "result.header": "Yuanbao Search “{query}” · tier {version} · {count} results",
+  "result.serverMsg": "Server notice: {msg}",
+  "result.empty": "No results came back. Try rephrasing, widening the time range, or dropping the Site / Industry restriction.",
+  "result.requestId": "RequestId: {requestId}",
+  "result.raw": "Raw JSON:",
+
+  "warn.countRounded": "count only supports {allowed}; {from} was requested as {to}.",
+  "warn.countInvalid": "count={value} is not a number; fell back to the server default.",
+  "warn.modeIgnored": "mode={value} is invalid (only 0/1/2); parameter ignored.",
+  "warn.industryIgnored": "industry={value} is invalid (only {allowed}); parameter ignored.",
+  "warn.siteSingle": "Site restricts to one domain when searching; kept {value} only.",
+  "warn.siteTruncated": "Site exclusion supports at most 5 domains; truncated to the first 5.",
+  "warn.pagesDropped": "{count} result(s) could not be parsed and were skipped.",
+
+  "err.blocked": "Yuanbao Search failed: {title}",
+  "err.hintLine": "What to do: {hint}",
+  "err.meta.code": "Error code: {code}",
+  "err.meta.http": "HTTP {status}",
+  "err.meta.requestId": "RequestId: {requestId}",
+  "err.meta.detail": "Server message: {detail}",
+
+  "err.noCreds.title": "No Tencent Cloud key configured",
+  "err.noCreds.hint": "Pick either setup path: (1) open the Yuanbao Search settings menu in the Toolbox and choose “Configure Tencent Cloud key”, then paste SecretId / SecretKey; or (2) set TENCENTCLOUD_SECRETID and TENCENTCLOUD_SECRETKEY in the environment Finch starts from. Keys live in the system keychain and are never written into code, the repository, or the chat log.",
+
+  "err.notActivated.title": "Yuanbao Search is not available on this account (not activated, or region unsupported)",
+  "err.notActivated.hint": "This mini tool sends no region header at all to wsa.tencentcloudapi.com — the action returns UnsupportedRegion for every named region (ap-guangzhou / ap-beijing / ap-shanghai …), so this is not a region setting you can fix. If the error persists, activate “Yuanbao Search / Web Search” in the Tencent Cloud console and confirm the sub-user is allowed to call wsa:SearchPro.",
+
+  "err.unauthorized.title": "Not authorized (CAM policy)",
+  "err.unauthorized.hint": "Attach a CAM policy allowing wsa:SearchPro to this sub-user, wait a few seconds, then retry. If you are using temporary credentials, check that the token has not expired.",
+
+  "err.auth.secretId.title": "SecretId not found",
+  "err.auth.secretId.hint": "Re-enter the SecretId (no stray spaces or newlines) and confirm in the CAM console that this key is enabled.",
+  "err.auth.signature.title": "Signature check failed (wrong SecretKey?)",
+  "err.auth.signature.hint": "The SecretKey looks wrong. Re-enter SecretId / SecretKey from the Toolbox, without spaces or newlines.",
+  "err.auth.generic.title": "Authentication failed",
+  "err.auth.generic.hint": "Re-enter SecretId / SecretKey from the Toolbox. Temporary credentials also need a Token.",
+
+  "err.badResponse.title": "The API did not return JSON",
+  "err.badResponse.hint": "Most likely a proxy, gateway, or login page intercepted the call. Make sure this machine can reach wsa.tencentcloudapi.com directly.",
+  "err.invalidParam.title": "Invalid request parameter",
+  "err.invalidParam.hint": "count must be 10/20/30/40/50; timeRange must be d1-d30 / m1-m12 / y1-y5 or yyyy-mm-dd (comma for a range); industry must be gov/news/acad/finance; mode must be 0/1/2.",
+  "err.param.count": "count={value} is invalid; only 10/20/30/40/50 are accepted.",
+  "err.param.freshness": "timeRange={value} is not recognized. Use d1-d30 (last N days), m1-m12 (last N months), y1-y5 (last N years), or yyyy-mm-dd / yyyy-mm-dd,yyyy-mm-dd.",
+  "err.param.query": "query cannot be empty — give the keywords to search for.",
+
+  "err.rateLimit.title": "Too many requests (rate limited)",
+  "err.rateLimit.hint": "Wait a few seconds and retry. If it keeps happening the account quota is exhausted — check Yuanbao Search usage and rate limits in the Tencent Cloud console.",
+
+  "err.invalidAction.title": "Unknown action or API version",
+  "err.invalidAction.hint": "This mini tool calls Action=SearchPro with Version=2025-05-08 (per the official Tencent Cloud docs). Update finch-yuanbao-search if Tencent changes the API.",
+
+  "err.failedOp.title": "The server failed to process the request",
+  "err.failedOp.hint": "Try a different query. If it persists, open a Tencent Cloud ticket with the RequestId.",
+
+  "err.internal.title": "Tencent Cloud server error",
+  "err.internal.hint": "Retry later. If it persists, open a Tencent Cloud ticket with the RequestId.",
+
+  "err.generic.title": "Yuanbao Search returned an error ({code})",
+  "err.generic.hint": "Follow the server message above; include the RequestId when asking for help.",
+
+  "err.net.dns.title": "Cannot resolve wsa.tencentcloudapi.com (DNS)",
+  "err.net.dns.hint": "Check the local network or proxy settings and make sure Tencent Cloud API endpoints are reachable.",
+  "err.net.connect.title": "Cannot connect to the Tencent Cloud API",
+  "err.net.connect.hint": "Check the network and proxy. On a corporate network, make sure the proxy allows *.tencentcloudapi.com.",
+  "err.net.tls.title": "TLS certificate validation failed",
+  "err.net.tls.hint": "Usually a proxy or security product doing man-in-the-middle interception. Allow tencentcloudapi.com and retry.",
+  "err.net.timeout.title": "Request timed out",
+  "err.net.timeout.hint": "Yuanbao Search normally answers within seconds. Check the network and retry.",
+  "err.net.generic.title": "The request was not sent or got no response",
+  "err.net.generic.hint": "Check network connectivity and retry."
+}
