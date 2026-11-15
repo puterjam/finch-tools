@@ -40,7 +40,7 @@ await page.addInitScript(() => {
     sessionId: i % 2 ? 'session-2' : 'session-1', createdAt: Date.now() - i * 10000, note: '',
   }));
   const listeners = [];
-  const state = { records, contexts: [], fills: [], calls: [], annotated: [], rejections: [], messages: [], previews: [], confirmations: [], motions: [], view: 'session', sessionId: 'session-1', imageDelay: 0, refuseInsert: false, failImages: false, canSend: true, sends: [], failSend: false, thumbs: new Map(), savedThumbs: [], imageVariants: [], refuseFill: false };
+  const state = { records, contexts: [], fills: [], calls: [], annotated: [], rejections: [], messages: [], previews: [], multiPreviews: [], failMultiPreview: false, confirmations: [], motions: [], view: 'session', sessionId: 'session-1', imageDelay: 0, refuseInsert: false, failImages: false, canSend: true, sends: [], failSend: false, thumbs: new Map(), savedThumbs: [], imageVariants: [], refuseFill: false };
   const emit = (message) => listeners.forEach((fn) => fn(message));
   const env = () => ({ view: state.view, sessionId: state.sessionId, locale: 'zh-CN', canSend: state.canSend });
   const snapshot = () => emit({ type: 'gallery', data: state.records, env: env() });
@@ -140,13 +140,37 @@ await page.addInitScript(() => {
       },
     },
     ui: { toast() { return Promise.resolve({}); }, confirm(options) { state.confirmations.push(options); return Promise.resolve({ confirmed: true }); } },
-    appView: { openPreview(path) { state.previews.push(path); return Promise.resolve({ id: '' }); } },
+    appView: {
+      openPreview(path) { state.previews.push(path); return Promise.resolve({ id: '' }); },
+      /**
+       * The page-driven multi-image preview. Checks the same contract the host
+       * does, so a wrong set fails here rather than on someone's screen.
+       */
+      openImagePreview(request) {
+        // A synthetic click carries no user activation, so the one test that
+        // needs to reach the later checks opts out of this one explicitly.
+        if (!state.allowNoGesture && !navigator.userActivation.isActive) { state.rejections.push('preview-no-gesture'); return Promise.reject(new Error('user-gesture-required')); }
+        if (!Number.isInteger(request.count) || request.count < 1) return Promise.reject(new Error('count must be a positive integer'));
+        if (!Number.isInteger(request.current) || request.current < 0 || request.current >= request.count) return Promise.reject(new Error('current must be inside the set'));
+        if (!Array.isArray(request.items) || request.items.length !== request.count) return Promise.reject(new Error('items must cover the whole set'));
+        request.items.forEach((item, index) => {
+          // A hole is only legal when something can still supply it in time.
+          if (item === null) { if (typeof request.onRequest !== 'function') return Promise.reject(new Error(`item ${index} has no source`)); return; }
+          if (!item || typeof item.src !== 'string' || !item.src) return Promise.reject(new Error(`item ${index} has no src`));
+          if (typeof item.name !== 'string' || !item.name) return Promise.reject(new Error(`item ${index} has no name`));
+        });
+        if (state.failMultiPreview) return Promise.reject(new Error('host refused the preview'));
+        state.multiPreviews.push(request);
+        return Promise.resolve();
+      },
+    },
   };
 });
 
 try {
   await page.goto(origin);
   await runGalleryTests();
+  await runPreviewTests();
   await runLoadingTests();
   await runEditorTests();
   await runFailureAndThemeTests();
@@ -334,7 +358,8 @@ async function runGalleryTests() {
   await page.evaluate(() => { window.__host.contexts.length = 0; window.__host.fills.length = 0; });
   const card = await page.locator('.card').first().boundingBox();
   await page.mouse.click(card.x + card.width / 2, card.y + card.height / 2);
-  assert.equal(await page.evaluate(() => window.__host.previews.length), 1, 'Click opens the native preview');
+  assert.equal(await page.evaluate(() => window.__host.multiPreviews.length), 1, 'Click opens the multi-image preview');
+  assert.equal(await page.evaluate(() => window.__host.previews.length), 0, 'A new Finch is not sent down the single-picture path');
 
   await page.evaluate(() => {
     window.__host.originalRecords = [...window.__host.records];
@@ -347,6 +372,77 @@ async function runGalleryTests() {
   await page.waitForFunction(() => [...document.querySelectorAll('.card')].slice(0, 5).every((card) => card.querySelector('img').naturalWidth > 0 && !card.querySelector('.image-placeholder')));
   await page.screenshot({ path: join(root, 'node_modules/.ui-gallery-wide.png'), fullPage: true });
   console.log('ok UI: hover overlay, top-right actions, native preview, single-card cap');
+}
+
+/** Clicks the middle of one card, away from the hover actions in its corner.
+ * Cards are laid out column by column, so a card is named by its record, not by
+ * its position in the DOM. */
+async function clickCard(id) {
+  const box = await page.locator(`.card[data-id="${id}"]`).boundingBox();
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+}
+
+/**
+ * The preview set is the tab the user is looking at: 「本会话」 walks only this
+ * Session's pictures, 「全部」 walks the whole library, and a Finch without the
+ * multi-image entry still gets the old single-picture preview.
+ */
+async function runPreviewTests() {
+  await page.goto(origin);
+  await page.waitForFunction(() => document.querySelectorAll('.card').length === 8);
+
+  // A session gallery opens on 「本会话」: half of the 16 records are session-1's.
+  assert.equal(await page.locator('#tabs button.active').textContent(), '本会话', 'A session gallery starts on its own tab');
+  await clickCard('image-4');
+  const scoped = await page.evaluate(() => window.__host.multiPreviews.at(-1));
+  assert.equal(scoped.count, 8, 'The session tab previews 8 pictures');
+  assert.equal(scoped.current, 2, 'current counts from the start of the tab set, not of the library');
+  assert.deepEqual(scoped.items.map((item) => item.src), [0, 2, 4, 6, 8, 10, 12, 14].map((i) => `/gallery/picture-${i}.png`), 'The set holds exactly this session\'s pictures, in gallery order');
+  assert(scoped.title.includes('本会话'), `The title names the tab (${scoped.title})`);
+  assert(scoped.items.every((item) => item.name.length <= 41 && item.name.endsWith('…')), 'A prompt is shortened to about 40 characters');
+  assert(scoped.items.every((item) => item.mimeType === 'image/png'), 'The type travels with the picture');
+
+  // Switching tabs must recompute the set from scratch.
+  await page.locator('#tabs button').first().click();
+  await settle();
+  await clickCard('image-2');
+  const all = await page.evaluate(() => window.__host.multiPreviews.at(-1));
+  assert.equal(all.count, 16, 'The all tab previews the whole library');
+  assert.equal(all.current, 2, 'current is the third picture of the whole library');
+  assert.deepEqual(all.items.map((item) => item.src), Array.from({ length: 16 }, (_, i) => `/gallery/picture-${i}.png`), 'The all tab walks every picture in order');
+  assert(all.title.includes('全部'), `The title follows the tab (${all.title})`);
+
+  // An older Finch has no openImagePreview: the click must still open something.
+  await page.evaluate(() => {
+    window.__host.restorePreview = window.finch.appView.openImagePreview;
+    delete window.finch.appView.openImagePreview;
+  });
+  const before = await page.evaluate(() => ({ multi: window.__host.multiPreviews.length, single: window.__host.previews.length }));
+  await clickCard('image-0');
+  const afterOld = await page.evaluate(() => ({ multi: window.__host.multiPreviews.length, single: window.__host.previews.length }));
+  assert.deepEqual(afterOld, { multi: before.multi, single: before.single + 1 }, 'Without the new API the click falls back to the single-picture preview');
+  await page.evaluate(() => { window.finch.appView.openImagePreview = window.__host.restorePreview; });
+
+  // A host that has the entry but refuses it must not swallow the click.
+  await page.evaluate(() => { window.__host.failMultiPreview = true; });
+  await clickCard('image-1');
+  assert.equal(await page.evaluate(() => window.__host.previews.length), before.single + 2, 'A refused preview still opens the original');
+  await page.evaluate(() => { window.__host.failMultiPreview = false; });
+
+  // A picture removed between the render and the click is not in the set: the
+  // click falls back instead of opening the preview on its neighbour.
+  await page.evaluate(() => {
+    window.__host.staleCard = [...document.querySelectorAll('.card')].find((card) => !['image-0', 'image-1', 'image-2'].includes(card.dataset.id));
+    window.__host.records = window.__host.records.slice(0, 3);
+    window.__host.allowNoGesture = true;
+    window.__host.snapshot();
+  });
+  await settle();
+  const beforeStale = await page.evaluate(() => ({ multi: window.__host.multiPreviews.length, single: window.__host.previews.length }));
+  const stale = await page.evaluate(() => { const node = window.__host.staleCard; node.click(); window.__host.allowNoGesture = false; return node.dataset.id; });
+  const afterStale = await page.evaluate(() => ({ multi: window.__host.multiPreviews.length, single: window.__host.previews.length }));
+  assert(afterStale.multi === beforeStale.multi && afterStale.single === beforeStale.single + 1, `A card no longer in the set falls back (${stale})`);
+  console.log('ok UI: preview set follows the tab, current is tab-relative, old Finch falls back');
 }
 
 /** The gallery opens on the current session, so these tests ask for everything. */

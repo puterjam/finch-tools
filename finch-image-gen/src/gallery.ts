@@ -5,6 +5,7 @@ import { setLocale, t } from './gallery-i18n';
 import { GalleryEditor } from './gallery-editor';
 import { insertComposerRequest } from './gallery-composer';
 import { captureCards, animateCards } from './gallery-motion';
+import { multiPreviewApi, previewItem } from './gallery-preview';
 
 const api = (window as Window & { finch?: finch.WebviewBridgeApi }).finch;
 const grid = el('grid');
@@ -235,7 +236,9 @@ let shown = PAGE_SIZE;
 function render(): void {
   if (el('app').hidden) return;
   const before = captureCards(grid);
-  const filtered = filter === 'current' ? records.filter((r) => r.sessionId === sessionId) : records;
+  // The grid and the preview must agree on what "this tab" holds, so both read
+  // the same helper instead of each keeping its own copy of the rule.
+  const filtered = visibleRecords();
   // Never render the whole library at once: a big gallery is thousands of
   // pictures, and each visible card costs real image bytes.
   const items = filtered.slice(0, shown);
@@ -322,9 +325,7 @@ function buildCard(record: GalleryItem): HTMLElement {
   remove.onclick = (event) => { event.stopPropagation(); void removeRecord(record); };
   actions.append(remove);
   card.querySelector<HTMLElement>('.prompt')!.textContent = record.prompt;
-  card.onclick = () => {
-    if (api?.appView) void api.appView.openPreview(record.filePath).catch(() => api.postMessage({ type: 'openPreview', filePath: record.filePath }));
-  };
+  card.onclick = () => openPreviewFor(record);
   card.onkeydown = (event) => { if (event.target === card && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); card.click(); } };
   return card;
 }
@@ -390,8 +391,51 @@ new ResizeObserver(([entry]) => {
   layoutFrame = requestAnimationFrame(render);
 }).observe(grid);
 
+/**
+ * What the tab the user is looking at actually holds: everything on 「全部」,
+ * only this Session's pictures on 「本会话」. This is the preview set — no extra
+ * grouping of its own, so the preview can never disagree with the grid.
+ */
 function visibleRecords(): GalleryItem[] {
   return filter === 'current' ? records.filter((r) => r.sessionId === sessionId) : records;
+}
+
+/** The single-picture preview, which is also what a pre-`openImagePreview` Finch gets. */
+function legacyPreview(record: GalleryItem): void {
+  if (api?.appView) void api.appView.openPreview(record.filePath).catch(() => api?.postMessage({ type: 'openPreview', filePath: record.filePath }));
+  else api?.postMessage({ type: 'openPreview', filePath: record.filePath });
+}
+
+/**
+ * Opens the clicked picture inside the set the current tab shows, so the arrow
+ * keys walk the gallery the user was looking at and the counter matches it.
+ * Recomputed per click: switching tabs and then clicking must never preview a
+ * set left over from the previous tab.
+ *
+ * The whole set goes up front as `items` rather than being pulled through
+ * `onRequest`: it is a list of paths already held in memory, capped at the 2000
+ * records the backend keeps (about 300 KB of JSON at worst, against the several
+ * megabytes of picture bytes this page sends over the same bridge every day),
+ * and a fixed list cannot miss the host's 8-second reply deadline.
+ */
+function openPreviewFor(record: GalleryItem): void {
+  const open = multiPreviewApi(api);
+  if (open) {
+    const collection = visibleRecords();
+    const current = collection.findIndex((item) => item.id === record.id);
+    // Not in the set (removed a moment before the click): fall back rather than
+    // open the preview on the wrong picture.
+    if (current >= 0) {
+      void open({
+        count: collection.length,
+        current,
+        title: `${t('title')} · ${t(filter === 'all' ? 'tab.all' : 'tab.current')}`,
+        items: collection.map(previewItem),
+      }).catch(() => legacyPreview(record));
+      return;
+    }
+  }
+  legacyPreview(record);
 }
 
 /** One more page of cards, if the library has one. */
