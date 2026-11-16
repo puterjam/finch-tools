@@ -205,11 +205,14 @@ async function cmdSessionCreate(flags: Flags): Promise<void> {
   const spaceId = flagStr(flags, 'space');
   const title = flagStr(flags, 'title');
   const message = flagStr(flags, 'message');
+  const model = flagStr(flags, 'model');
+  const effort = flagStr(flags, 'effort');
   const activity = flagStr(flags, 'background') !== undefined ? 'background' : undefined;
   const body = {
     space: spaceId ? { spaceId } : undefined,
     title,
     activity,
+    model: model ? { modelKey: model, reasoningEffort: effort } : undefined,
     initialMessage: message ? { text: message, idempotencyKey: crypto.randomUUID() } : undefined,
   };
   const result = await withErrors(() => client.request('POST', '/sessions', body));
@@ -348,7 +351,8 @@ Usage:
   finch space list                     List your Spaces
 
   finch session list [--include-archived]
-  finch session create [--space <id>] [--title <t>] [--message <text>] [--background]
+  finch session create [--space <id>] [--model <providerId:modelId>] [--effort <level>]
+                       [--title <t>] [--message <text>] [--background]
   finch session get <sessionId>
   finch session send <sessionId> --message <text> [--wait] [--timeout <sec>] [--idempotency-key <key>]
   finch session wait <sessionId> <turnId> [--timeout <sec>]

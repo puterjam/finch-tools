@@ -272,6 +272,8 @@ export class BridgeServer {
           title?: string;
           activity?: 'interactive' | 'background';
           permissionMode?: 'ask' | 'acceptCalls';
+          /** 显式指定本次会话用的模型（`providerId:modelId`），覆盖容器/全局默认。 */
+          model?: { modelKey: string; reasoningEffort?: string };
           initialMessage?: { text: string; idempotencyKey?: string };
         }
       | undefined;
@@ -285,13 +287,17 @@ export class BridgeServer {
     const initialMessage = body?.initialMessage
       ? { text: body.initialMessage.text, idempotencyKey: body.initialMessage.idempotencyKey || crypto.randomUUID() }
       : undefined;
+    // `model` 是宿主本来就支持的能力：会话运行时会把它当作“显式覆盖”，优先级高于容器默认与
+    // 全局默认（且会先校验模型可用性，不可用直接报错，不静默回退）。只是
+    // `@finchtoys/minitool-api` 的 SessionCreateOptions 还没声明它，所以这里窄化断言一下。
     const session = await this.ctx.sessions.create({
       space: body?.space,
       title: body?.title,
       activity: body?.activity,
       permissionMode: body?.permissionMode,
+      ...(body?.model ? { model: body.model } : {}),
       initialMessage,
-    });
+    } as finch.SessionCreateOptions);
     sendJson(res, 201, { session });
   };
 

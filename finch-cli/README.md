@@ -32,7 +32,8 @@ finch status                         Finch app version/platform + status snapsho
 finch space list                     List your Spaces
 
 finch session list [--include-archived]
-finch session create [--space <id>] [--title <t>] [--message <text>] [--background]
+finch session create [--space <id>] [--model <providerId:modelId>] [--effort <level>]
+                     [--title <t>] [--message <text>] [--background]
 finch session get <sessionId>
 finch session send <sessionId> --message <text> [--wait] [--timeout <sec>] [--idempotency-key <key>]
 finch session wait <sessionId> <turnId> [--timeout <sec>]
